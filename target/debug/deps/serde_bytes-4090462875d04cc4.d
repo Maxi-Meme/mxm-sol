@@ -1,0 +1,12 @@
+/home/dom/src/mxm/mxm-sol/target/debug/deps/libserde_bytes-4090462875d04cc4.rmeta: /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/lib.rs /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/bytearray.rs /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/bytes.rs /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/de.rs /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/ser.rs /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/bytebuf.rs
+
+/home/dom/src/mxm/mxm-sol/target/debug/deps/libserde_bytes-4090462875d04cc4.rlib: /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/lib.rs /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/bytearray.rs /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/bytes.rs /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/de.rs /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/ser.rs /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/bytebuf.rs
+
+/home/dom/src/mxm/mxm-sol/target/debug/deps/serde_bytes-4090462875d04cc4.d: /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/lib.rs /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/bytearray.rs /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/bytes.rs /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/de.rs /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/ser.rs /home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/bytebuf.rs
+
+/home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/lib.rs:
+/home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/bytearray.rs:
+/home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/bytes.rs:
+/home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/de.rs:
+/home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/ser.rs:
+/home/dom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_bytes-0.11.15/src/bytebuf.rs:
