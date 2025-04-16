@@ -3,10 +3,7 @@
 **/*.rs.bk
 node_modules
 test-ledger
-.yarn
 
 id.json
-
-**/*.json
 
 programs/maxi-auction/src/combined.rs.txt
