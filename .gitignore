@@ -3,7 +3,18 @@
 **/*.rs.bk
 node_modules
 test-ledger
-
 id.json
-
 programs/maxi-auction/src/combined.rs.txt
+
+# Ignore everything in the /target directory
+target/*
+
+# Allow the /target/idl directory and its contents
+!target/idl
+!target/idl/**
+
+# Allow .so files in /target/debug
+!target/debug/*.so
+
+target/deploy/
+
