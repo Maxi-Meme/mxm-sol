@@ -96,6 +96,10 @@ export async function getVaultOwnerAndNonce(
   }
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export const createMarket = async (
   wallet: Keypair,
   baseMintAddress: PublicKey,
@@ -109,9 +113,12 @@ export const createMarket = async (
     const vaultInstructions: TransactionInstruction[] = [];
     const marketInstructions: TransactionInstruction[] = [];
 
-    console.log('connection.rpcEndpoint', connection.rpcEndpoint);
+    console.log('createMarket - connection.rpcEndpoint', connection.rpcEndpoint);
+    console.log('createMarket - sleep 10...'); // DM
+    await sleep(10000); // wait - getMint is fussy
+
     try {
-      const quoteMintInfo = await getMint(connection, NATIVE_MINT, "finalized", TOKEN_PROGRAM_ID);
+      const quoteMintInfo = await getMint(connection, NATIVE_MINT, "finalized", TOKEN_PROGRAM_ID); // DM
       quoteMint = quoteMintInfo.address;
       quoteMintDecimals = quoteMintInfo.decimals;
     } catch (e) {
@@ -119,7 +126,7 @@ export const createMarket = async (
       throw e;
     }
     try {
-      const baseMintInfo = await getMint(connection, baseMintAddress, "finalized", TOKEN_PROGRAM_ID);
+      const baseMintInfo = await getMint(connection, baseMintAddress, "finalized", TOKEN_PROGRAM_ID); // DM
       baseMint = baseMintInfo.address;
       baseMintDecimals = baseMintInfo.decimals;
     } catch (e) {

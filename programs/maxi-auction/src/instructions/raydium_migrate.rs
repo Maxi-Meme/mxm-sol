@@ -134,15 +134,20 @@ impl<'a, 'b, 'c, 'info> From<&mut RaydiumMigrate<'info>>
 impl<'info> RaydiumMigrate<'info> {
     /// Initiazlize a swap pool
     pub fn process(&mut self, nonce: u8, open_time: u64) -> Result<()> {
-        msg!("Processing RaydiumMigrate...");
+
         let auction = &mut self.auction_data_account;
         let auction_id = auction.id;
         let auction_bump = auction.bump;
-        let init_pc_amount = self.auction_sol_account.lamports().into();
-        let init_coin_amount = auction
+        
+        let init_pc_amount = self.auction_sol_account.lamports().into(); // migrates all sol
+        msg!("init_pc_amount: {}", init_pc_amount);
+        
+        let init_coin_amount = auction 
             .token_supply
-            .saturating_mul(auction.lock_percent)
-            .saturating_div(1000);
+            .saturating_mul(auction.lock_percent).saturating_div(1000);  // migrates % of tokens
+        msg!("init_coin_amount: {}", init_coin_amount);
+
+        // move the auction’s SOL to the user’s WSOL account, preparing it to be used as liquidity in the AMM pool
         let _ = sol_transfer_with_signer(
             self.auction_sol_account.to_account_info(),
             self.user_token_pc.to_account_info(),
@@ -155,6 +160,7 @@ impl<'info> RaydiumMigrate<'info> {
             init_pc_amount,
         );
         msg!("Sol transfer completed");
+
         // Sync native tokens to ensure proper balance
         let sync_native_ix = spl_token::instruction::sync_native(
             &self.token_program.key(),
@@ -173,14 +179,13 @@ impl<'info> RaydiumMigrate<'info> {
             ]],
         )?;
         msg!("Sync native tokens completed");
-        // Token transfer from the token pool to the user wallet
+
+        // move tokens to the user wallet
         let transfer_instruction = SplTransfer {
             from: self.auction_token_account.to_account_info(),
             to: self.user_token_coin.to_account_info(),
             authority: self.auction_sol_account.to_account_info(),
         };
-
-        // Execute token transfer
         token::transfer(
             CpiContext::new_with_signer(
                 self.token_program.to_account_info(),
@@ -194,6 +199,7 @@ impl<'info> RaydiumMigrate<'info> {
             init_coin_amount,
         )?;
 
+        // user wallet funds this
         raydium_amm_cpi::initialize(
             self.into(),
             nonce,
@@ -201,6 +207,5 @@ impl<'info> RaydiumMigrate<'info> {
             init_pc_amount,
             init_coin_amount,
         )
-
     }
 }

@@ -138,6 +138,15 @@ describe("maxi-auction", () => {
     logObject("market", market);
     
     const [amm] = PublicKey.findProgramAddressSync([ammProgram.toBuffer(), market.toBuffer(), Buffer.from("amm_associated_seed")], ammProgram); // Derive AMM PDA
+    const ammInfo = await connection.getAccountInfo(amm);
+    if (ammInfo) { // DM - TODO: move this check up, before createMarket()...
+      console.log("AMM pool already initialized, skipping migration");
+      return;
+    }
+    else {
+      console.log("AMM pool not initialized, migrating...");
+    }
+
     const [ammAuthority] = PublicKey.findProgramAddressSync([Buffer.from("amm authority")], ammProgram); // Derive AMM authority PDA
     const [ammOpenOrders] = PublicKey.findProgramAddressSync([ammProgram.toBuffer(), market.toBuffer(), Buffer.from("open_order_associated_seed")], ammProgram); // Derive AMM open orders PDA
     const [coinVault] = PublicKey.findProgramAddressSync([ammProgram.toBuffer(), market.toBuffer(), Buffer.from("coin_vault_associated_seed")], ammProgram); // Derive coin vault PDA
@@ -172,7 +181,9 @@ describe("maxi-auction", () => {
       const sig = await sendAndConfirmTransaction(connection, tx, [signer]); // *** migrate raydium ***
     }
     catch (err) {
-      logger.color("red").log("sendAndConfirmTransaction failed:", err.getLogs());
+      console.log(err.toString());
+      logger.color("red").log("raydiumMigrate transaction signature", sig);
+      logger.color("red").log("raydiumMigrate failed:", err.getLogs());
       throw err;
     }
     logger.color("green").log("raydiumMigrate transaction signature", sig);
@@ -638,7 +649,6 @@ describe("maxi-auction", () => {
 
     const [adminBalance_after,] = await Promise.all([connection.getBalance(adminKp.publicKey),]);
     console.log(`adminBalance_after (${adminKp.publicKey.toBase58()}): ${(adminBalance_after / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-
   });
 
   it("test getMint", async () => {
