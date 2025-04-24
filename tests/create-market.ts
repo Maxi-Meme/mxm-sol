@@ -109,16 +109,21 @@ export const createMarket = async (
     const marketInstructions: TransactionInstruction[] = [];
 
     try {
-      const baseMintInfo = await getMint(connection, baseMintAddress);
-      baseMint = baseMintInfo.address;
-      baseMintDecimals = baseMintInfo.decimals;
-
-      const quoteMintInfo = await getMint(connection, NATIVE_MINT);
+      const quoteMintInfo = await getMint(connection, NATIVE_MINT, "finalized");
       quoteMint = quoteMintInfo.address;
       quoteMintDecimals = quoteMintInfo.decimals;
     } catch (e) {
-      console.error("Invalid mints provided.", e);
-      return;
+      console.error(`Invalid quoteMintInfo ${NATIVE_MINT} provided.`, e);
+      throw e;
+    }
+
+    try {
+      const baseMintInfo = await getMint(connection, baseMintAddress, "finalized");
+      baseMint = baseMintInfo.address;
+      baseMintDecimals = baseMintInfo.decimals;
+    } catch (e) {
+      console.error(`Invalid baseMintInfo ${baseMintAddress} provided.`, e);
+      throw e;
     }
 
     const timeOut = setTimeout(async () => {
@@ -411,7 +416,7 @@ export const executeLegacyTx = async (
     blockhash: latestBlockhash.blockhash,
   });
   if (confirmation.value.err) {
-    console.log("Confrimtaion error");
+    console.log("Confirmation error", confirmation.value.err);
     return null;
   } else {
     console.log(

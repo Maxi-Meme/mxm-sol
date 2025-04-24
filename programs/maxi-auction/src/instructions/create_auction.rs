@@ -197,9 +197,6 @@ impl<'info> CreateAuction<'info> {
         let start_timestamp = current_timestamp + (delay_in_seconds as i64);
         let end_timestamp = start_timestamp + (duration_hours as i64 * 36); // unit is actually hours_div_100
 
-        // Transfer SPL tokens from user to the auction token account
-        msg!("sending token to {}", self.auction_token_account.key());
-
         auction_data_account.id = auction_id;
         auction_data_account.is_finished = false;
         auction_data_account.creator = creator.key();

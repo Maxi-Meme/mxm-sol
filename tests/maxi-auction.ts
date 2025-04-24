@@ -53,6 +53,7 @@ import { createMarket } from "./create-market";
 import { DEVNET_PROGRAM_ID } from "@raydium-io/raydium-sdk";
 
 var connection;
+var isLocal = false;
 
 // Recursively convert BN and PublicKey values
 function convertValue(value) {
@@ -97,6 +98,8 @@ describe("maxi-auction", () => {
   var providerEnv = anchor.AnchorProvider.env();
   anchor.setProvider(providerEnv);
   console.log("rpcEndpoint URL:", providerEnv.connection.rpcEndpoint);
+  isLocal = providerEnv.connection.rpcEndpoint.indexOf("0.0.0.0") > -1;
+
   connection = providerEnv.connection;
   const program = anchor.workspace.MaxiAuction as Program<MaxiAuction>;
 
@@ -115,178 +118,237 @@ describe("maxi-auction", () => {
     logObject(">>> bidCancelled", event);
   });
 
-  program.addEventListener("auctionFilled", async (event) => {
+  program.addEventListener("auctionFilled", async (event) => { // Listen for 'auctionFilled' event
     logObject(">>> auctionFilled", event);
     const signer = adminKp;
     const auctionId = Number(event.auctionId.toString());
-
-    const [auctionSol] = PublicKey.findProgramAddressSync(
-      [
-        Buffer.from(auctionSolSeed),
-        new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8),
-      ],
-      program.programId
-    );
-
-    const [auctionData] = PublicKey.findProgramAddressSync(
-      [
-        Buffer.from(auctionDataSeed),
-        new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8),
-      ],
-      program.programId
-    );
-
+    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId); // Derive auctionSol PDA
+    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId); // Derive auctionData PDA
     const auctionDataAccount = await program.account.auction.fetch(auctionData);
     logObject("auctionDataAccount", auctionDataAccount);
+
+    const coinMint = new PublicKey(auctionDataAccount.tokenMint); 
+    const auctionTokenAccount = getAssociatedTokenAddressSync(coinMint, auctionSol, true); // Get auction token account
+    const pcMint = new PublicKey("So11111111111111111111111111111111111111112"); // SOL mint address
+    const ammProgram = new PublicKey("HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8"); // Raydium AMM program
+    const feeDestination = new PublicKey("FaodhCM6sEL3CGCKmcK6t6HVJXzjyrE8wHKRCrVFVX6h"); // ?
+    const market = await createMarket(signer, coinMint); // *** Create market ***
+    logObject("market", market);
     
-    const coinMint = new PublicKey(auctionDataAccount.tokenMint);
-    const auctionTokenAccount = getAssociatedTokenAddressSync(
-      coinMint,
-      auctionSol,
-      true
-    );
-
-    //  pc mint address
-    const pcMint = new PublicKey("So11111111111111111111111111111111111111112");
-
-    const ammProgram = new PublicKey(
-      "HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8"
-    );
-
-    const feeDestination = new PublicKey(
-      "FaodhCM6sEL3CGCKmcK6t6HVJXzjyrE8wHKRCrVFVX6h"
-    );
-
-    const market = await createMarket(signer, coinMint);
-    console.log("market : ", market);
-
-    const [amm] = PublicKey.findProgramAddressSync(
-      [
-        ammProgram.toBuffer(),
-        market.toBuffer(),
-        Buffer.from("amm_associated_seed"),
-      ],
-      ammProgram
-    );
-    const [ammAuthority] = PublicKey.findProgramAddressSync(
-      [Buffer.from("amm authority")],
-      ammProgram
-    );
-    const [ammOpenOrders] = PublicKey.findProgramAddressSync(
-      [
-        ammProgram.toBuffer(),
-        market.toBuffer(),
-        Buffer.from("open_order_associated_seed"),
-      ],
-      ammProgram
-    );
-    const [coinVault] = PublicKey.findProgramAddressSync(
-      [
-        ammProgram.toBuffer(),
-        market.toBuffer(),
-        Buffer.from("coin_vault_associated_seed"),
-      ],
-      ammProgram
-    );
-
-    const [pcVault] = PublicKey.findProgramAddressSync(
-      [
-        ammProgram.toBuffer(),
-        market.toBuffer(),
-        Buffer.from("pc_vault_associated_seed"),
-      ],
-      ammProgram
-    );
+    const [amm] = PublicKey.findProgramAddressSync([ammProgram.toBuffer(), market.toBuffer(), Buffer.from("amm_associated_seed")], ammProgram); // Derive AMM PDA
+    const [ammAuthority] = PublicKey.findProgramAddressSync([Buffer.from("amm authority")], ammProgram); // Derive AMM authority PDA
+    const [ammOpenOrders] = PublicKey.findProgramAddressSync([ammProgram.toBuffer(), market.toBuffer(), Buffer.from("open_order_associated_seed")], ammProgram); // Derive AMM open orders PDA
+    const [coinVault] = PublicKey.findProgramAddressSync([ammProgram.toBuffer(), market.toBuffer(), Buffer.from("coin_vault_associated_seed")], ammProgram); // Derive coin vault PDA
+    const [pcVault] = PublicKey.findProgramAddressSync([ammProgram.toBuffer(), market.toBuffer(), Buffer.from("pc_vault_associated_seed")], ammProgram); // Derive PC vault PDA
     console.log("pcVault: ", pcVault.toBase58());
 
-    const [targetOrders] = PublicKey.findProgramAddressSync(
-      [
-        ammProgram.toBuffer(),
-        market.toBuffer(),
-        Buffer.from("target_associated_seed"),
-      ],
-      ammProgram
-    );
-    console.log("targetOrders: ", targetOrders.toBase58());
+    const [targetOrders] = PublicKey.findProgramAddressSync([ammProgram.toBuffer(), market.toBuffer(), Buffer.from("target_associated_seed")], ammProgram); // Derive target orders PDA
+    console.log("targetOrders: ", targetOrders.toBase58()); // Log target orders
 
-    const [ammConfig] = PublicKey.findProgramAddressSync(
-      [Buffer.from("amm_config_account_seed")],
-      ammProgram
-    );
-
-    const [lpMint] = PublicKey.findProgramAddressSync(
-      [
-        ammProgram.toBuffer(),
-        market.toBuffer(),
-        Buffer.from("lp_mint_associated_seed"),
-      ],
-      ammProgram
-    );
-
-    const userTokenCoin = await getAssociatedTokenAddress(
-      coinMint,
-      signer.publicKey,
-      true
-    );
+    const [ammConfig] = PublicKey.findProgramAddressSync([Buffer.from("amm_config_account_seed")], ammProgram); // Derive AMM config PDA
+    const [lpMint] = PublicKey.findProgramAddressSync([ammProgram.toBuffer(), market.toBuffer(), Buffer.from("lp_mint_associated_seed")], ammProgram); // Derive LP mint PDA
+    const userTokenCoin = await getAssociatedTokenAddress(coinMint, signer.publicKey, true); // Get user coin token account
     console.log("userTokenCoin: ", userTokenCoin.toBase58());
 
-    const userTokenPc = await getAssociatedTokenAddress(
-      pcMint,
-      signer.publicKey,
-      true
-    );
-
+    const userTokenPc = await getAssociatedTokenAddress(pcMint, signer.publicKey, true); // Get user PC token account
     console.log("userTokenPc: ", userTokenPc.toBase58());
-
-    const userTokenLp = await getAssociatedTokenAddress(
-      lpMint,
-      signer.publicKey,
-      true
-    );
-
-    const nonce = 253;
-    const openTime = new BN(Math.floor(Date.now() / 1000));
-    const initPcAmount = new BN(0);
-    const initCoinAmount = new BN(0);
-
-    const tx = new Transaction();
-    tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }));
-    tx.add(
-      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_200_000 })
-    );
-    tx.add(
-      await program.methods
-        .raydiumMigrate(nonce, openTime)
-        .accounts({
-          auctionSolAccount: auctionSol,
-          auctionDataAccount: auctionData,
-          auctionTokenAccount,
-          ammProgram,
-          amm,
-          ammAuthority,
-          ammOpenOrders,
-          ammLpMint: lpMint,
-          ammCoinMint: coinMint,
-          ammPcMint: pcMint,
-          ammCoinVault: coinVault,
-          ammPcVault: pcVault,
-          ammTargetOrders: targetOrders,
-          ammConfig,
-          createFeeDestination: feeDestination,
-          market,
-          userWallet: signer.publicKey,
-          userTokenCoin,
-          userTokenPc,
-          userTokenLp,
-        })
-        .signers([signer])
-        .transaction()
-    );
-    tx.feePayer = signer.publicKey;
-    tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-    const sig = await sendAndConfirmTransaction(connection, tx, [signer]);
+    
+    const userTokenLp = await getAssociatedTokenAddress(lpMint, signer.publicKey, true); // Get user LP token account
+    const nonce = 253; // Set nonce for AMM
+    const openTime = new BN(Math.floor(Date.now() / 1000)); // Set pool open time
+    const initPcAmount = new BN(0); // Set initial PC amount
+    const initCoinAmount = new BN(0); // Set initial coin amount
+    const tx = new Transaction(); // Create new transaction
+    tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 })); // Set compute unit limit
+    tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_200_000 })); // Set compute unit price
+    tx.add(await program.methods.raydiumMigrate(nonce, openTime).accounts({ auctionSolAccount: auctionSol, auctionDataAccount: auctionData, auctionTokenAccount, ammProgram, amm, ammAuthority, ammOpenOrders, ammLpMint: lpMint, ammCoinMint: coinMint, ammPcMint: pcMint, ammCoinVault: coinVault, ammPcVault: pcVault, ammTargetOrders: targetOrders, ammConfig, createFeeDestination: feeDestination, market, userWallet: signer.publicKey, userTokenCoin, userTokenPc, userTokenLp }).signers([signer]).transaction()); // Add raydiumMigrate instruction
+    tx.feePayer = signer.publicKey; // Set fee payer
+    tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash; // Set recent blockhash
+    
+    var sig;
+    try {
+      const sig = await sendAndConfirmTransaction(connection, tx, [signer]); // *** migrate raydium ***
+    }
+    catch (err) {
+      logger.color("red").log("sendAndConfirmTransaction failed:", err.getLogs());
+      throw err;
+    }
     logger.color("green").log("raydiumMigrate transaction signature", sig);
+    await logSuccessTx(connection, sig, "raydiumMigrate");
   });
+
+  // program.addEventListener("auctionFilled", async (event) => {
+  //   logObject(">>> auctionFilled", event);
+  //   const signer = adminKp;
+  //   const auctionId = Number(event.auctionId.toString());
+
+  //   const [auctionSol] = PublicKey.findProgramAddressSync(
+  //     [
+  //       Buffer.from(auctionSolSeed),
+  //       new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8),
+  //     ],
+  //     program.programId
+  //   );
+
+  //   const [auctionData] = PublicKey.findProgramAddressSync(
+  //     [
+  //       Buffer.from(auctionDataSeed),
+  //       new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8),
+  //     ],
+  //     program.programId
+  //   );
+
+  //   const auctionDataAccount = await program.account.auction.fetch(auctionData);
+  //   logObject("auctionDataAccount", auctionDataAccount);
+    
+  //   const coinMint = new PublicKey(auctionDataAccount.tokenMint);
+  //   const auctionTokenAccount = getAssociatedTokenAddressSync(
+  //     coinMint,
+  //     auctionSol,
+  //     true
+  //   );
+
+  //   //  pc mint address
+  //   const pcMint = new PublicKey("So11111111111111111111111111111111111111112");
+
+  //   const ammProgram = new PublicKey(
+  //     "HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8"
+  //   );
+
+  //   const feeDestination = new PublicKey(
+  //     "FaodhCM6sEL3CGCKmcK6t6HVJXzjyrE8wHKRCrVFVX6h"
+  //   );
+
+  //   const market = await createMarket(signer, coinMint);
+  //   console.log("market : ", market);
+
+  //   const [amm] = PublicKey.findProgramAddressSync(
+  //     [
+  //       ammProgram.toBuffer(),
+  //       market.toBuffer(),
+  //       Buffer.from("amm_associated_seed"),
+  //     ],
+  //     ammProgram
+  //   );
+  //   const [ammAuthority] = PublicKey.findProgramAddressSync(
+  //     [Buffer.from("amm authority")],
+  //     ammProgram
+  //   );
+  //   const [ammOpenOrders] = PublicKey.findProgramAddressSync(
+  //     [
+  //       ammProgram.toBuffer(),
+  //       market.toBuffer(),
+  //       Buffer.from("open_order_associated_seed"),
+  //     ],
+  //     ammProgram
+  //   );
+  //   const [coinVault] = PublicKey.findProgramAddressSync(
+  //     [
+  //       ammProgram.toBuffer(),
+  //       market.toBuffer(),
+  //       Buffer.from("coin_vault_associated_seed"),
+  //     ],
+  //     ammProgram
+  //   );
+
+  //   const [pcVault] = PublicKey.findProgramAddressSync(
+  //     [
+  //       ammProgram.toBuffer(),
+  //       market.toBuffer(),
+  //       Buffer.from("pc_vault_associated_seed"),
+  //     ],
+  //     ammProgram
+  //   );
+  //   console.log("pcVault: ", pcVault.toBase58());
+
+  //   const [targetOrders] = PublicKey.findProgramAddressSync(
+  //     [
+  //       ammProgram.toBuffer(),
+  //       market.toBuffer(),
+  //       Buffer.from("target_associated_seed"),
+  //     ],
+  //     ammProgram
+  //   );
+  //   console.log("targetOrders: ", targetOrders.toBase58());
+
+  //   const [ammConfig] = PublicKey.findProgramAddressSync(
+  //     [Buffer.from("amm_config_account_seed")],
+  //     ammProgram
+  //   );
+
+  //   const [lpMint] = PublicKey.findProgramAddressSync(
+  //     [
+  //       ammProgram.toBuffer(),
+  //       market.toBuffer(),
+  //       Buffer.from("lp_mint_associated_seed"),
+  //     ],
+  //     ammProgram
+  //   );
+
+  //   const userTokenCoin = await getAssociatedTokenAddress(
+  //     coinMint,
+  //     signer.publicKey,
+  //     true
+  //   );
+  //   console.log("userTokenCoin: ", userTokenCoin.toBase58());
+
+  //   const userTokenPc = await getAssociatedTokenAddress(
+  //     pcMint,
+  //     signer.publicKey,
+  //     true
+  //   );
+
+  //   console.log("userTokenPc: ", userTokenPc.toBase58());
+
+  //   const userTokenLp = await getAssociatedTokenAddress(
+  //     lpMint,
+  //     signer.publicKey,
+  //     true
+  //   );
+
+  //   const nonce = 253;
+  //   const openTime = new BN(Math.floor(Date.now() / 1000));
+  //   const initPcAmount = new BN(0);
+  //   const initCoinAmount = new BN(0);
+
+  //   const tx = new Transaction();
+  //   tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }));
+  //   tx.add(
+  //     ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_200_000 })
+  //   );
+  //   tx.add(
+  //     await program.methods
+  //       .raydiumMigrate(nonce, openTime)
+  //       .accounts({
+  //         auctionSolAccount: auctionSol,
+  //         auctionDataAccount: auctionData,
+  //         auctionTokenAccount,
+  //         ammProgram,
+  //         amm,
+  //         ammAuthority,
+  //         ammOpenOrders,
+  //         ammLpMint: lpMint,
+  //         ammCoinMint: coinMint,
+  //         ammPcMint: pcMint,
+  //         ammCoinVault: coinVault,
+  //         ammPcVault: pcVault,
+  //         ammTargetOrders: targetOrders,
+  //         ammConfig,
+  //         createFeeDestination: feeDestination,
+  //         market,
+  //         userWallet: signer.publicKey,
+  //         userTokenCoin,
+  //         userTokenPc,
+  //         userTokenLp,
+  //       })
+  //       .signers([signer])
+  //       .transaction()
+  //   );
+  //   tx.feePayer = signer.publicKey;
+  //   tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+  //   const sig = await sendAndConfirmTransaction(connection, tx, [signer]);
+  //   logger.color("green").log("raydiumMigrate transaction signature", sig);
+  // });
 
   program.addEventListener("claimed", (event) => {
     logObject(">>> claimed", event);
@@ -298,11 +360,11 @@ describe("maxi-auction", () => {
 
   const adminKp = Keypair.fromSecretKey(Uint8Array.from(keypair));
 
-  const user1Kp = Keypair.generate();
-  const user2Kp = Keypair.generate();
-  const user3Kp = Keypair.generate();
-  const user4Kp = Keypair.generate();
-  const user5Kp = Keypair.generate();
+  const user1Kp = !isLocal ? adminKp : Keypair.generate(); // on devnet test admin does everything
+  const user2Kp = !isLocal ? adminKp : Keypair.generate();
+  const user3Kp = !isLocal ? adminKp : Keypair.generate();
+  const user4Kp = !isLocal ? adminKp : Keypair.generate();
+  const user5Kp = !isLocal ? adminKp : Keypair.generate();
   // const user6Kp = Keypair.generate();
   // const user7Kp = Keypair.generate();
   // const user8Kp = Keypair.generate();
@@ -312,43 +374,45 @@ describe("maxi-auction", () => {
   const tokenKp2 = Keypair.generate();
 
   before(async () => {
-    logger.color("blue").log("Airdropping SOL to accounts...");
-    logger.color("green").log("Airdrop SOL to admin");
-    const airdropTx = await connection.requestAirdrop(
-      adminKp.publicKey,
-      5 * LAMPORTS_PER_SOL
-    );
-    await connection.confirmTransaction(airdropTx);
-    logger.color("green").log("Airdrop SOL to user1");
-    const airdropTx1 = await connection.requestAirdrop(
-      user1Kp.publicKey,
-      5 * LAMPORTS_PER_SOL
-    );
-    await connection.confirmTransaction(airdropTx1);
-    logger.color("green").log("Airdrop SOL to user2");
-    const airdropTx2 = await connection.requestAirdrop(
-      user2Kp.publicKey,
-      5 * LAMPORTS_PER_SOL
-    );
-    await connection.confirmTransaction(airdropTx2);
-    logger.color("green").log("Airdrop SOL to user3");
-    const airdropTx3 = await connection.requestAirdrop(
-      user3Kp.publicKey,
-      10 * LAMPORTS_PER_SOL
-    );
-    await connection.confirmTransaction(airdropTx3);
-    logger.color("green").log("Airdrop SOL to user4");
-    const airdropTx4 = await connection.requestAirdrop(
-      user4Kp.publicKey,
-      10 * LAMPORTS_PER_SOL
-    );
-    await connection.confirmTransaction(airdropTx4);
-    logger.color("green").log("Airdrop SOL to user5");
-    const airdropTx5 = await connection.requestAirdrop(
-      user5Kp.publicKey,
-      5 * LAMPORTS_PER_SOL
-    );
-    await connection.confirmTransaction(airdropTx5);
+    if (isLocal) {
+      logger.color("blue").log("Airdropping SOL to accounts...");
+      logger.color("green").log("Airdrop SOL to admin");
+      const airdropTx = await connection.requestAirdrop(
+        adminKp.publicKey,
+        5 * LAMPORTS_PER_SOL
+      );
+      await connection.confirmTransaction(airdropTx);
+      logger.color("green").log("Airdrop SOL to user1");
+      const airdropTx1 = await connection.requestAirdrop(
+        user1Kp.publicKey,
+        5 * LAMPORTS_PER_SOL
+      );
+      await connection.confirmTransaction(airdropTx1);
+      logger.color("green").log("Airdrop SOL to user2");
+      const airdropTx2 = await connection.requestAirdrop(
+        user2Kp.publicKey,
+        5 * LAMPORTS_PER_SOL
+      );
+      await connection.confirmTransaction(airdropTx2);
+      logger.color("green").log("Airdrop SOL to user3");
+      const airdropTx3 = await connection.requestAirdrop(
+        user3Kp.publicKey,
+        10 * LAMPORTS_PER_SOL
+      );
+      await connection.confirmTransaction(airdropTx3);
+      logger.color("green").log("Airdrop SOL to user4");
+      const airdropTx4 = await connection.requestAirdrop(
+        user4Kp.publicKey,
+        10 * LAMPORTS_PER_SOL
+      );
+      await connection.confirmTransaction(airdropTx4);
+      logger.color("green").log("Airdrop SOL to user5");
+      const airdropTx5 = await connection.requestAirdrop(
+        user5Kp.publicKey,
+        5 * LAMPORTS_PER_SOL
+      );
+      await connection.confirmTransaction(airdropTx5);
+    }
   });
 
   it("initializes the contract", async () => {
@@ -363,7 +427,7 @@ describe("maxi-auction", () => {
       admin: adminKp.publicKey, //new PublicKey("7Q823wjwGC5X78XLb1QeFABtkwSP17ytHhqneCPC8aYL"),
       defaultTokenSupply: new BN(TestTokenSupply),
       defaultTokenDecimals: TestTokenDecimals,
-      defaultStartPriceSol: new BN(TestStartPriceSol * LAMPORTS_PER_SOL),
+      defaultStartPriceLamports: new BN(TestStartPriceSol * LAMPORTS_PER_SOL),
       defaultLockPercent: new BN(TestDefaultLockPercent),
     };
     const [globalInfo] = PublicKey.findProgramAddressSync(
@@ -437,11 +501,11 @@ describe("maxi-auction", () => {
       assert.equal(parseFloat(config.defaultLockPercent.toString()), TestDefaultLockPercent);
 
       console.log("\n");
-      console.log("config.defaultStartPriceSol", config.defaultStartPriceSol.toNumber());
+      console.log("config.defaultStartPriceLamports", config.defaultStartPriceLamports.toNumber());
       console.log("Math.round(TestStartPriceSol * LAMPORTS_PER_SOL)", Math.round(TestStartPriceSol * LAMPORTS_PER_SOL));
 
-      //assert.equal(config.defaultStartPriceSol.toNumber(), Math.round(TestStartPriceSol * LAMPORTS_PER_SOL), "Start price in lamports should match");      
-      //assert.equal(parseFloat(config.defaultStartPriceSol.toString()), TestStartPriceSol * LAMPORTS_PER_SOL);
+      //assert.equal(config.defaultStartPriceLamports.toNumber(), Math.round(TestStartPriceSol * LAMPORTS_PER_SOL), "Start price in lamports should match");
+      //assert.equal(parseFloat(config.defaultStartPriceLamports.toString()), TestStartPriceSol * LAMPORTS_PER_SOL);
 
       console.log("\n");
       console.log("config.defaultLockPercent", config.defaultLockPercent.toString());
@@ -545,6 +609,36 @@ describe("maxi-auction", () => {
 
     assert.equal(auctionDataFetched.tokenMint, token.publicKey.toBase58(), "tokenMint comparison");
   });
+
+  it("creates a market", async () => {
+    logger.color("magenta").log("admin is creating a market...");
+
+    // Log balances of all signing accounts before the transaction
+    const [adminBalance, ] = await Promise.all([
+      connection.getBalance(adminKp.publicKey),
+    ]);
+    console.log("Balances before creating auction (in SOL):");
+    console.log(`Admin (${adminKp.publicKey.toBase58()}): ${(adminBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+
+    const signer = adminKp;
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
+    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId); // Derive auctionSol PDA
+    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId); // Derive auctionData PDA
+    const auctionDataAccount = await program.account.auction.fetch(auctionData);
+    logObject("auctionDataAccount", auctionDataAccount);
+
+    const coinMint = new PublicKey(auctionDataAccount.tokenMint);
+    logObject("coinMint", coinMint);
+    // const auctionTokenAccount = getAssociatedTokenAddressSync(coinMint, auctionSol, true); // Get auction token account
+    // const pcMint = new PublicKey("So11111111111111111111111111111111111111112"); // SOL mint address
+    // const ammProgram = new PublicKey("HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8"); // Raydium AMM program
+    // const feeDestination = new PublicKey("FaodhCM6sEL3CGCKmcK6t6HVJXzjyrE8wHKRCrVFVX6h"); // ?
+    const market = await createMarket(signer, coinMint);
+    logObject("market", market);
+  });
+
 
   it("fills an auction", async () => {
     logger.color("magenta").log("User2 is bidding...");
