@@ -44,7 +44,7 @@ import {
   TestStartPriceSol,
   TestTokenDecimals,
   TestTokenName,
-  TestTokenQty,
+  //TestTokenQty,
   TestTokenSupply,
   TestTokenSymbol,
   TestTokenUri,
@@ -54,27 +54,69 @@ import { DEVNET_PROGRAM_ID } from "@raydium-io/raydium-sdk";
 
 var connection;
 
-describe("maxi-auction", () => {
+// Recursively convert BN and PublicKey values
+function convertValue(value) {
+  if (value instanceof BN) {
+    return value.toString(10); // BN to decimal string
+  } else if (value instanceof PublicKey) {
+    return value.toBase58(); // PublicKey to base58 string
+  } else if (Array.isArray(value)) {
+    return value.map(convertValue); // Handle arrays
+  } else if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, val]) => [key, convertValue(val)])
+    ); // Handle objects
+  }
+  return value; // Leave other types as-is
+}
+function logObject(label, obj) {
+  const convertedObj = convertValue(obj);
+  console.log(label, convertedObj);
+}
 
+async function logSuccessTx(connection, sig, label) {
+  // Fetch transaction details
+  const txDetails = await connection.getTransaction(sig, {
+    commitment: 'confirmed',
+    maxSupportedTransactionVersion: 0
+  });
+
+  // Log the transaction signature
+  logger.color("green").log(`${label} transaction signature:`, sig);
+
+  // Log the transaction logs if available
+  if (txDetails && txDetails.meta && txDetails.meta.logMessages) {
+    console.log("Transaction logs:", txDetails.meta.logMessages);
+  } else {
+    console.log("No logs available for this transaction.");
+  }
+}
+
+describe("maxi-auction", () => {
   // setup provider
   var providerEnv = anchor.AnchorProvider.env();
   anchor.setProvider(providerEnv);
-  console.log("Connection URL:", providerEnv.connection.rpcEndpoint);
+  console.log("rpcEndpoint URL:", providerEnv.connection.rpcEndpoint);
   connection = providerEnv.connection;
   const program = anchor.workspace.MaxiAuction as Program<MaxiAuction>;
 
   // add listeners
+  console.log("Setting up listeners...");
+
   program.addEventListener("auctionCreated", (event) => {
-    console.log("auctionCreated", event);
+    logObject(">>> auctionCreated", event);
   });
+
   program.addEventListener("newBid", (event) => {
-    console.log("newBid", event);
+    logObject(">>> newBid", event);
   });
+
   program.addEventListener("bidCancelled", (event) => {
-    console.log("bidCancelled", event);
+    logObject(">>> bidCancelled", event);
   });
+
   program.addEventListener("auctionFilled", async (event) => {
-    console.log("auctionFilled", event);
+    logObject(">>> auctionFilled", event);
     const signer = adminKp;
     const auctionId = Number(event.auctionId.toString());
 
@@ -95,7 +137,7 @@ describe("maxi-auction", () => {
     );
 
     const auctionDataAccount = await program.account.auction.fetch(auctionData);
-    console.log("auctionDataAccount", auctionDataAccount)
+    logObject("auctionDataAccount", auctionDataAccount);
     
     const coinMint = new PublicKey(auctionDataAccount.tokenMint);
     const auctionTokenAccount = getAssociatedTokenAddressSync(
@@ -243,13 +285,15 @@ describe("maxi-auction", () => {
     tx.feePayer = signer.publicKey;
     tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
     const sig = await sendAndConfirmTransaction(connection, tx, [signer]);
-    logger.color("green").log("Your transaction signature", sig);
+    logger.color("green").log("raydiumMigrate transaction signature", sig);
   });
+
   program.addEventListener("claimed", (event) => {
-    console.log("claimed", event);
+    logObject(">>> claimed", event);
   });
+
   program.addEventListener("auctionMigrated", (event) => {
-    console.log("auctionMigrated", event);
+    logObject(">>> auctionMigrated", event);
   });
 
   const adminKp = Keypair.fromSecretKey(Uint8Array.from(keypair));
@@ -267,48 +311,48 @@ describe("maxi-auction", () => {
   const tokenKp1 = Keypair.generate();
   const tokenKp2 = Keypair.generate();
 
-  // before(async () => {
-  //   logger.color("blue").log("Airdropping SOL to accounts...");
-  //   logger.color("green").log("Airdrop SOL to admin");
-  //   const airdropTx = await connection.requestAirdrop(
-  //     adminKp.publicKey,
-  //     5 * LAMPORTS_PER_SOL
-  //   );
-  //   await connection.confirmTransaction(airdropTx);
-  //   logger.color("green").log("Airdrop SOL to user1");
-  //   const airdropTx1 = await connection.requestAirdrop(
-  //     user1Kp.publicKey,
-  //     5 * LAMPORTS_PER_SOL
-  //   );
-  //   await connection.confirmTransaction(airdropTx1);
-  //   logger.color("green").log("Airdrop SOL to user2");
-  //   const airdropTx2 = await connection.requestAirdrop(
-  //     user2Kp.publicKey,
-  //     5 * LAMPORTS_PER_SOL
-  //   );
-  //   await connection.confirmTransaction(airdropTx2);
-  //   logger.color("green").log("Airdrop SOL to user3");
-  //   const airdropTx3 = await connection.requestAirdrop(
-  //     user3Kp.publicKey,
-  //     10 * LAMPORTS_PER_SOL
-  //   );
-  //   await connection.confirmTransaction(airdropTx3);
-  //   logger.color("green").log("Airdrop SOL to user4");
-  //   const airdropTx4 = await connection.requestAirdrop(
-  //     user4Kp.publicKey,
-  //     10 * LAMPORTS_PER_SOL
-  //   );
-  //   await connection.confirmTransaction(airdropTx4);
-  //   logger.color("green").log("Airdrop SOL to user5");
-  //   const airdropTx5 = await connection.requestAirdrop(
-  //     user5Kp.publicKey,
-  //     5 * LAMPORTS_PER_SOL
-  //   );
-  //   await connection.confirmTransaction(airdropTx5);
-  // });
+  before(async () => {
+    logger.color("blue").log("Airdropping SOL to accounts...");
+    logger.color("green").log("Airdrop SOL to admin");
+    const airdropTx = await connection.requestAirdrop(
+      adminKp.publicKey,
+      5 * LAMPORTS_PER_SOL
+    );
+    await connection.confirmTransaction(airdropTx);
+    logger.color("green").log("Airdrop SOL to user1");
+    const airdropTx1 = await connection.requestAirdrop(
+      user1Kp.publicKey,
+      5 * LAMPORTS_PER_SOL
+    );
+    await connection.confirmTransaction(airdropTx1);
+    logger.color("green").log("Airdrop SOL to user2");
+    const airdropTx2 = await connection.requestAirdrop(
+      user2Kp.publicKey,
+      5 * LAMPORTS_PER_SOL
+    );
+    await connection.confirmTransaction(airdropTx2);
+    logger.color("green").log("Airdrop SOL to user3");
+    const airdropTx3 = await connection.requestAirdrop(
+      user3Kp.publicKey,
+      10 * LAMPORTS_PER_SOL
+    );
+    await connection.confirmTransaction(airdropTx3);
+    logger.color("green").log("Airdrop SOL to user4");
+    const airdropTx4 = await connection.requestAirdrop(
+      user4Kp.publicKey,
+      10 * LAMPORTS_PER_SOL
+    );
+    await connection.confirmTransaction(airdropTx4);
+    logger.color("green").log("Airdrop SOL to user5");
+    const airdropTx5 = await connection.requestAirdrop(
+      user5Kp.publicKey,
+      5 * LAMPORTS_PER_SOL
+    );
+    await connection.confirmTransaction(airdropTx5);
+  });
 
-  it("Is initialized!", async () => {
-    logger.color("magenta").log("Initializing the auction system...");
+  it("initializes the contract", async () => {
+    logger.color("magenta").log("*** Initializing the auction system...");
     const signer = adminKp;
   
     console.log("Program ID in test:", program.programId.toBase58());
@@ -316,7 +360,7 @@ describe("maxi-auction", () => {
     console.log("connection.rpcEndpoint", connection.rpcEndpoint);
   
     const newConfig = {
-      admin: new PublicKey("7Q823wjwGC5X78XLb1QeFABtkwSP17ytHhqneCPC8aYL"),
+      admin: adminKp.publicKey, //new PublicKey("7Q823wjwGC5X78XLb1QeFABtkwSP17ytHhqneCPC8aYL"),
       defaultTokenSupply: new BN(TestTokenSupply),
       defaultTokenDecimals: TestTokenDecimals,
       defaultStartPriceSol: new BN(TestStartPriceSol * LAMPORTS_PER_SOL),
@@ -413,134 +457,146 @@ describe("maxi-auction", () => {
     }
   });
 
-  // it("Is auction created!", async () => {
-  //   logger.color("magenta").log("User1 is creating auction...");
-  //   const [globalInfo] = PublicKey.findProgramAddressSync(
-  //     [Buffer.from(globalInfoSeed)],
-  //     program.programId
-  //   );
+  it("creates an auction", async () => {
+    logger.color("magenta").log("User1 is creating auction...");
+    const [globalInfo] = PublicKey.findProgramAddressSync(
+      [Buffer.from(globalInfoSeed)],
+      program.programId
+    );
 
-  //   const signer = user1Kp;
-  //   const token = tokenKp1;
+    const signer = user1Kp;
+    const token = tokenKp1;
 
-  //   const name = TestTokenName;
-  //   const symbol = TestTokenSymbol;
-  //   const uri = TestTokenUri;
-  //   const durationHours = new BN(TestHours);
-  //   const lockPercent = TestLockPercent;
+    const xId = new BN(42);
+    const name = TestTokenName;
+    const symbol = TestTokenSymbol;
+    const uri = TestTokenUri;
+    const durationHours = new BN(10); // about 5mins: unit is actually hours_div_100, or 36s 
+    const lockPercent = new BN(TestLockPercent); //TestLockPercent;
+    const delaySeconds = new BN(0);
 
-  //   const tx = await program.methods
-  //     .createAuction(name, symbol, uri, durationHours, lockPercent)
-  //     .accounts({
-  //       creator: signer.publicKey,
-  //       tokenMint: token.publicKey,
-  //     })
-  //     .signers([signer, token])
-  //     .transaction();
-  //   tx.feePayer = signer.publicKey;
-  //   tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+    // Log balances of all signing accounts before the transaction
+    const [adminBalance, signerBalance, tokenBalance] = await Promise.all([
+      connection.getBalance(adminKp.publicKey),
+      connection.getBalance(signer.publicKey),
+      connection.getBalance(token.publicKey),
+    ]);
+    console.log("Balances before creating auction (in SOL):");
+    console.log(`Admin (${adminKp.publicKey.toBase58()}): ${(adminBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+    console.log(`Signer (${signer.publicKey.toBase58()}): ${(signerBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+    console.log(`Token mint (${token.publicKey.toBase58()}): ${(tokenBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
 
-  //   // console.log(await connection.simulateTransaction(tx));
+    const tx = await program.methods
+      .createAuction(xId, name, symbol, uri, durationHours, lockPercent, delaySeconds)
+      .accounts({
+        creator: signer.publicKey,
+        admin: adminKp.publicKey,
+        tokenMint: token.publicKey,
+      })
+      .transaction();
+    tx.feePayer = signer.publicKey;
+    tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
 
-  //   const sig = await sendAndConfirmTransaction(connection, tx, [
-  //     signer,
-  //     token,
-  //   ]);
-  //   logger.color("green").log("Your transaction signature:", sig);
+    // try {
+    // console.log("*** simulateTransaction createAuction", await connection.simulateTransaction(tx));
+    // }
+    // catch (error) {
+    //   console.error("Error during transaction signing or confirmation:", error);
+    //   if (error instanceof Error && "getLogs" in error) {
+    //     const logs = await error.getLogs;
+    //     console.error("Simulation logs:", logs);
+    //   }
+    //   throw error;
+    // }
+    try {
+      const sig = await sendAndConfirmTransaction(connection, tx, [adminKp, signer, token]);
+      logger.color("green").log("createAuction transaction signature:", sig);
+    }
+    catch (err) {
+      console.error("Error during transaction signing or confirmation:", err);
+      if (err instanceof Error && "getLogs" in err) {
+        const logs = await err.getLogs;
+        console.error("logs:", logs);
+      }
+      throw err;
+    }
 
-  //   const globalInfoAccount = await program.account.globalInfo.fetch(
-  //     globalInfo
-  //   );
-  //   const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
+    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
+    console.log("auctionId", auctionId);
 
-  //   const [auctionData] = PublicKey.findProgramAddressSync(
-  //     [
-  //       Buffer.from(auctionDataSeed),
-  //       new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8),
-  //     ],
-  //     program.programId
-  //   );
+    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8),], program.programId);
+    console.log("auctionData", auctionData);
 
-  //   const auctionDataAccount = await program.account.auction.fetch(auctionData);
+    const auctionDataFetched = await program.account.auction.fetch(auctionData);
+    logObject("auctionDataFetched", auctionDataFetched);
 
-  //   // auction num
-  //   assert.equal(globalInfoAccount.auctionsNum, 1);
+    // auction num
+    //assert.equal(globalInfoAccount.auctionsNum, 1);
 
-  //   // auction states
-  //   assert.equal(parseFloat(auctionDataAccount.id.toString()), auctionId);
-  //   assert.equal(auctionDataAccount.isFinished, false);
-  //   assert.equal(auctionDataAccount.creator, signer.publicKey.toBase58());
+    // auction states
+    assert.equal(parseFloat(auctionDataFetched.id.toString()), auctionId);
+    assert.equal(auctionDataFetched.isFinished, false);
+    assert.equal(auctionDataFetched.creator, signer.publicKey.toBase58());
 
-  //   const startTimestamp = parseFloat(
-  //     auctionDataAccount.startTimestamp.toString()
-  //   );
-  //   const endTimestamp = parseFloat(auctionDataAccount.endTimestamp.toString());
-  //   assert.equal(
-  //     endTimestamp - startTimestamp,
-  //     TestHours * 3600,
-  //     "duration comparison"
-  //   );
-  //   assert.equal(
-  //     auctionDataAccount.tokenMint,
-  //     token.publicKey.toBase58(),
-  //     "tokenMint comparison"
-  //   );
-  // });
+    //const startTimestamp = parseFloat(auctionDataFetched.startTimestamp.toString());
+    //const endTimestamp = parseFloat(auctionDataFetched.endTimestamp.toString());
+    //assert.equal(endTimestamp - startTimestamp, TestHours * 36 /* hours_div_100 lol*/, "duration comparison");
 
-  // it("User2 is bidding", async () => {
-  //   logger.color("magenta").log("User2 is bidding...");
-  //   const signer = user2Kp;
-  //   const bidQty = new BN(TestBidQty1);
-  //   const bidSol = new BN(TestBidSol1 * LAMPORTS_PER_SOL);
+    assert.equal(auctionDataFetched.tokenMint, token.publicKey.toBase58(), "tokenMint comparison");
+  });
 
-  //   const [globalInfo] = PublicKey.findProgramAddressSync(
-  //     [Buffer.from(globalInfoSeed)],
-  //     program.programId
-  //   );
-  //   const globalInfoAccount = await program.account.globalInfo.fetch(
-  //     globalInfo
-  //   );
+  it("fills an auction", async () => {
+    logger.color("magenta").log("User2 is bidding...");
 
-  //   const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
+    console.log("auctionId", auctionId);
+    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8),], program.programId);
+    console.log("auctionSol", auctionSol);
 
-  //   const [auctionSol] = PublicKey.findProgramAddressSync(
-  //     [
-  //       Buffer.from(auctionSolSeed),
-  //       new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8),
-  //     ],
-  //     program.programId
-  //   );
+    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8),], program.programId);
+    console.log("auctionData", auctionData);
 
-  //   const [auctionData] = PublicKey.findProgramAddressSync(
-  //     [
-  //       Buffer.from(auctionDataSeed),
-  //       new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8),
-  //     ],
-  //     program.programId
-  //   );
+    const auctionDataFetched_Before = await program.account.auction.fetch(auctionData);
+    logObject("auctionDataFetched_Before", auctionDataFetched_Before);
 
-  //   const tx = await program.methods
-  //     .placeBid(bidQty, bidSol)
-  //     .accounts({
-  //       bidder: signer.publicKey,
-  //       auctionDataAccount: auctionData,
-  //       auctionSolAccount: auctionSol,
-  //     })
-  //     .signers([signer])
-  //     .transaction();
+    const signer = user2Kp;
+    const bidQty = auctionDataFetched_Before.tokenSupply; // BID ALL SUPPLY  //new BN(TestBidQty1);
+    //const bidQty = new BN(TestBidQty1);
+    //const bidSol = new BN(TestBidSol1 * LAMPORTS_PER_SOL);
 
-  //   tx.feePayer = signer.publicKey;
-  //   tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-  //   // logge.color('connection').logr(await connection.simulateTransaction(tx));
+    const [signerBalance,] = await Promise.all([
+      connection.getBalance(signer.publicKey),
+    ]);
+    console.log("Balances before creating auction (in SOL):");
+    console.log(`Signer (Bidder) (${signer.publicKey.toBase58()}): ${(signerBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
 
-  //   const sig = await sendAndConfirmTransaction(connection, tx, [signer]);
-  //   logger.color("green").log("Your transaction signature", sig);
+    const tx = await program.methods
+      .placeBid(bidQty, new BN(42))
+      .accounts({
+        bidder: signer.publicKey,
+        auctionDataAccount: auctionData,
+        auctionSolAccount: auctionSol,
+      })
+      //.signers([signer])
+      .transaction();
+    tx.feePayer = signer.publicKey;
+    tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+    // logge.color('connection').logr(await connection.simulateTransaction(tx));
 
-  //   const auctionDataAccount = await program.account.auction.fetch(auctionData);
+    var sig; try {
+      sig = await sendAndConfirmTransaction(connection, tx, [adminKp, signer]);
+      await logSuccessTx(connection, sig, "placeBid");
+    }
+    catch (err) { console.error("logs:", await err.getLogs); throw err; }
+    logger.color("green").log("placeBid transaction signature", sig);
 
-  //   // auction states
-  //   assert.equal(auctionDataAccount.bids.length, 1, "bid length comparison");
-  // });
+    const auctionDataFetched_After = await program.account.auction.fetch(auctionData);
+    logObject("auctionDataFetched_After", auctionDataFetched_After);
+    assert.equal(auctionDataFetched_After.bids.length, 1, "bid length comparison");
+  });
 
   // it("User3 is bidding", async () => {
   //   logger.color("magenta").log("User3 is bidding...");

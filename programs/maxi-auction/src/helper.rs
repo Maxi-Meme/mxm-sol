@@ -6,8 +6,10 @@ use crate::states::AuctionStatus;
 pub(crate) fn get_remaining_tokens(auction: &Auction) -> u64 {
     let token_qty = (auction
         .token_supply
-        .saturating_mul(1000 - auction.lock_percent as u64))
-    .saturating_div(1000 * 10u64.pow(auction.token_decimals as u32));
+    //.saturating_mul(1000 - auction.lock_percent as u64))
+    //.saturating_div(1000 * 10u64.pow(auction.token_decimals as u32)
+    )
+    ;
 
     let allocated: u64 = auction.bids.iter().map(|b| b.bid_qty).sum();
     token_qty.saturating_sub(allocated)
@@ -16,18 +18,18 @@ pub(crate) fn get_remaining_tokens(auction: &Auction) -> u64 {
 pub(crate) fn get_current_price(
     auction: &Auction,
     current_time: i64,
-    default_start_price_sol: u64,
+    default_start_price_lamports: u64,
 ) -> Option<u64> {
     // linear decay from start_price_sol at start_timestamp to 1 lamport at end_timestamp
     if current_time <= auction.start_timestamp {
-        return Some(default_start_price_sol);
+        return Some(default_start_price_lamports);
     }
     if current_time >= auction.end_timestamp {
         return Some(1); // Minimum price of 1 lamport
     }
 
     let start_time = auction.start_timestamp;
-    let start_price = default_start_price_sol;
+    let start_price = default_start_price_lamports;
 
     let total_duration = (auction.end_timestamp - start_time) as u64;
     if total_duration == 0 {
@@ -47,8 +49,10 @@ pub(crate) fn get_current_price(
 pub(crate) fn get_auction_status(auction: &Auction, current_time: i64) -> AuctionStatus {
     let token_qty = (auction
         .token_supply
-        .saturating_mul(1000 - auction.lock_percent as u64))
-    .saturating_div(1000 * 10u64.pow(auction.token_decimals as u32));
+        //.saturating_mul(1000 - auction.lock_percent as u64))
+        //.saturating_div(1000 * 10u64.pow(auction.token_decimals as u32)
+        )
+        ;
     let allocated: u64 = auction.bids.iter().map(|b| b.bid_qty).sum();
     if allocated >= token_qty {
         AuctionStatus::ClosedFullyAllocated
@@ -77,8 +81,11 @@ pub(crate) fn get_auction_clearing_price(auction: &Auction) -> Option<u64> {
         AuctionStatus::ClosedFullyAllocated => {
             let token_qty = (auction
                 .token_supply
-                .saturating_mul(1000 - auction.lock_percent as u64))
-            .saturating_div(1000 * 10u64.pow(auction.token_decimals as u32));
+                //.saturating_mul(1000 - auction.lock_percent as u64))
+                //.saturating_div(1000 * 10u64.pow(auction.token_decimals as u32)
+                )
+                ;
+
             // clearing price is the last bid that exactly fills the supply
             let mut cummulative_qty = 0u64;
             for bid in &auction.bids {

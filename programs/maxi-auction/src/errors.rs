@@ -52,4 +52,10 @@ pub enum CustomError {
 
     #[msg("Bid already claimed.")]
     BidAlreadyClaimed,
+
+    #[msg("Auction not started.")]
+    AuctionNotStarted,
+
+    #[msg("Invalid bid quantity.")]
+    InvalidBidQuantity,
 }

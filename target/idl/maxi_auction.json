@@ -1,5 +1,5 @@
 {
-  "address": "AuYwiNyd1y3cUchTzrFsML5KasUgYWYHvMncxEBCVWhX",
+  "address": "Dtk6pFaoxnGRHH3WawaSVkWMsr7GgmuSaTbdGyxn2kyU",
   "metadata": {
     "name": "maxi_auction",
     "version": "0.1.2",
@@ -1086,6 +1086,16 @@
       "code": 6015,
       "name": "BidAlreadyClaimed",
       "msg": "Bid already claimed."
+    },
+    {
+      "code": 6016,
+      "name": "AuctionNotStarted",
+      "msg": "Auction not started."
+    },
+    {
+      "code": 6017,
+      "name": "InvalidBidQuantity",
+      "msg": "Invalid bid quantity."
     }
   ],
   "types": [
@@ -1305,7 +1315,7 @@
             "type": "u8"
           },
           {
-            "name": "default_start_price_sol",
+            "name": "default_start_price_lamports",
             "type": "u64"
           },
           {

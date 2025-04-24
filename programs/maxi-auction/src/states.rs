@@ -6,7 +6,7 @@ pub struct Config {
     pub admin: Pubkey,
     pub default_token_supply: u64,
     pub default_token_decimals: u8,
-    pub default_start_price_sol: u64,
+    pub default_start_price_lamports: u64,
     pub default_lock_percent: u64,
 }
 
