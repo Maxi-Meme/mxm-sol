@@ -2759,8 +2759,3 @@ dependencies = [
  "quote",
  "syn 2.0.100",
 ]
-
-[[patch.unused]]
-name = "anchor-lang"
-version = "0.31.0"
-source = "git+https://github.com/solana-foundation/anchor?rev=54d5396#54d5396acb52f931fea9d41efc4a1af6d3add5fc"
