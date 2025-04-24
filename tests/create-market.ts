@@ -21,7 +21,7 @@ import {
 } from "@solana/spl-token";
 import BN from "bn.js";
 import { DexInstructions, Market } from "@project-serum/serum";
-import { connection } from "./config";
+//import { connection } from "./config";
 
 const raydiumProgramId = DEVNET_PROGRAM_ID;
 
@@ -98,7 +98,8 @@ export async function getVaultOwnerAndNonce(
 
 export const createMarket = async (
   wallet: Keypair,
-  baseMintAddress: PublicKey
+  baseMintAddress: PublicKey,
+  connection: Connection
 ) => {
   try {
     let baseMint: PublicKey;
@@ -108,17 +109,17 @@ export const createMarket = async (
     const vaultInstructions: TransactionInstruction[] = [];
     const marketInstructions: TransactionInstruction[] = [];
 
+    console.log('connection.rpcEndpoint', connection.rpcEndpoint);
     try {
-      const quoteMintInfo = await getMint(connection, NATIVE_MINT, "finalized");
+      const quoteMintInfo = await getMint(connection, NATIVE_MINT, "finalized", TOKEN_PROGRAM_ID);
       quoteMint = quoteMintInfo.address;
       quoteMintDecimals = quoteMintInfo.decimals;
     } catch (e) {
       console.error(`Invalid quoteMintInfo ${NATIVE_MINT} provided.`, e);
       throw e;
     }
-
     try {
-      const baseMintInfo = await getMint(connection, baseMintAddress, "finalized");
+      const baseMintInfo = await getMint(connection, baseMintAddress, "finalized", TOKEN_PROGRAM_ID);
       baseMint = baseMintInfo.address;
       baseMintDecimals = baseMintInfo.decimals;
     } catch (e) {
@@ -128,7 +129,7 @@ export const createMarket = async (
 
     const timeOut = setTimeout(async () => {
       console.log("Trying market creation again");
-      const marketId = await createMarket(wallet, baseMintAddress);
+      const marketId = await createMarket(wallet, baseMintAddress, connection);
       return marketId;
     }, 20000);
 
@@ -323,7 +324,7 @@ export const createMarket = async (
             createVaultTransaction,
             [wallet, marketAccounts.baseVault, marketAccounts.quoteVault],
             //  @ts-ignore
-            blockhash
+            blockhash, connection
           );
           if (!sig1) console.log("Retrying create vault transaction");
           else {
@@ -353,7 +354,8 @@ export const createMarket = async (
               marketAccounts.asks,
             ],
             //  @ts-ignore
-            blockhash
+            blockhash,
+            connection
           );
 
           if (!sig2) console.log("Retrying create market transaction");
@@ -403,7 +405,8 @@ export function calculateTotalAccountSize(
 export const executeLegacyTx = async (
   transaction: Transaction,
   signer: Keypair[],
-  latestBlockhash: Blockhash
+  latestBlockhash: Blockhash,
+  connection: Connection
 ) => {
   const signature = await connection.sendTransaction(transaction, signer, {
     skipPreflight: true,

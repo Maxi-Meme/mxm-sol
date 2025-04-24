@@ -17,6 +17,8 @@ import {
   getAssociatedTokenAddress,
   getAssociatedTokenAddressSync,
   mintTo,
+  getMint,
+  TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import { MaxiAuction } from "../target/types/maxi_auction";
 import keypair from "../id.json";
@@ -132,7 +134,7 @@ describe("maxi-auction", () => {
     const pcMint = new PublicKey("So11111111111111111111111111111111111111112"); // SOL mint address
     const ammProgram = new PublicKey("HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8"); // Raydium AMM program
     const feeDestination = new PublicKey("FaodhCM6sEL3CGCKmcK6t6HVJXzjyrE8wHKRCrVFVX6h"); // ?
-    const market = await createMarket(signer, coinMint); // *** Create market ***
+    const market = await createMarket(signer, coinMint, connection); // *** Create market ***
     logObject("market", market);
     
     const [amm] = PublicKey.findProgramAddressSync([ammProgram.toBuffer(), market.toBuffer(), Buffer.from("amm_associated_seed")], ammProgram); // Derive AMM PDA
@@ -200,7 +202,7 @@ describe("maxi-auction", () => {
 
   //   const auctionDataAccount = await program.account.auction.fetch(auctionData);
   //   logObject("auctionDataAccount", auctionDataAccount);
-    
+
   //   const coinMint = new PublicKey(auctionDataAccount.tokenMint);
   //   const auctionTokenAccount = getAssociatedTokenAddressSync(
   //     coinMint,
@@ -219,7 +221,7 @@ describe("maxi-auction", () => {
   //     "FaodhCM6sEL3CGCKmcK6t6HVJXzjyrE8wHKRCrVFVX6h"
   //   );
 
-  //   const market = await createMarket(signer, coinMint);
+  //   const market = await createMarket(signer, coinMint, connection);
   //   console.log("market : ", market);
 
   //   const [amm] = PublicKey.findProgramAddressSync(
@@ -613,12 +615,8 @@ describe("maxi-auction", () => {
   it("creates a market", async () => {
     logger.color("magenta").log("admin is creating a market...");
 
-    // Log balances of all signing accounts before the transaction
-    const [adminBalance, ] = await Promise.all([
-      connection.getBalance(adminKp.publicKey),
-    ]);
-    console.log("Balances before creating auction (in SOL):");
-    console.log(`Admin (${adminKp.publicKey.toBase58()}): ${(adminBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+    const [adminBalance_before,] = await Promise.all([connection.getBalance(adminKp.publicKey),]);
+    console.log(`adminBalance_before (${adminKp.publicKey.toBase58()}): ${(adminBalance_before / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
 
     const signer = adminKp;
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
@@ -635,10 +633,31 @@ describe("maxi-auction", () => {
     // const pcMint = new PublicKey("So11111111111111111111111111111111111111112"); // SOL mint address
     // const ammProgram = new PublicKey("HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8"); // Raydium AMM program
     // const feeDestination = new PublicKey("FaodhCM6sEL3CGCKmcK6t6HVJXzjyrE8wHKRCrVFVX6h"); // ?
-    const market = await createMarket(signer, coinMint);
+    const market = await createMarket(signer, coinMint, connection);
     logObject("market", market);
+
+    const [adminBalance_after,] = await Promise.all([connection.getBalance(adminKp.publicKey),]);
+    console.log(`adminBalance_after (${adminKp.publicKey.toBase58()}): ${(adminBalance_after / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+
   });
 
+  it("test getMint", async () => {
+    const connection = new Connection("https://api.devnet.solana.com", "finalized");
+    const mintAddress = new PublicKey("3qm3Vvv8kpgRnyN3Us5tvz3R3QMpocGqN98xuKS3PFja");
+    try {
+      console.log('connection.rpcEndpoint', connection.rpcEndpoint);
+      const mintInfo = await getMint(connection, mintAddress, "finalized", TOKEN_PROGRAM_ID);
+      console.log("Mint Info:", {
+        supply: mintInfo.supply.toString(),
+        decimals: mintInfo.decimals,
+        isInitialized: mintInfo.isInitialized,
+        mintAuthority: mintInfo.mintAuthority?.toBase58() || "None",
+        freezeAuthority: mintInfo.freezeAuthority?.toBase58() || "None",
+      });
+    } catch (error) {
+      console.error("Error fetching mint:", error.message);
+    }
+  });
 
   it("fills an auction", async () => {
     logger.color("magenta").log("User2 is bidding...");
