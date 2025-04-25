@@ -134,9 +134,11 @@ describe("maxi-auction", () => {
     const pcMint = new PublicKey("So11111111111111111111111111111111111111112"); // SOL mint address
     const ammProgram = new PublicKey("HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8"); // Raydium AMM program
     const feeDestination = new PublicKey("FaodhCM6sEL3CGCKmcK6t6HVJXzjyrE8wHKRCrVFVX6h"); // ?
-    const market = await createMarket(signer, coinMint, connection); // *** Create market ***
-    logObject("market", market);
-    
+    const { marketAddress, dexAddress } = await createMarket(signer, coinMint, connection); // *** Create market ***
+    const market = marketAddress;
+    logObject("marketAddress", marketAddress);
+    logObject("dexAddress", dexAddress);
+
     const [amm] = PublicKey.findProgramAddressSync([ammProgram.toBuffer(), market.toBuffer(), Buffer.from("amm_associated_seed")], ammProgram); // Derive AMM PDA
     const ammInfo = await connection.getAccountInfo(amm);
     if (ammInfo) { // DM - TODO: move this check up, before createMarket()...
@@ -172,7 +174,29 @@ describe("maxi-auction", () => {
     const tx = new Transaction(); // Create new transaction
     tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 })); // Set compute unit limit
     tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_200_000 })); // Set compute unit price
-    tx.add(await program.methods.raydiumMigrate(nonce, openTime).accounts({ auctionSolAccount: auctionSol, auctionDataAccount: auctionData, auctionTokenAccount, ammProgram, amm, ammAuthority, ammOpenOrders, ammLpMint: lpMint, ammCoinMint: coinMint, ammPcMint: pcMint, ammCoinVault: coinVault, ammPcVault: pcVault, ammTargetOrders: targetOrders, ammConfig, createFeeDestination: feeDestination, market, userWallet: signer.publicKey, userTokenCoin, userTokenPc, userTokenLp }).signers([signer]).transaction()); // Add raydiumMigrate instruction
+    tx.add(await program.methods.raydiumMigrate(nonce, openTime).accounts({
+      auctionSolAccount: auctionSol,
+      auctionDataAccount: auctionData,
+      auctionTokenAccount,
+      ammProgram,
+      amm,
+      ammAuthority,
+      ammOpenOrders,
+      ammLpMint: lpMint,
+      ammCoinMint: coinMint,
+      ammPcMint: pcMint,
+      ammCoinVault: coinVault,
+      ammPcVault: pcVault,
+      ammTargetOrders: targetOrders,
+      ammConfig,
+      createFeeDestination: feeDestination,
+      marketProgram: dexAddress,
+      market,
+      userWallet: signer.publicKey,
+      userTokenCoin,
+      userTokenPc,
+      userTokenLp
+    }).signers([signer]).transaction()); // Add raydiumMigrate instruction
     tx.feePayer = signer.publicKey; // Set fee payer
     tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash; // Set recent blockhash
     
@@ -428,14 +452,20 @@ describe("maxi-auction", () => {
     }
   });
 
-  it("initializes the contract", async () => {
+  it("inits, creates & fills", async () => {
+    await test_init();
+    await test_create_auction();
+    await test_fill_auction();
+  });
+
+  async function test_init() { 
     logger.color("magenta").log("*** Initializing the auction system...");
     const signer = adminKp;
-  
+
     console.log("Program ID in test:", program.programId.toBase58());
     console.log("signer.publicKey:", signer.publicKey.toBase58());
     console.log("connection.rpcEndpoint", connection.rpcEndpoint);
-  
+
     const newConfig = {
       admin: adminKp.publicKey, //new PublicKey("7Q823wjwGC5X78XLb1QeFABtkwSP17ytHhqneCPC8aYL"),
       defaultTokenSupply: new BN(TestTokenSupply),
@@ -456,7 +486,7 @@ describe("maxi-auction", () => {
       .transaction();
     tx.feePayer = signer.publicKey;
     tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-  
+
     try {
       const simulationResult = await connection.simulateTransaction(tx);
       console.log("Simulation result:", simulationResult);
@@ -467,29 +497,29 @@ describe("maxi-auction", () => {
 
       var sig;
       //try {
-        //var ok = false;
-        //var tries = 0;
-        //while (!ok) {
-          try {
-            //console.log("sendAndConfirmTransaction try", tries++);
-            sig = await sendAndConfirmTransaction(connection, tx, [signer]);
-          } catch (err) {
-            logger.color("red").log("sendAndConfirmTransaction failed:", err.getLogs());
-            throw err;
-          }
-          //ok = true;
-        //}
+      //var ok = false;
+      //var tries = 0;
+      //while (!ok) {
+      try {
+        //console.log("sendAndConfirmTransaction try", tries++);
+        sig = await sendAndConfirmTransaction(connection, tx, [signer]);
+      } catch (err) {
+        logger.color("red").log("sendAndConfirmTransaction failed:", err.getLogs());
+        throw err;
+      }
+      //ok = true;
+      //}
       //}
       // catch (err) {
       //   logger.color("red").log("sendAndConfirmTransaction failed:", err.getLogs());
       //   throw err;
       // }
       logger.color("green").log("Your transaction signature", sig);
-  
+
       const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
       logger.color("green").log("globalInfoAccount", globalInfoAccount);
       const { deployer, config, auctionsNum } = globalInfoAccount;
-  
+
       console.log("\n");
       console.log("deployer", deployer.toString());
       console.log("signer.publicKey", signer.publicKey.toString());
@@ -532,9 +562,9 @@ describe("maxi-auction", () => {
       }
       throw e;
     }
-  });
+  }
 
-  it("creates an auction", async () => {
+  async function test_create_auction() {
     logger.color("magenta").log("User1 is creating auction...");
     const [globalInfo] = PublicKey.findProgramAddressSync(
       [Buffer.from(globalInfoSeed)],
@@ -621,55 +651,9 @@ describe("maxi-auction", () => {
     //assert.equal(endTimestamp - startTimestamp, TestHours * 36 /* hours_div_100 lol*/, "duration comparison");
 
     assert.equal(auctionDataFetched.tokenMint, token.publicKey.toBase58(), "tokenMint comparison");
-  });
+  }
 
-  it("creates a market", async () => {
-    logger.color("magenta").log("admin is creating a market...");
-
-    const [adminBalance_before,] = await Promise.all([connection.getBalance(adminKp.publicKey),]);
-    console.log(`adminBalance_before (${adminKp.publicKey.toBase58()}): ${(adminBalance_before / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-
-    const signer = adminKp;
-    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
-    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
-    const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
-    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId); // Derive auctionSol PDA
-    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId); // Derive auctionData PDA
-    const auctionDataAccount = await program.account.auction.fetch(auctionData);
-    logObject("auctionDataAccount", auctionDataAccount);
-
-    const coinMint = new PublicKey(auctionDataAccount.tokenMint);
-    logObject("coinMint", coinMint);
-    // const auctionTokenAccount = getAssociatedTokenAddressSync(coinMint, auctionSol, true); // Get auction token account
-    // const pcMint = new PublicKey("So11111111111111111111111111111111111111112"); // SOL mint address
-    // const ammProgram = new PublicKey("HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8"); // Raydium AMM program
-    // const feeDestination = new PublicKey("FaodhCM6sEL3CGCKmcK6t6HVJXzjyrE8wHKRCrVFVX6h"); // ?
-    const market = await createMarket(signer, coinMint, connection);
-    logObject("market", market);
-
-    const [adminBalance_after,] = await Promise.all([connection.getBalance(adminKp.publicKey),]);
-    console.log(`adminBalance_after (${adminKp.publicKey.toBase58()}): ${(adminBalance_after / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-  });
-
-  it("test getMint", async () => {
-    const connection = new Connection("https://api.devnet.solana.com", "finalized");
-    const mintAddress = new PublicKey("3qm3Vvv8kpgRnyN3Us5tvz3R3QMpocGqN98xuKS3PFja");
-    try {
-      console.log('connection.rpcEndpoint', connection.rpcEndpoint);
-      const mintInfo = await getMint(connection, mintAddress, "finalized", TOKEN_PROGRAM_ID);
-      console.log("Mint Info:", {
-        supply: mintInfo.supply.toString(),
-        decimals: mintInfo.decimals,
-        isInitialized: mintInfo.isInitialized,
-        mintAuthority: mintInfo.mintAuthority?.toBase58() || "None",
-        freezeAuthority: mintInfo.freezeAuthority?.toBase58() || "None",
-      });
-    } catch (error) {
-      console.error("Error fetching mint:", error.message);
-    }
-  });
-
-  it("fills an auction", async () => {
+  async function test_fill_auction() {
     logger.color("magenta").log("User2 is bidding...");
 
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
@@ -719,7 +703,66 @@ describe("maxi-auction", () => {
     const auctionDataFetched_After = await program.account.auction.fetch(auctionData);
     logObject("auctionDataFetched_After", auctionDataFetched_After);
     assert.equal(auctionDataFetched_After.bids.length, 1, "bid length comparison");
+  }
+
+  it("initializes the contract", async () => {
+    await test_init();
   });
+
+  it("creates an auction", async () => {
+    await test_create_auction();
+  });
+
+  it("fills an auction", async () => {
+    await test_fill_auction();
+  });
+
+  it("creates a market", async () => {
+    logger.color("magenta").log("admin is creating a market...");
+
+    const [adminBalance_before,] = await Promise.all([connection.getBalance(adminKp.publicKey),]);
+    console.log(`adminBalance_before (${adminKp.publicKey.toBase58()}): ${(adminBalance_before / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+
+    const signer = adminKp;
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
+    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId); // Derive auctionSol PDA
+    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId); // Derive auctionData PDA
+    const auctionDataAccount = await program.account.auction.fetch(auctionData);
+    logObject("auctionDataAccount", auctionDataAccount);
+
+    const coinMint = new PublicKey(auctionDataAccount.tokenMint);
+    logObject("coinMint", coinMint);
+    // const auctionTokenAccount = getAssociatedTokenAddressSync(coinMint, auctionSol, true); // Get auction token account
+    // const pcMint = new PublicKey("So11111111111111111111111111111111111111112"); // SOL mint address
+    // const ammProgram = new PublicKey("HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8"); // Raydium AMM program
+    // const feeDestination = new PublicKey("FaodhCM6sEL3CGCKmcK6t6HVJXzjyrE8wHKRCrVFVX6h"); // ?
+    const market = await createMarket(signer, coinMint, connection);
+    logObject("market", market);
+
+    const [adminBalance_after,] = await Promise.all([connection.getBalance(adminKp.publicKey),]);
+    console.log(`adminBalance_after (${adminKp.publicKey.toBase58()}): ${(adminBalance_after / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+  });
+
+  it("test getMint", async () => {
+    const connection = new Connection("https://api.devnet.solana.com", "finalized");
+    const mintAddress = new PublicKey("3qm3Vvv8kpgRnyN3Us5tvz3R3QMpocGqN98xuKS3PFja");
+    try {
+      console.log('connection.rpcEndpoint', connection.rpcEndpoint);
+      const mintInfo = await getMint(connection, mintAddress, "finalized", TOKEN_PROGRAM_ID);
+      console.log("Mint Info:", {
+        supply: mintInfo.supply.toString(),
+        decimals: mintInfo.decimals,
+        isInitialized: mintInfo.isInitialized,
+        mintAuthority: mintInfo.mintAuthority?.toBase58() || "None",
+        freezeAuthority: mintInfo.freezeAuthority?.toBase58() || "None",
+      });
+    } catch (error) {
+      console.error("Error fetching mint:", error.message);
+    }
+  });
+
 
   // it("User3 is bidding", async () => {
   //   logger.color("magenta").log("User3 is bidding...");

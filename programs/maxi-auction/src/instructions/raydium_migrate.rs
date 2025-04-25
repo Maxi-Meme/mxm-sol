@@ -7,6 +7,15 @@ use crate::account::Auction;
 use crate::constants::AUCTION_SOL_SEED;
 use crate::processor::sol_transfer_with_signer;
 
+const DEVNET_OPENBOOK: Pubkey = pubkey!("EoTcMgcDRTJVZDMZWBoU6rhYHZfkNTVEAfz3uUJRcYGj");
+const MAINNET_OPENBOOK: Pubkey = pubkey!("srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX");
+
+#[error_code]
+pub enum RaydiumMigrateError {
+    #[msg("The provided market program ID is invalid")]
+    InvalidMarketProgram,
+}
+
 #[derive(Accounts, Clone)]
 pub struct RaydiumMigrate<'info> {
     /// CHECK: no checks needed, just program's account
@@ -22,77 +31,97 @@ pub struct RaydiumMigrate<'info> {
 
     /// CHECK: Safe
     pub amm_program: UncheckedAccount<'info>,
+    
     /// CHECK: Safe. The new amm Account to be create, a PDA create with seed = [program_id, openbook_market_id, b"amm_associated_seed"]
     #[account(mut)]
     pub amm: UncheckedAccount<'info>,
+    
     /// CHECK: Safe. Amm authority, a PDA create with seed = [b"amm authority"]
     #[account()]
     pub amm_authority: UncheckedAccount<'info>,
+    
     /// CHECK: Safe. Amm open_orders Account, a PDA create with seed = [program_id, openbook_market_id, b"open_order_associated_seed"]
     #[account(mut)]
     pub amm_open_orders: UncheckedAccount<'info>,
+    
     /// CHECK: Safe. Pool lp mint account. Must be empty, owned by $authority.
     #[account(mut)]
     pub amm_lp_mint: UncheckedAccount<'info>,
+    
     /// CHECK: Safe. Coin mint account
     #[account(
         owner = token_program.key()
     )]
     pub amm_coin_mint: UncheckedAccount<'info>,
+    
     /// CHECK: Safe. Pc mint account
     #[account(
         owner = token_program.key()
     )]
     pub amm_pc_mint: UncheckedAccount<'info>,
+    
     /// CHECK: Safe. amm_coin_vault Account. Must be non zero, owned by $authority
     #[account(mut)]
     pub amm_coin_vault: UncheckedAccount<'info>,
+    
     /// CHECK: Safe. amm_pc_vault Account. Must be non zero, owned by $authority.
     #[account(mut)]
     pub amm_pc_vault: UncheckedAccount<'info>,
+    
     /// CHECK: Safe. amm_target_orders Account. Must be non zero, owned by $authority.
     #[account(mut)]
     pub amm_target_orders: UncheckedAccount<'info>,
+    
     /// CHECK: Safe. Amm Config.
     #[account()]
     pub amm_config: UncheckedAccount<'info>,
+    
     /// CHECK: Safe. Amm create_fee_destination.
     #[account(mut)]
     pub create_fee_destination: UncheckedAccount<'info>,
+    
     /// CHECK: Safe. OpenBook program.
-    #[account(
-        address = raydium_amm_cpi::openbook_program_id::id(),
-    )]
+    //#[account(address = raydium_amm_cpi::openbook_program_id::id(),)]
+    #[account()]
     pub market_program: UncheckedAccount<'info>,
+    
     /// CHECK: Safe. OpenBook market. OpenBook program is the owner.
     #[account(
         owner = market_program.key(),
     )]
     pub market: UncheckedAccount<'info>,
+    
     /// CHECK: Safe. The user wallet create the pool
     #[account(mut)]
     pub user_wallet: Signer<'info>,
+    
     /// CHECK: Safe. The user coin token
     #[account(
         mut,
         // owner = token_program.key(),
     )]
     pub user_token_coin: UncheckedAccount<'info>,
+    
     /// CHECK: Safe. The user pc token
     #[account(
         mut,
         // owner = token_program.key(),
     )]
     pub user_token_pc: UncheckedAccount<'info>,
+    
     /// CHECK: Safe. The user lp token
     #[account(mut)]
     pub user_token_lp: UncheckedAccount<'info>,
+    
     /// CHECK: Safe. The spl token program
     pub token_program: Program<'info, Token>,
+    
     /// CHECK: Safe. The associated token program
     pub associated_token_program: Program<'info, AssociatedToken>,
+    
     /// CHECK: Safe. System program
     pub system_program: Program<'info, System>,
+    
     /// CHECK: Safe. Rent program
     pub sysvar_rent: Sysvar<'info, Rent>,
 }
@@ -134,6 +163,11 @@ impl<'a, 'b, 'c, 'info> From<&mut RaydiumMigrate<'info>>
 impl<'info> RaydiumMigrate<'info> {
     /// Initiazlize a swap pool
     pub fn process(&mut self, nonce: u8, open_time: u64) -> Result<()> {
+
+        let market_program_key = self.market_program.key();
+        if market_program_key != DEVNET_OPENBOOK && market_program_key != MAINNET_OPENBOOK {
+            return Err(RaydiumMigrateError::InvalidMarketProgram.into());
+        }
 
         let auction = &mut self.auction_data_account;
         let auction_id = auction.id;

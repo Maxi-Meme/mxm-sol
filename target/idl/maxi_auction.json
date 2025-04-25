@@ -787,8 +787,7 @@
           "writable": true
         },
         {
-          "name": "market_program",
-          "address": "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX"
+          "name": "market_program"
         },
         {
           "name": "market"
@@ -1009,93 +1008,8 @@
   "errors": [
     {
       "code": 6000,
-      "name": "Unauthorized",
-      "msg": "Unauthorized"
-    },
-    {
-      "code": 6001,
-      "name": "CalculationError",
-      "msg": "Calculation error"
-    },
-    {
-      "code": 6002,
-      "name": "InvalidTokenSupplyAndDecimals",
-      "msg": "Token supply must be an integer with a specified decimal point."
-    },
-    {
-      "code": 6003,
-      "name": "InvalidAuctionId",
-      "msg": "Invalid Auction ID."
-    },
-    {
-      "code": 6004,
-      "name": "ReentrancyGuard",
-      "msg": "Reentrancy guard triggered."
-    },
-    {
-      "code": 6005,
-      "name": "NotEnoughTokensLeft",
-      "msg": "Not enough tokens left."
-    },
-    {
-      "code": 6006,
-      "name": "MaxBidsReached",
-      "msg": "Max number of bids reached."
-    },
-    {
-      "code": 6007,
-      "name": "AuctionStillLive",
-      "msg": "Auction is still live."
-    },
-    {
-      "code": 6008,
-      "name": "AuctionEnded",
-      "msg": "Auction is ended."
-    },
-    {
-      "code": 6009,
-      "name": "AuctionNotFinished",
-      "msg": "Auction is not finished."
-    },
-    {
-      "code": 6010,
-      "name": "NoBidFoundForCaller",
-      "msg": "No bid found for caller."
-    },
-    {
-      "code": 6011,
-      "name": "InvalidClearingPrice",
-      "msg": "Invalid clearing price."
-    },
-    {
-      "code": 6012,
-      "name": "InvalidRemainingAccounts",
-      "msg": "Invalid length of remaining accounts."
-    },
-    {
-      "code": 6013,
-      "name": "InvalidUserAccount",
-      "msg": "Invalid user account."
-    },
-    {
-      "code": 6014,
-      "name": "InvalidUserTokenAccount",
-      "msg": "Invalid user's token account."
-    },
-    {
-      "code": 6015,
-      "name": "BidAlreadyClaimed",
-      "msg": "Bid already claimed."
-    },
-    {
-      "code": 6016,
-      "name": "AuctionNotStarted",
-      "msg": "Auction not started."
-    },
-    {
-      "code": 6017,
-      "name": "InvalidBidQuantity",
-      "msg": "Invalid bid quantity."
+      "name": "InvalidMarketProgram",
+      "msg": "The provided market program ID is invalid"
     }
   ],
   "types": [

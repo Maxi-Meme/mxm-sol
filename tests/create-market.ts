@@ -382,7 +382,7 @@ export const createMarket = async (
           cluster == "devnet" ? "?cluster=devnet" : ""
         }`
       );
-      return marketAccounts.market.publicKey;
+      return { marketAddress: marketAccounts.market.publicKey, dexAddress: marketId }; // DM
     } catch (error) {
       console.error("Error creating market: ", error);
       return;
