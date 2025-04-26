@@ -5,10 +5,10 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-maxi_auction = "Dtk6pFaoxnGRHH3WawaSVkWMsr7GgmuSaTbdGyxn2kyU"
+maxi_auction = "AggnkL4k4d5UjqSmH97NQSS1iW2xS8MmbKN1nDqaxCgF"
 
 [programs.localnet]
-maxi_auction = "Dtk6pFaoxnGRHH3WawaSVkWMsr7GgmuSaTbdGyxn2kyU"
+maxi_auction = "AggnkL4k4d5UjqSmH97NQSS1iW2xS8MmbKN1nDqaxCgF"
 
 [registry]
 url = "https://api.apr.dev"
