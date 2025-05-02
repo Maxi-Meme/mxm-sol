@@ -23,10 +23,7 @@ pub struct CancelBid<'info> {
 
 impl<'info> CancelBid<'info> {
     pub fn process(&mut self) -> Result<()> {
-        msg!(
-            "Calling cancel_bid for auction {}",
-            self.auction_data_account.id
-        );
+        msg!("Calling cancel_bid for auction {}", self.auction_data_account.id);
         let auction = &mut self.auction_data_account;
         let caller = self.caller.key();
         require!(!auction.is_finished, CustomError::AuctionEnded);
@@ -38,12 +35,17 @@ impl<'info> CancelBid<'info> {
         let bid = bid_opt.unwrap();
         msg!("sending sol to {}", bid.bidder);
 
-        let amount = bid
-            .bid_qty
-            .checked_mul(bid.bid_sol)
-            .ok_or(CustomError::CalculationError)?;
+        msg!("bid.bid_qty: {}", bid.bid_qty);
+        msg!("bid.bid_sol: {}", bid.bid_sol);
 
-        let _ = sol_transfer_with_signer(
+        let refund_amount = bid.bid_qty * bid.bid_sol;
+            /*.checked_mul(bid.bid_sol) // Returns Option<u64>
+            .and_then(|product| product.checked_div(10u64.pow(auction.token_decimals as u32)))
+            .ok_or(CustomError::CalculationError)?;*/
+
+        msg!("refund_amount: {}", refund_amount);
+
+        sol_transfer_with_signer(
             self.auction_sol_account.clone().to_account_info(),
             self.caller.to_account_info(),
             self.system_program.to_account_info(),
@@ -52,8 +54,8 @@ impl<'info> CancelBid<'info> {
                 auction.id.to_le_bytes().as_ref(),
                 &[auction.bump],
             ]],
-            amount,
-        );
+            refund_amount,
+        )?;
 
         // Remove the bid from the auction bids array
         auction.bids.retain(|b| b.bidder != caller);

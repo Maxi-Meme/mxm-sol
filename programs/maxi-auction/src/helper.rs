@@ -3,11 +3,11 @@ use anchor_lang::prelude::*;
 use crate::account::Auction;
 use crate::states::AuctionStatus;
 
-pub(crate) fn get_remaining_tokens(auction: &Auction) -> u64 {
+pub(crate) fn get_remaining_tokens(auction: &Auction) -> u64 { // integer token units (not lamports
     let token_qty = (auction
-        .token_supply
+        .token_supply // token lamports
     //.saturating_mul(1000 - auction.lock_percent as u64))
-    //.saturating_div(1000 * 10u64.pow(auction.token_decimals as u32)
+      .saturating_div(10u64.pow(auction.token_decimals as u32)) 
     )
     ;
 

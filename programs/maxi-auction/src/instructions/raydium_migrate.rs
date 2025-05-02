@@ -238,7 +238,7 @@ impl<'info> RaydiumMigrate<'info> {
             self.into(),
             nonce,
             open_time,
-            init_pc_amount,
+            init_pc_amount, //1000,
             init_coin_amount,
         )
     }

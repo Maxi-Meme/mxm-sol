@@ -24,11 +24,13 @@ import { DexInstructions, Market } from "@project-serum/serum";
 //import { connection } from "./config";
 
 const raydiumProgramId = DEVNET_PROGRAM_ID;
+console.log(">>> raydiumProgramId (DEVNET_PROGRAM_ID)", raydiumProgramId);
 
 const cluster = "devnet";
 
 // const marketId = DEVNET_PROGRAM_ID
 const marketId = raydiumProgramId.OPENBOOK_MARKET;
+console.log(">>> marketId (DEVNET_PROGRAM_ID.OPENBOOK_MARKET)", marketId);
 
 // export const EVENT_QUEUE_LENGTH = 2978;
 export const EVENT_QUEUE_LENGTH = 128;
@@ -134,11 +136,12 @@ export const createMarket = async (
       throw e;
     }
 
-    const timeOut = setTimeout(async () => {
+    // DM ?!?!?
+    /*const timeOut = setTimeout(async () => {
       console.log("Trying market creation again");
       const marketId = await createMarket(wallet, baseMintAddress, connection);
       return marketId;
-    }, 20000);
+    }, 20000);*/
 
     const marketAccounts = {
       market: Keypair.generate(),
@@ -186,7 +189,9 @@ export const createMarket = async (
       )
     );
 
-    clearTimeout(timeOut);
+    // DM ?!?!?
+    // clearTimeout(timeOut);
+    
     // tickSize and lotSize here are the 1e^(-x) values, so no check for ><= 0
     const baseLotSize = Math.round(
       10 ** baseMintDecimals * Math.pow(10, -1 * LOT_SIZE)

@@ -107,7 +107,7 @@ impl<'info> Claim<'info> {
             );
         }
 
-        let claimable_qty = bid.bid_qty * 10u64.pow(self.token_mint.decimals as u32);
+        let claimable_qty = bid.bid_qty;// * 10u64.pow(self.token_mint.decimals as u32); // DM
 
         let cpi_accounts = SplTransfer {
             from: self.auction_token_account.to_account_info(),
