@@ -5,10 +5,10 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-maxi_auction = "E75dUoero1CRzrRqsSjveZnp6hoNDx7zo9ujtwV17ycv"
+maxi_auction = "A9odCeM5g5L9SiQeuGTT1crgpUsvRHPkdsxNbqg2y8nd"
 
 [programs.localnet]
-maxi_auction = "E75dUoero1CRzrRqsSjveZnp6hoNDx7zo9ujtwV17ycv"
+maxi_auction = "A9odCeM5g5L9SiQeuGTT1crgpUsvRHPkdsxNbqg2y8nd"
 
 [registry]
 url = "https://api.apr.dev"
@@ -33,3 +33,15 @@ rpc_port = 8899
 
 [[test.validator.clone]]
 address = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+
+[[test.validator.program]]
+address = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+program_path = "./mpl/mpl-token-metadata.so"
+
+[[test.validator.program]]
+address = "BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY"
+program_path = "./mpl/mpl-bubblegum.so"
+
+[[test.validator.program]]
+address = "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d"
+program_path = "./mpl/mpl-core.so"
