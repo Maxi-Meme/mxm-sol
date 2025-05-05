@@ -4,8 +4,6 @@ use solana_program::{
     program::{invoke, invoke_signed},
 };
 
-// ######### ??????
-// transfer sol
 pub fn sol_transfer_with_signer<'info>(
     source: AccountInfo<'info>,
     destination: AccountInfo<'info>,

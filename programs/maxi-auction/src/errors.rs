@@ -58,4 +58,7 @@ pub enum CustomError {
 
     #[msg("Invalid bid quantity.")]
     InvalidBidQuantity,
+
+    #[msg("Invalid PDA.")]
+    InvalidPDA,
 }

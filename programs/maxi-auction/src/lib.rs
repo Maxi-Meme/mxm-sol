@@ -12,7 +12,7 @@ pub mod states;
 use instructions::*;
 use states::Config;
 
-declare_id!("A9odCeM5g5L9SiQeuGTT1crgpUsvRHPkdsxNbqg2y8nd");
+declare_id!("Bj4kBujrDMfU95JAkkQHpFEABS67819f2TerP2K9hr8k");
 
 #[program]
 pub mod maxi_auction {
@@ -65,7 +65,15 @@ pub mod maxi_auction {
     }
 
     /// Initiazlize a swap pool
-    pub fn raydium_migrate(ctx: Context<RaydiumMigrate>, nonce: u8, open_time: u64) -> Result<()> {
-        ctx.accounts.process(nonce, open_time)
+    // pub fn raydium_migrate(ctx: Context<RaydiumMigrate>, nonce: u8, open_time: u64) -> Result<()> {
+    //     ctx.accounts.process(nonce, open_time)
+    // }
+
+    pub fn withdraw_sol(ctx: Context<WithdrawSol>) -> Result<()> {
+        ctx.accounts.process()
+    }
+
+    pub fn withdraw_tokens(ctx: Context<WithdrawTokens>) -> Result<()> {
+        ctx.accounts.process()
     }
 }

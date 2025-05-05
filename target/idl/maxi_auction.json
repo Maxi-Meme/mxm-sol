@@ -1,5 +1,5 @@
 {
-  "address": "A9odCeM5g5L9SiQeuGTT1crgpUsvRHPkdsxNbqg2y8nd",
+  "address": "Bj4kBujrDMfU95JAkkQHpFEABS67819f2TerP2K9hr8k",
   "metadata": {
     "name": "maxi_auction",
     "version": "0.1.2",
@@ -716,128 +716,6 @@
       ]
     },
     {
-      "name": "raydium_migrate",
-      "docs": [
-        "Initiazlize a swap pool"
-      ],
-      "discriminator": [
-        88,
-        160,
-        227,
-        203,
-        173,
-        10,
-        220,
-        85
-      ],
-      "accounts": [
-        {
-          "name": "auction_sol_account",
-          "writable": true
-        },
-        {
-          "name": "auction_data_account",
-          "writable": true
-        },
-        {
-          "name": "auction_token_account",
-          "writable": true
-        },
-        {
-          "name": "amm_program"
-        },
-        {
-          "name": "amm",
-          "writable": true
-        },
-        {
-          "name": "amm_authority"
-        },
-        {
-          "name": "amm_open_orders",
-          "writable": true
-        },
-        {
-          "name": "amm_lp_mint",
-          "writable": true
-        },
-        {
-          "name": "amm_coin_mint"
-        },
-        {
-          "name": "amm_pc_mint"
-        },
-        {
-          "name": "amm_coin_vault",
-          "writable": true
-        },
-        {
-          "name": "amm_pc_vault",
-          "writable": true
-        },
-        {
-          "name": "amm_target_orders",
-          "writable": true
-        },
-        {
-          "name": "amm_config"
-        },
-        {
-          "name": "create_fee_destination",
-          "writable": true
-        },
-        {
-          "name": "market_program"
-        },
-        {
-          "name": "market"
-        },
-        {
-          "name": "user_wallet",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "user_token_coin",
-          "writable": true
-        },
-        {
-          "name": "user_token_pc",
-          "writable": true
-        },
-        {
-          "name": "user_token_lp",
-          "writable": true
-        },
-        {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "associated_token_program",
-          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        },
-        {
-          "name": "sysvar_rent",
-          "address": "SysvarRent111111111111111111111111111111111"
-        }
-      ],
-      "args": [
-        {
-          "name": "nonce",
-          "type": "u8"
-        },
-        {
-          "name": "open_time",
-          "type": "u64"
-        }
-      ]
-    },
-    {
       "name": "set_config",
       "discriminator": [
         108,
@@ -895,6 +773,313 @@
           }
         }
       ]
+    },
+    {
+      "name": "withdraw_sol",
+      "docs": [
+        "Initiazlize a swap pool"
+      ],
+      "discriminator": [
+        145,
+        131,
+        74,
+        136,
+        65,
+        137,
+        42,
+        38
+      ],
+      "accounts": [
+        {
+          "name": "global_info",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  105,
+                  110,
+                  102,
+                  111,
+                  95,
+                  115,
+                  101,
+                  101,
+                  100
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "auction_data_account",
+          "writable": true
+        },
+        {
+          "name": "auction_sol_account",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "withdraw_tokens",
+      "discriminator": [
+        2,
+        4,
+        225,
+        61,
+        19,
+        182,
+        106,
+        170
+      ],
+      "accounts": [
+        {
+          "name": "global_info",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  105,
+                  110,
+                  102,
+                  111,
+                  95,
+                  115,
+                  101,
+                  101,
+                  100
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "auction_data_account",
+          "writable": true
+        },
+        {
+          "name": "auction_sol_account",
+          "writable": true
+        },
+        {
+          "name": "auction_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "auction_sol_account"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "auction_data_account.token_mint",
+                "account": "Auction"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "admin_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "admin"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "auction_data_account.token_mint",
+                "account": "Auction"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -1008,8 +1193,98 @@
   "errors": [
     {
       "code": 6000,
-      "name": "InvalidMarketProgram",
-      "msg": "The provided market program ID is invalid"
+      "name": "Unauthorized",
+      "msg": "Unauthorized"
+    },
+    {
+      "code": 6001,
+      "name": "CalculationError",
+      "msg": "Calculation error"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidTokenSupplyAndDecimals",
+      "msg": "Token supply must be an integer with a specified decimal point."
+    },
+    {
+      "code": 6003,
+      "name": "InvalidAuctionId",
+      "msg": "Invalid Auction ID."
+    },
+    {
+      "code": 6004,
+      "name": "ReentrancyGuard",
+      "msg": "Reentrancy guard triggered."
+    },
+    {
+      "code": 6005,
+      "name": "NotEnoughTokensLeft",
+      "msg": "Not enough tokens left."
+    },
+    {
+      "code": 6006,
+      "name": "MaxBidsReached",
+      "msg": "Max number of bids reached."
+    },
+    {
+      "code": 6007,
+      "name": "AuctionStillLive",
+      "msg": "Auction is still live."
+    },
+    {
+      "code": 6008,
+      "name": "AuctionEnded",
+      "msg": "Auction is ended."
+    },
+    {
+      "code": 6009,
+      "name": "AuctionNotFinished",
+      "msg": "Auction is not finished."
+    },
+    {
+      "code": 6010,
+      "name": "NoBidFoundForCaller",
+      "msg": "No bid found for caller."
+    },
+    {
+      "code": 6011,
+      "name": "InvalidClearingPrice",
+      "msg": "Invalid clearing price."
+    },
+    {
+      "code": 6012,
+      "name": "InvalidRemainingAccounts",
+      "msg": "Invalid length of remaining accounts."
+    },
+    {
+      "code": 6013,
+      "name": "InvalidUserAccount",
+      "msg": "Invalid user account."
+    },
+    {
+      "code": 6014,
+      "name": "InvalidUserTokenAccount",
+      "msg": "Invalid user's token account."
+    },
+    {
+      "code": 6015,
+      "name": "BidAlreadyClaimed",
+      "msg": "Bid already claimed."
+    },
+    {
+      "code": 6016,
+      "name": "AuctionNotStarted",
+      "msg": "Auction not started."
+    },
+    {
+      "code": 6017,
+      "name": "InvalidBidQuantity",
+      "msg": "Invalid bid quantity."
+    },
+    {
+      "code": 6018,
+      "name": "InvalidPDA",
+      "msg": "Invalid PDA."
     }
   ],
   "types": [

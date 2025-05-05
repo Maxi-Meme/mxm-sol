@@ -368,7 +368,7 @@ describe("maxi-auction", () => {
     await test_create_pool_and_trade();
   });
 
-  async function test_create_pool_and_trade() {
+  async function test_create_pool_and_trade() { // https://github.com/raydium-io/raydium-sdk-V2-demo/tree/master/src/amm
     const txVersion = TxVersion.LEGACY; // TxVersion.V0
 
     // **Step 1: Set up connection and keypairs && Initialize the Raydium SDK **
@@ -559,7 +559,9 @@ describe("maxi-auction", () => {
     logger.color("green").log(`Reserve ratios: ${price} WSOL per token`);
     logger.color("green").log(`poolInfo.poolPrice: ${poolInfo.poolPrice} WSOL per token`);
   
+    //
     // **Step 7: Buy some tokens (swap SOL for tokens)**
+    //
     const amountIn = 0.01 * 10 ** 9; // 0.01 WSOL
     const inputMint = poolInfo.quoteMint.toBase58(); // WSOL??  //NATIVE_MINT.toBase58();
     //const poolId = '58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2' // SOL-USDC pool
@@ -649,7 +651,7 @@ describe("maxi-auction", () => {
     if (SwapTx1.meta.err) {
       throw new Error(`SwapTx1 failed: ${JSON.stringify(SwapTx1.meta.err)}`);
     }
-    console.log(`swap successfully in amm pool:`, { txId: `{swapTx1Id}` });
+    console.log(`swap successfully in amm pool:`, { txId: `${swapTx1Id}` });
 
     /*const solToSpend = new BN(1).mul(new BN(10).pow(new BN(9))); // 1 SOL
     const expectedTokensOut = await raydium.cpmm.computeAmountOut({
