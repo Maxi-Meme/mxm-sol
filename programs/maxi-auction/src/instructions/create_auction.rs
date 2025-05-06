@@ -217,6 +217,8 @@ impl<'info> CreateAuction<'info> {
         global_info.auctions_num = auction_id + 1;
 
         msg!("Auction id: {} is created", auction_id);
+        
+        msg!("global_info.auctions_num is now {}", global_info.auctions_num);
 
         emit!(AuctionCreated {
             auction_id,

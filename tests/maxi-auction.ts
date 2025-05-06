@@ -53,7 +53,6 @@ import {
   TestTokenUri,
 } from "./config";
 import { createMarket } from "./create-market";
-//import { DEVNET_PROGRAM_ID } from "@raydium-io/raydium-sdk";
 
 import { getOrCreateAssociatedTokenAccount, createSyncNativeInstruction } from '@solana/spl-token';
 import { NATIVE_MINT } from '@solana/spl-token';
@@ -69,54 +68,12 @@ import {  AMM_STABLE, } from '@raydium-io/raydium-sdk-v2'
 import Decimal from 'decimal.js'
 import { log } from "console";
 
+import { migrateAuction } from "./migrate-auction"
+
 var connection;
 var isLocal = false;
 var isDevnet = false;
 var isMainnet = false;
-
-// Recursively convert BN and PublicKey values
-function convertValue(value) {
-  if (value instanceof BN) {
-    return value.toString(10); // BN to decimal string
-  } else if (value instanceof PublicKey) {
-    return value.toBase58(); // PublicKey to base58 string
-  } else if (Array.isArray(value)) {
-    return value.map(convertValue); // Handle arrays
-  } else if (typeof value === 'object' && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, val]) => [key, convertValue(val)])
-    ); // Handle objects
-  }
-  return value; // Leave other types as-is
-}
-function logObject(label, obj) {
-  const convertedObj = convertValue(obj);
-  console.log(label, convertedObj);
-}
-
-async function logSuccessTx(connection, sig, label) {
-  await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
-  const status = await connection.getSignatureStatus(sig);
-  console.log("TX status:", status);
-
-  // Fetch transaction details
-  const txDetails = await connection.getTransaction(sig, {
-    commitment: 'confirmed',
-    maxSupportedTransactionVersion: 0
-  });
-
-  // Log the transaction signature
-  logger.color("green").log(`>> ${label} << TX sig:`, sig);
-
-  // Log the transaction logs if available
-  logObject("txDetails", txDetails);
-  console.log("txDetails", txDetails);
-  if (txDetails && txDetails.meta && txDetails.meta.logMessages) {
-    console.log("Transaction logs:", txDetails.meta.logMessages);
-  } else {
-    console.log("No logs available for this transaction.");
-  }
-}
 
 describe("maxi-auction", () => {
   // setup provider
@@ -132,16 +89,13 @@ describe("maxi-auction", () => {
   const program = anchor.workspace.MaxiAuction as Program<MaxiAuction>;
 
   // Listen for logs from your program
-  connection.onLogs(
-    program.programId,
-    (logs) => {
+  connection.onLogs(program.programId, (logs) => {
       logs.logs.forEach((log) => {
         if (log.startsWith('Program log:')) {
           console.log('log:', log.replace('Program log: ', ''));
         }
       });
-    },
-    'finalized' // Wait for finalized logs to ensure reliability
+    }, 'finalized'
   );
 
   // add listeners
@@ -161,6 +115,7 @@ describe("maxi-auction", () => {
 
   program.addEventListener("auctionFilled", async (event) => {
     logObject(">>> auctionFilled", event);
+
     const signer = adminKp;
     const auctionId = Number(event.auctionId.toString());
     const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId); // Derive auctionSol PDA
@@ -168,7 +123,9 @@ describe("maxi-auction", () => {
     const auctionDataAccount = await program.account.auction.fetch(auctionData);
     logObject("auctionDataAccount", auctionDataAccount);
 
-    const coinMint = new PublicKey(auctionDataAccount.tokenMint);
+    await migrateAuction(auctionId, adminKp, connection); // ok???
+
+    /*const coinMint = new PublicKey(auctionDataAccount.tokenMint);
     const auctionTokenAccount = getAssociatedTokenAddressSync(coinMint, auctionSol, true); // Get auction token account
     const pcMint = new PublicKey("So11111111111111111111111111111111111111112"); // SOL mint address
     const ammProgram = new PublicKey("HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8"); // Raydium AMM program
@@ -273,7 +230,7 @@ describe("maxi-auction", () => {
       throw err;
     }
     logger.color("green").log("raydiumMigrate transaction signature", sig);
-    await logSuccessTx(connection, sig, "raydiumMigrate");
+    await logSuccessTx(connection, sig, "raydiumMigrate");*/
   });
 
   program.addEventListener("claimed", (event) => {
@@ -358,8 +315,8 @@ describe("maxi-auction", () => {
     await test_cancel_bid();
   });  
 
-  it("inits, creates & fills", async () => {
-    await test_init();
+  it("creates & fills an auction", async () => {
+    //await test_init();
     await test_bid_auction();
   });
 
@@ -370,7 +327,10 @@ describe("maxi-auction", () => {
   it("withdraws SOL and tokens from an auction", async () => {
     await test_withdrawals();
   });
-  
+
+  //
+  // TODO: (1) rust only withdraw locked tokens; (2) e2e tests for all bidders & admin withdraws...
+  //
   async function test_withdrawals() {
     // Step 1: Create an auction and place a bid to populate the auction with SOL and tokens
     await test_bid_auction(0.5); // Bid on the half supply
@@ -398,21 +358,23 @@ describe("maxi-auction", () => {
     const adminTokenBefore = (await connection.getTokenAccountBalance(adminTokenAccount.address)).value.uiAmount;
   
     // Step 4: Withdraw SOL
+    const callAs = adminKp; //adminKp; //user1Kp;
     try {
       const txSol = await program.methods
         .withdrawSol()
         .accounts({
           //globalInfo: globalInfo,
-          admin: adminKp.publicKey,
+          admin: callAs.publicKey,
           auctionDataAccount: auctionData,
           auctionSolAccount: auctionSol,
           //systemProgram: SystemProgram.programId,
         })
-        .signers([adminKp])
+        .signers([callAs])
         .rpc();
       logger.color("green").log("withdrawSol transaction signature:", txSol);
       await logSuccessTx(connection, txSol, "withdrawSol");
     } catch (err) {
+      console.error(err.toString());
       console.error("logs:", await err.getLogs());
       throw err;
     }      
@@ -423,18 +385,19 @@ describe("maxi-auction", () => {
         .withdrawTokens()
         .accounts({
           //globalInfo: globalInfo,
-          admin: adminKp.publicKey,
+          admin: callAs.publicKey,
           auctionDataAccount: auctionData,
           auctionSolAccount: auctionSol,
           auctionTokenAccount: auctionTokenAccount,
           adminTokenAccount: adminTokenAccount.address,
           //tokenProgram: TOKEN_PROGRAM_ID,
         })
-        .signers([adminKp])
+        .signers([callAs])
         .rpc();
       logger.color("green").log("withdrawTokens transaction signature:", txTokens);
       await logSuccessTx(connection, txTokens, "txTokens");
     } catch (err) {
+      console.error(err.toString());
       console.error("logs:", await err.getLogs());
       throw err;
     }
@@ -477,7 +440,7 @@ describe("maxi-auction", () => {
     logger.color("green").log("Raydium SDK loaded");
   
     // Airdrop some SOL to the minter so we can fucking do stuff
-    //const TEST_SOL = 1.0 * LAMPORTS_PER_SOL;
+    const TEST_SOL = 1.0 * LAMPORTS_PER_SOL;
     //const airdropSig = await connection.requestAirdrop(minterKp.publicKey, TEST_SOL);
     //console.log(`Airdrop requested. Signature: ${airdropSig}`);
     //await connection.confirmTransaction(airdropSig);
@@ -489,7 +452,7 @@ describe("maxi-auction", () => {
     //logger.color("green").log("Airdropped 1000 SOL to minter (adminKp)");
   
     // **Step 2: Mint a new fucking token**
-    /*const tokenMint = await createMint(connection, minterKp, minterKp.publicKey, null, 9); // 9 decimals
+    const tokenMint = await createMint(connection, minterKp, minterKp.publicKey, null, 9); // 9 decimals
     const minterTokenAccount = await getOrCreateAssociatedTokenAccount(connection, minterKp, tokenMint, minterKp.publicKey); // ATA
     const totalSupply = new BN(1_000_000).mul(new BN(10).pow(new BN(9))); // 1M tokens
     await mintTo(connection, minterKp, tokenMint, minterTokenAccount.address, minterKp, totalSupply.toNumber());
@@ -558,7 +521,7 @@ describe("maxi-auction", () => {
       console.log('marketId', marketId.toBase58());
       const txIds = await execCM({ sequentially: true, });
       await logSuccessTx(connection, wrapSig, "Create market");
-      // TODO: save marketInfo
+      // TODO: save marketInfo to DB table, index by auctionId
   
     // **Step 5: Create a fucking pool**
     const marketBufferInfo = await raydium.connection.getAccountInfo(new PublicKey(marketId));
@@ -627,11 +590,11 @@ describe("maxi-auction", () => {
       }),
       {}
     );
-    console.log('amm pool created! txId: ', txId, ', poolKeys:', poolKeys);*/
-    // TODO: save poolKeys
+    console.log('amm pool created! txId: ', txId, ', poolKeys:', poolKeys);
+    // TODO: save poolKeys to DB table, index by auctionId
 
-    // ======
-    const poolKeys = { // 55DNHgNJyDRBDSivTyRPxwxKQ2iWGYwFX1jrmSeNy216xpyPFXFkXzLjmWTCZDkmsC47ZmYUq79G3tq9miJK3nQn
+    // test poolkeys - ignore
+    /*const poolKeys = { // 55DNHgNJyDRBDSivTyRPxwxKQ2iWGYwFX1jrmSeNy216xpyPFXFkXzLjmWTCZDkmsC47ZmYUq79G3tq9miJK3nQn
       programId: 'HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8',
       ammId: '84dpFz4AmxDcZG9DaSaYemCaeE9Y1yW53cvyuBiZ5dDW',
       ammAuthority: 'DbQqP6ehDYmeYjcBaMRuA8tAJY1EjDUz9DpwSLjaQqfC',
@@ -648,10 +611,10 @@ describe("maxi-auction", () => {
       marketId: '5FsJuTdjAj8CGEd8n9uWiARg4JZaATzaBYW9MCXGQjN3',
       ammConfigId: '8QN9yfKqWDoKjvZmqFsgCzAqwZBQuzVVnC388dN5RCPo',
       feeDestinationId: '3XMrhbv989VxAMi3DErLV9eJht1pHppW5LbKxe9fkEFR'
-    };
+    };*/
   
     // **Step 6: Query the damn pool price**
-    const poolId = poolKeys.ammId;
+    const poolId = poolKeys['ammId'];
     const poolInfos = await raydium.liquidity.getRpcPoolInfos([poolId]);
     const poolInfo = poolInfos[poolId];
     logObject('poolInfo', poolInfo);
@@ -900,10 +863,14 @@ describe("maxi-auction", () => {
 
   async function test_create_auction() {
     logger.color("magenta").log("User1 is creating auction...");
-    const [globalInfo] = PublicKey.findProgramAddressSync(
-      [Buffer.from(globalInfoSeed)],
-      program.programId
-    );
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const globalInfoTest = await program.account.globalInfo.fetchNullable(globalInfo);
+    if (!globalInfoTest) {
+      throw("Global Info not initialized!");
+    }
+    else {
+      console.log(globalInfoTest);
+    }
 
     const signer = user1Kp;
     const token = tokenKp1;
@@ -938,17 +905,18 @@ describe("maxi-auction", () => {
     tx.feePayer = signer.publicKey;
     tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
 
-    // try {
-    // console.log("*** simulateTransaction createAuction", await connection.simulateTransaction(tx));
-    // }
-    // catch (error) {
-    //   console.error("Error during transaction signing or confirmation:", error);
-    //   if (error instanceof Error && "getLogs" in error) {
-    //     const logs = await error.getLogs;
-    //     console.error("Simulation logs:", logs);
-    //   }
-    //   throw error;
-    // }
+    try {
+    console.log("*** simulateTransaction createAuction", await connection.simulateTransaction(tx));
+    }
+    catch (error) {
+      console.error("Error during transaction signing or confirmation:", error);
+      if (error instanceof Error && "getLogs" in error) {
+        const logs = await error.getLogs;
+        console.error("Simulation logs:", logs);
+      }
+      throw error;
+    }
+
     try {
       const sig = await sendAndConfirmTransaction(connection, tx, [adminKp, signer, token]);
       logger.color("green").log("createAuction transaction signature:", sig);
@@ -2026,3 +1994,47 @@ describe("maxi-auction", () => {
 //   const sig = await sendAndConfirmTransaction(connection, tx, [signer]);
 //   logger.color("green").log("raydiumMigrate transaction signature", sig);
 // });
+
+// Recursively convert BN and PublicKey values
+function convertValue(value) {
+  if (value instanceof BN) {
+    return value.toString(10); // BN to decimal string
+  } else if (value instanceof PublicKey) {
+    return value.toBase58(); // PublicKey to base58 string
+  } else if (Array.isArray(value)) {
+    return value.map(convertValue); // Handle arrays
+  } else if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, val]) => [key, convertValue(val)])
+    ); // Handle objects
+  }
+  return value; // Leave other types as-is
+}
+function logObject(label, obj) {
+  const convertedObj = convertValue(obj);
+  console.log(label, convertedObj);
+}
+
+async function logSuccessTx(connection, sig, label) {
+  await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
+  const status = await connection.getSignatureStatus(sig);
+  console.log("TX status:", status);
+
+  // Fetch transaction details
+  const txDetails = await connection.getTransaction(sig, {
+    commitment: 'confirmed',
+    maxSupportedTransactionVersion: 0
+  });
+
+  // Log the transaction signature
+  logger.color("green").log(`>> ${label} << TX sig:`, sig);
+
+  // Log the transaction logs if available
+  logObject("txDetails", txDetails);
+  console.log("txDetails", txDetails);
+  if (txDetails && txDetails.meta && txDetails.meta.logMessages) {
+    console.log("Transaction logs:", txDetails.meta.logMessages);
+  } else {
+    console.log("No logs available for this transaction.");
+  }
+}
