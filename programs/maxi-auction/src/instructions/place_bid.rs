@@ -27,10 +27,9 @@ pub struct PlaceBid<'info> {
     pub admin: Signer<'info>,
 
     // Auction program account holding SOL (the PDA)
-    // For simplicity, let's assume the program's ID is the escrow. In real scenario, use a PDA.
     /// CHECK: no checks needed, just program's account
     #[account(mut)]
-    pub auction_sol_account: AccountInfo<'info>, // #### can set so creator pays rent??? -- can create a unit test for this?????
+    pub auction_sol_account: AccountInfo<'info>,
 
     /// CHECK: Storage - used as storage for the auction data
     #[account(mut)]

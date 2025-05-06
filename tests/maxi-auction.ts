@@ -360,13 +360,113 @@ describe("maxi-auction", () => {
 
   it("inits, creates & fills", async () => {
     await test_init();
-    await test_create_auction();
     await test_bid_auction();
   });
 
   it("creates & interacts with a v2 pool", async () => {
     await test_create_pool_and_trade();
   });
+
+  it("withdraws SOL and tokens from an auction", async () => {
+    await test_withdrawals();
+  });
+  
+  async function test_withdrawals() {
+    // Step 1: Create an auction and place a bid to populate the auction with SOL and tokens
+    await test_bid_auction(0.5); // Bid on the half supply
+  
+    logger.color("magenta").log("Admin is withdrawing SOL and tokens...");
+  
+    // Step 2: Derive necessary accounts
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
+    console.log("auctionId", auctionId);
+  
+    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+  
+    const auctionDataFetched = await program.account.auction.fetch(auctionData);
+    const tokenMint = auctionDataFetched.tokenMint;
+    const auctionTokenAccount = await getAssociatedTokenAddress(tokenMint, auctionSol, true); // Allow off-curve for PDA
+    const adminTokenAccount = await getOrCreateAssociatedTokenAccount(connection, adminKp, tokenMint, adminKp.publicKey);
+  
+    // Step 3: Fetch balances before withdrawal
+    const adminSolBefore = await connection.getBalance(adminKp.publicKey);
+    const auctionSolBefore = await connection.getBalance(auctionSol);
+    const auctionTokenBefore = (await connection.getTokenAccountBalance(auctionTokenAccount)).value.uiAmount;
+    const adminTokenBefore = (await connection.getTokenAccountBalance(adminTokenAccount.address)).value.uiAmount;
+  
+    // Step 4: Withdraw SOL
+    try {
+      const txSol = await program.methods
+        .withdrawSol()
+        .accounts({
+          //globalInfo: globalInfo,
+          admin: adminKp.publicKey,
+          auctionDataAccount: auctionData,
+          auctionSolAccount: auctionSol,
+          //systemProgram: SystemProgram.programId,
+        })
+        .signers([adminKp])
+        .rpc();
+      logger.color("green").log("withdrawSol transaction signature:", txSol);
+      await logSuccessTx(connection, txSol, "withdrawSol");
+    } catch (err) {
+      console.error("logs:", await err.getLogs());
+      throw err;
+    }      
+  
+    // Step 5: Withdraw Tokens
+    try {
+      const txTokens = await program.methods
+        .withdrawTokens()
+        .accounts({
+          //globalInfo: globalInfo,
+          admin: adminKp.publicKey,
+          auctionDataAccount: auctionData,
+          auctionSolAccount: auctionSol,
+          auctionTokenAccount: auctionTokenAccount,
+          adminTokenAccount: adminTokenAccount.address,
+          //tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([adminKp])
+        .rpc();
+      logger.color("green").log("withdrawTokens transaction signature:", txTokens);
+      await logSuccessTx(connection, txTokens, "txTokens");
+    } catch (err) {
+      console.error("logs:", await err.getLogs());
+      throw err;
+    }
+  
+    // Step 6: Fetch balances after withdrawal
+    const adminSolAfter = await connection.getBalance(adminKp.publicKey);
+    const auctionSolAfter = await connection.getBalance(auctionSol);
+    const auctionTokenAfter = (await connection.getTokenAccountBalance(auctionTokenAccount)).value.uiAmount;
+    const adminTokenAfter = (await connection.getTokenAccountBalance(adminTokenAccount.address)).value.uiAmount;
+  
+    console.log("Balances before withdrawal:");
+    console.log(`Admin SOL: ${(adminSolBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+    console.log(`Auction SOL: ${(auctionSolBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+    console.log(`Auction Tokens: ${auctionTokenBefore} tokens`);
+    console.log(`Admin Tokens: ${adminTokenBefore} tokens`);
+  
+    console.log("Balances after withdrawal:");
+    console.log(`Admin SOL: ${(adminSolAfter / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+    console.log(`Auction SOL: ${(auctionSolAfter / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+    console.log(`Auction Tokens: ${auctionTokenAfter} tokens`);
+    console.log(`Admin Tokens: ${adminTokenAfter} tokens`);
+  
+    // Step 7: Assertions
+    assert.equal(auctionSolAfter, 0, "Auction SOL account should be empty after withdrawal");
+    assert.equal(adminSolAfter > adminSolBefore, true, "Admin SOL should increase after withdrawal");
+    assert.equal(auctionTokenAfter, 0, "Auction token account should be empty after withdrawal");
+    assert.equal(
+      adminTokenAfter,
+      adminTokenBefore + auctionTokenBefore,
+      "Admin token balance should increase by the auction's token amount"
+    );
+  }
 
   async function test_create_pool_and_trade() { // https://github.com/raydium-io/raydium-sdk-V2-demo/tree/master/src/amm
     const txVersion = TxVersion.LEGACY; // TxVersion.V0

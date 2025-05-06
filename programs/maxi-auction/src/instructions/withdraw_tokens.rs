@@ -26,19 +26,23 @@ pub struct WithdrawTokens<'info> {
     #[account(mut)]
     pub auction_sol_account: AccountInfo<'info>,
 
-    #[account(
-        mut,
-        associated_token::mint = auction_data_account.token_mint,
-        associated_token::authority = auction_sol_account
-    )]
-    pub auction_token_account: Box<Account<'info, TokenAccount>>,
+    // #[account(
+    //     mut,
+    //     associated_token::mint = auction_data_account.token_mint,
+    //     associated_token::authority = auction_sol_account
+    // )]
+    //pub auction_token_account: Box<Account<'info, TokenAccount>>,
+    #[account(mut)]
+    pub auction_token_account: Account<'info, TokenAccount>,
 
-    #[account(
-        mut,
-        associated_token::mint = auction_data_account.token_mint,
-        associated_token::authority = admin
-    )]
-    pub admin_token_account: Box<Account<'info, TokenAccount>>,
+    // #[account(
+    //     mut,
+    //     associated_token::mint = auction_data_account.token_mint,
+    //     associated_token::authority = admin
+    // )]
+    #[account(mut)]
+    pub admin_token_account: Account<'info, TokenAccount>,
+    //pub admin_token_account: Box<Account<'info, TokenAccount>>,
 
     #[account(address = token::ID)]
     pub token_program: Program<'info, Token>,
