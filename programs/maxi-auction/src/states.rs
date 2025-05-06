@@ -7,7 +7,7 @@ pub struct Config {
     pub default_token_supply: u64,
     pub default_token_decimals: u8,
     pub default_start_price_lamports: u64,
-    pub default_lock_percent: u64,
+    //pub default_lock_percent: u64,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Default, Debug)]

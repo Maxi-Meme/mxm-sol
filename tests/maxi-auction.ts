@@ -52,7 +52,7 @@ import {
   TestTokenSymbol,
   TestTokenUri,
 } from "./config";
-import { createMarket } from "./create-market";
+//import { createMarket } from "./create-market";
 
 import { getOrCreateAssociatedTokenAccount, createSyncNativeInstruction } from '@solana/spl-token';
 import { NATIVE_MINT } from '@solana/spl-token';
@@ -123,7 +123,7 @@ describe("maxi-auction", () => {
     const auctionDataAccount = await program.account.auction.fetch(auctionData);
     logObject("auctionDataAccount", auctionDataAccount);
 
-    await migrateAuction(auctionId, adminKp, connection); // ok???
+    await migrateAuction(program, isMainnet, auctionId, adminKp, connection); // ok???
 
     /*const coinMint = new PublicKey(auctionDataAccount.tokenMint);
     const auctionTokenAccount = getAssociatedTokenAddressSync(coinMint, auctionSol, true); // Get auction token account
@@ -306,34 +306,50 @@ describe("maxi-auction", () => {
     await test_create_auction();
   });
 
-  it("fills an auction", async () => {
-    await test_bid_auction();
-  });
-
-  // Add the test to the suite
   it("cancels a bid", async () => {
     await test_cancel_bid();
   });  
 
+  it("same user places two bids", async () => {
+    await test_create_auction();
+    await test_bid_auction(0.1);
+    await test_bid_auction(0.1);
+  });  
+
   it("creates & fills an auction", async () => {
     //await test_init();
-    await test_bid_auction();
+    await test_create_auction();
+    await test_bid_auction(); // TODO: liq. move is breaking validations
   });
 
   it("creates & interacts with a v2 pool", async () => {
     await test_create_pool_and_trade();
   });
 
-  it("withdraws SOL and tokens from an auction", async () => {
-    await test_withdrawals();
+  it("admin withdraws", async () => {
+    await test_admin_withdraws();
   });
 
-  //
-  // TODO: (1) rust only withdraw locked tokens; (2) e2e tests for all bidders & admin withdraws...
-  //
-  async function test_withdrawals() {
-    // Step 1: Create an auction and place a bid to populate the auction with SOL and tokens
-    await test_bid_auction(0.5); // Bid on the half supply
+  it("admin with 2 bids withdraws", async () => {
+    await test_admin_withdraws(2);
+  });
+
+  it("allows bidders to claim in full & admin to setup v2 pool", async () => {
+    
+    // TODO... multiple bids, + claim + pool setup -- expect zero left in contract....
+
+    // TODO: save pool & market info to DB...
+
+    // TODO: costs for pool setup, who pays when auction doesn't have much sol?
+
+  });
+
+  async function test_admin_withdraws(n_bids = 1) {
+    // Step 1: Create an auction and place bid(s) to populate the auction with SOL and tokens
+    await test_create_auction();
+    for (var i=0 ; i < n_bids; i++) {
+      await test_bid_auction(0.5 / n_bids); // Bid up to half supply
+    }
   
     logger.color("magenta").log("Admin is withdrawing SOL and tokens...");
   
@@ -343,31 +359,44 @@ describe("maxi-auction", () => {
     const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
     console.log("auctionId", auctionId);
   
-    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
-    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)],program.programId);
+    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)],program.programId);
   
     const auctionDataFetched = await program.account.auction.fetch(auctionData);
     const tokenMint = auctionDataFetched.tokenMint;
     const auctionTokenAccount = await getAssociatedTokenAddress(tokenMint, auctionSol, true); // Allow off-curve for PDA
-    const adminTokenAccount = await getOrCreateAssociatedTokenAccount(connection, adminKp, tokenMint, adminKp.publicKey);
+    const adminTokenAccount = await getOrCreateAssociatedTokenAccount(connection, adminKp, tokenMint,  adminKp.publicKey);
   
     // Step 3: Fetch balances before withdrawal
     const adminSolBefore = await connection.getBalance(adminKp.publicKey);
     const auctionSolBefore = await connection.getBalance(auctionSol);
-    const auctionTokenBefore = (await connection.getTokenAccountBalance(auctionTokenAccount)).value.uiAmount;
-    const adminTokenBefore = (await connection.getTokenAccountBalance(adminTokenAccount.address)).value.uiAmount;
+  
+    const auctionTokenBalanceBefore = await connection.getTokenAccountBalance(auctionTokenAccount);
+    const auctionTokenBefore = BigInt(auctionTokenBalanceBefore.value.amount); // Use integer amount for precision
+  
+    const adminTokenBalanceBefore = await connection.getTokenAccountBalance(adminTokenAccount.address);
+    const adminTokenBefore = BigInt(adminTokenBalanceBefore.value.amount); // Use integer amount for precision
+  
+    // Fetch lockPercent and calculate expected withdrawal
+    const lockPercent = auctionDataFetched.lockPercent.toNumber(); // Convert BN to number (1 to 1000)
+    console.log(`lockPercent: ${lockPercent}`);
+  
+    const amountToWithdraw = (auctionTokenBefore * BigInt(lockPercent)) / BigInt(1000); // Calculate tokens to withdraw
+    const expectedAuctionTokenAfter = auctionTokenBefore - amountToWithdraw; // Remaining tokens in auction
+    const expectedAdminTokenAfter = adminTokenBefore + amountToWithdraw; // Admin's new balance
+    console.log(`amountToWithdraw: ${amountToWithdraw.toString()}`);
+    console.log(`expectedAuctionTokenAfter: ${expectedAuctionTokenAfter.toString()}`);
+    console.log(`expectedAdminTokenAfter: ${expectedAdminTokenAfter.toString()}`);
   
     // Step 4: Withdraw SOL
-    const callAs = adminKp; //adminKp; //user1Kp;
+    const callAs = adminKp;
     try {
       const txSol = await program.methods
         .withdrawSol()
         .accounts({
-          //globalInfo: globalInfo,
           admin: callAs.publicKey,
           auctionDataAccount: auctionData,
           auctionSolAccount: auctionSol,
-          //systemProgram: SystemProgram.programId,
         })
         .signers([callAs])
         .rpc();
@@ -377,20 +406,18 @@ describe("maxi-auction", () => {
       console.error(err.toString());
       console.error("logs:", await err.getLogs());
       throw err;
-    }      
+    }
   
     // Step 5: Withdraw Tokens
     try {
       const txTokens = await program.methods
         .withdrawTokens()
         .accounts({
-          //globalInfo: globalInfo,
           admin: callAs.publicKey,
           auctionDataAccount: auctionData,
           auctionSolAccount: auctionSol,
           auctionTokenAccount: auctionTokenAccount,
           adminTokenAccount: adminTokenAccount.address,
-          //tokenProgram: TOKEN_PROGRAM_ID,
         })
         .signers([callAs])
         .rpc();
@@ -405,29 +432,41 @@ describe("maxi-auction", () => {
     // Step 6: Fetch balances after withdrawal
     const adminSolAfter = await connection.getBalance(adminKp.publicKey);
     const auctionSolAfter = await connection.getBalance(auctionSol);
-    const auctionTokenAfter = (await connection.getTokenAccountBalance(auctionTokenAccount)).value.uiAmount;
-    const adminTokenAfter = (await connection.getTokenAccountBalance(adminTokenAccount.address)).value.uiAmount;
   
+    const auctionTokenBalanceAfter = await connection.getTokenAccountBalance(auctionTokenAccount);
+    const auctionTokenAfter = BigInt(auctionTokenBalanceAfter.value.amount);
+  
+    const adminTokenBalanceAfter = await connection.getTokenAccountBalance(adminTokenAccount.address);
+    const adminTokenAfter = BigInt(adminTokenBalanceAfter.value.amount);
+  
+    // Step 7: Log balances for debugging
     console.log("Balances before withdrawal:");
     console.log(`Admin SOL: ${(adminSolBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
     console.log(`Auction SOL: ${(auctionSolBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-    console.log(`Auction Tokens: ${auctionTokenBefore} tokens`);
-    console.log(`Admin Tokens: ${adminTokenBefore} tokens`);
+    console.log(`Auction Tokens: ${auctionTokenBefore.toString()} tokens`);
+    console.log(`Admin Tokens: ${adminTokenBefore.toString()} tokens`);
   
     console.log("Balances after withdrawal:");
     console.log(`Admin SOL: ${(adminSolAfter / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
     console.log(`Auction SOL: ${(auctionSolAfter / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-    console.log(`Auction Tokens: ${auctionTokenAfter} tokens`);
-    console.log(`Admin Tokens: ${adminTokenAfter} tokens`);
+    console.log(`Auction Tokens: ${auctionTokenAfter.toString()} tokens`);
+    console.log(`Admin Tokens: ${adminTokenAfter.toString()} tokens`);
   
-    // Step 7: Assertions
+    // Step 8: Assertions
+    // SOL assertions remain unchanged
     assert.equal(auctionSolAfter, 0, "Auction SOL account should be empty after withdrawal");
     assert.equal(adminSolAfter > adminSolBefore, true, "Admin SOL should increase after withdrawal");
-    assert.equal(auctionTokenAfter, 0, "Auction token account should be empty after withdrawal");
+  
+    // Token assertions updated for partial withdrawal
     assert.equal(
-      adminTokenAfter,
-      adminTokenBefore + auctionTokenBefore,
-      "Admin token balance should increase by the auction's token amount"
+      auctionTokenAfter.toString(),
+      expectedAuctionTokenAfter.toString(),
+      "Auction token account should have the remaining tokens after withdrawal"
+    );
+    assert.equal(
+      adminTokenAfter.toString(),
+      expectedAdminTokenAfter.toString(),
+      "Admin token balance should increase by the withdrawn amount"
     );
   }
 
@@ -521,8 +560,7 @@ describe("maxi-auction", () => {
       console.log('marketId', marketId.toBase58());
       const txIds = await execCM({ sequentially: true, });
       await logSuccessTx(connection, wrapSig, "Create market");
-      // TODO: save marketInfo to DB table, index by auctionId
-  
+        
     // **Step 5: Create a fucking pool**
     const marketBufferInfo = await raydium.connection.getAccountInfo(new PublicKey(marketId));
     console.log('marketBufferInfo', marketBufferInfo);
@@ -646,7 +684,7 @@ describe("maxi-auction", () => {
       poolKeys2 = data.poolKeys;
       rpcData = data.poolRpcData;
     }
-    // TODO: save poolInfo2 and poolKeys2 (more info than poolInfo and poolKeys?)
+    
     //assert.equal(poolInfo2, poolInfo, 'poolInfo2 should be equal to poolInfo');
     //assert.equal(poolKeys2, poolKeys, 'poolKeys2 should be equal to poolKeys');
     const [baseReserve, quoteReserve, status] = [rpcData.baseReserve, rpcData.quoteReserve, rpcData.status.toNumber()];
@@ -780,7 +818,7 @@ describe("maxi-auction", () => {
       defaultTokenSupply: new BN(TestTokenSupply),
       defaultTokenDecimals: TestTokenDecimals,
       defaultStartPriceLamports: new BN(TestStartPriceSol * LAMPORTS_PER_SOL),
-      defaultLockPercent: new BN(TestDefaultLockPercent),
+      //defaultLockPercent: new BN(TestDefaultLockPercent),
     };
     const [globalInfo] = PublicKey.findProgramAddressSync(
       [Buffer.from(globalInfoSeed)],
@@ -813,7 +851,7 @@ describe("maxi-auction", () => {
       }
       logger.color("green").log("Your transaction signature", sig);
 
-      const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+      const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo); // ###
       logger.color("green").log("globalInfoAccount", globalInfoAccount);
       const { deployer, config, auctionsNum } = globalInfoAccount;
 
@@ -835,10 +873,10 @@ describe("maxi-auction", () => {
       console.log("TestTokenDecimals", TestTokenDecimals);
       assert.equal(parseFloat(config.defaultTokenDecimals.toString()), TestTokenDecimals);
 
-      console.log("\n");
-      console.log("config.defaultLockPercent", config.defaultLockPercent.toString());
-      console.log("TestDefaultLockPercent", TestDefaultLockPercent);
-      assert.equal(parseFloat(config.defaultLockPercent.toString()), TestDefaultLockPercent);
+      // console.log("\n");
+      // console.log("config.defaultLockPercent", config.defaultLockPercent.toString());
+      // console.log("TestDefaultLockPercent", TestDefaultLockPercent);
+      // assert.equal(parseFloat(config.defaultLockPercent.toString()), TestDefaultLockPercent);
 
       console.log("\n");
       console.log("config.defaultStartPriceLamports", config.defaultStartPriceLamports.toNumber());
@@ -846,11 +884,6 @@ describe("maxi-auction", () => {
 
       //assert.equal(config.defaultStartPriceLamports.toNumber(), Math.round(TestStartPriceSol * LAMPORTS_PER_SOL), "Start price in lamports should match");
       //assert.equal(parseFloat(config.defaultStartPriceLamports.toString()), TestStartPriceSol * LAMPORTS_PER_SOL);
-
-      console.log("\n");
-      console.log("config.defaultLockPercent", config.defaultLockPercent.toString());
-      console.log("TestDefaultLockPercent", TestDefaultLockPercent);
-      assert.equal(parseFloat(config.defaultLockPercent.toString()), TestDefaultLockPercent);
 
     } catch (e) {
       console.error("Transaction error:", e);
@@ -861,7 +894,7 @@ describe("maxi-auction", () => {
     }
   }
 
-  async function test_create_auction() {
+  async function test_create_auction(auction_lock_percent = undefined) { // 0-1
     logger.color("magenta").log("User1 is creating auction...");
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const globalInfoTest = await program.account.globalInfo.fetchNullable(globalInfo);
@@ -880,7 +913,7 @@ describe("maxi-auction", () => {
     const symbol = TestTokenSymbol;
     const uri = TestTokenUri;
     const durationHours = new BN(10); // about 5mins: unit is actually hours_div_100, or 36s 
-    const lockPercent = new BN(TestLockPercent); //TestLockPercent;
+    const lockPercent = new BN(auction_lock_percent * 1000 || TestLockPercent); 
     const delaySeconds = new BN(0);
 
     // Log balances of all signing accounts before the transaction
@@ -893,6 +926,7 @@ describe("maxi-auction", () => {
     console.log(`Admin (${adminKp.publicKey.toBase58()}): ${(adminBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
     console.log(`Signer (${signer.publicKey.toBase58()}): ${(signerBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
     console.log(`Token mint (${token.publicKey.toBase58()}): ${(tokenBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+    console.log(`lockPercent: ${lockPercent.toNumber()/10} %`);
 
     const tx = await program.methods
       .createAuction(xId, name, symbol, uri, durationHours, lockPercent, delaySeconds)
@@ -955,8 +989,8 @@ describe("maxi-auction", () => {
     assert.equal(auctionDataFetched.tokenMint, token.publicKey.toBase58(), "tokenMint comparison");
   }
 
-  async function test_bid_auction(fill_percent: number = 1.0) { // BID ALL SUPPLY by default
-    await test_create_auction();
+  async function test_bid_auction(fill_percent: number = 1.0) { // BID ALL SUPPLY by default, lock 10% for AMM
+    
     logger.color("magenta").log("User2 is bidding...");
 
     // Derive program-derived addresses
@@ -1019,10 +1053,9 @@ describe("maxi-auction", () => {
     const fee = txDetails.meta.fee;
 
     // Calculate expected amount transferred
-    const lastBid = auctionPost.bids[0];
+    const lastBid = auctionPost.bids[auctionPost.bids.length - 1];
     const bidQtyFetched = lastBid.bidQty;
-    const bidSol = lastBid.bidSol; // Price per whole token in lamports
-    const decimals = auctionPost.tokenDecimals;
+    const bidSol = lastBid.bidSol;
     const expectedAmount = bidQtyFetched/*.div(new BN(10).pow(new BN(decimals)))*/.mul(bidSol);
 
     // Convert balances to BN for precise arithmetic
@@ -1033,7 +1066,7 @@ describe("maxi-auction", () => {
     const feeBN = new BN(fee);
 
     // Assertions
-    assert.equal(auctionPost.bids.length, 1, "bid length comparison");
+    assert.equal(auctionPost.bids.length - 1, auctionPre.bids.length, "bid length comparison");
 
     console.log("auctionSolBalanceBeforeBN", auctionSolBalanceBeforeBN.toString());
     console.log("auctionSolBalanceAfterBN", auctionSolBalanceAfterBN.toString());
@@ -1061,6 +1094,7 @@ describe("maxi-auction", () => {
     console.log("Testing cancel_bid function...");
 
     // Place a bid for 50% of the auction using the existing test_fill_auction function
+    await test_create_auction();
     await test_bid_auction(0.5); // Bids for 50% of token supply 
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
@@ -1139,7 +1173,7 @@ describe("maxi-auction", () => {
     assert.equal(auctionDataAfter.bids.length, 0, "Bid list should be empty after cancellation");
   }
 
-  it("creates a market", async () => {
+  /*it("creates a market", async () => {
     logger.color("magenta").log("admin is creating a market...");
 
     const [adminBalance_before,] = await Promise.all([connection.getBalance(adminKp.publicKey),]);
@@ -1165,7 +1199,7 @@ describe("maxi-auction", () => {
 
     const [adminBalance_after,] = await Promise.all([connection.getBalance(adminKp.publicKey),]);
     console.log(`adminBalance_after (${adminKp.publicKey.toBase58()}): ${(adminBalance_after / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-  });
+  });*/
 
   it("test getMint", async () => {
     const connection = new Connection("https://api.devnet.solana.com", "finalized");

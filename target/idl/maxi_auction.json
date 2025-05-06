@@ -1,5 +1,5 @@
 {
-  "address": "8NBqXhLHYwaK1NqsjYTqNLG5DdCm34UX9ud9nSzGWGUF",
+  "address": "DWru3doRX4c8ioSD81anjE2ayB5x1gh19QB5KP68NgVf",
   "metadata": {
     "name": "maxi_auction",
     "version": "0.1.2",
@@ -1111,6 +1111,11 @@
       "code": 6018,
       "name": "InvalidPDA",
       "msg": "Invalid PDA."
+    },
+    {
+      "code": 6019,
+      "name": "InvalidLockPercent",
+      "msg": "Lock percent must be between 10 and 1000 (1 and 100%)"
     }
   ],
   "types": [
@@ -1331,10 +1336,6 @@
           },
           {
             "name": "default_start_price_lamports",
-            "type": "u64"
-          },
-          {
-            "name": "default_lock_percent",
             "type": "u64"
           }
         ]

@@ -11,6 +11,7 @@ use anchor_spl::{
     token::{self, spl_token::instruction::AuthorityType, Mint, Token, TokenAccount},
 };
 use core::mem::size_of;
+use crate::{ errors::CustomError,  };
 
 #[derive(Accounts)]
 pub struct CreateAuction<'info> {
@@ -114,6 +115,8 @@ impl<'info> CreateAuction<'info> {
     ) -> Result<()> {
         msg!("Calling create_auction...");
 
+        require!(lock_percent >= 10 && lock_percent <= 1000, CustomError::InvalidLockPercent);
+
         let global_info = &mut self.global_info;
         let creator = &mut self.creator;
         let token_mint = &mut self.token_mint;
@@ -216,10 +219,8 @@ impl<'info> CreateAuction<'info> {
 
         global_info.auctions_num = auction_id + 1;
 
-        msg!("Auction id: {} is created", auction_id);
+        msg!("Auction ID: {} is created", auction_id);
         
-        msg!("global_info.auctions_num is now {}", global_info.auctions_num);
-
         emit!(AuctionCreated {
             auction_id,
             creator: creator.key(),

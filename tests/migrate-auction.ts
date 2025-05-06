@@ -21,20 +21,16 @@ import { Connection, Keypair } from "@solana/web3.js";
 import { Program } from "@coral-xyz/anchor";
 import { MaxiAuction } from "../target/types/maxi_auction";
   
-  const MAXI_PROGRAM = anchor.workspace.MaxiAuction as Program<MaxiAuction>; //new anchor.Program(auctionIdl as MaxiAuction);
-
-  const program = MAXI_PROGRAM;
-  const isMainnet = false; // Assuming development network for DEVNET_PROGRAM_ID usage
-  
   const GLOBAL_INFO_SEED = "global_info_seed";
   const AUCTION_SOL_SEED = "auction_sol_seed";
   const AUCTION_DATA_SEED = "auction_data_seed";
 
+
   // migrate auction liquidity to a new raydium pool
-  export const migrateAuction = async (auctionId: number, adminKp: Keypair, connection: Connection) => {
+  export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: boolean, auctionId: number, adminKp: Keypair, connection: Connection) => {
     
     // Withdraw tokens (some) & sol (all) to admin
-    const { solAmount: solWithdrawn, tokenAmount: tokensWithdrawn, tokenMint, adminTokenAccount } = await withdrawFunds(auctionId, adminKp, connection);
+    const { solAmount: solWithdrawn, tokenAmount: tokensWithdrawn, tokenMint, adminTokenAccount } = await withdrawFunds(program, isMainnet, auctionId, adminKp, connection);
     console.log(`migrateAuction => Withdrawn ${solWithdrawn.toString()} lamports and ${tokensWithdrawn.toString()} tokens`);
   
     // Wrap all admin's SOL 
@@ -53,7 +49,7 @@ import { MaxiAuction } from "../target/types/maxi_auction";
       console.log(`${wrapSig} migrateAuction => Wrapped SOL into WSOL`);
   
     // Create & fund a new market/pool
-    const { marketId, poolId, marketInfo, poolKeys }  = await createAndFundPool(auctionId, tokenMint, tokensWithdrawn, solWithdrawn, adminKp, connection);
+    const { marketId, poolId, marketInfo, poolKeys }  = await createAndFundPool(program, isMainnet, auctionId, tokenMint, tokensWithdrawn, solWithdrawn, adminKp, connection);
     console.log(`migrateAuction => OK!`);
     console.log(`  marketInfo`, marketInfo);
     console.log(`  poolKeys`, poolKeys);
@@ -64,7 +60,7 @@ import { MaxiAuction } from "../target/types/maxi_auction";
     console.log(`  solAmount: ${solWithdrawn}`);
   };
   
-    async function withdrawFunds(auctionId: number, adminKp: Keypair, connection: Connection): Promise<{
+    async function withdrawFunds(program: Program<MaxiAuction>, isMainnet: boolean, auctionId: number, adminKp: Keypair, connection: Connection): Promise<{
       solAmount: bigint;
       tokenAmount: bigint;
       tokenMint: PublicKey;
@@ -114,7 +110,7 @@ import { MaxiAuction } from "../target/types/maxi_auction";
     }
   
     // (2) Create market and pool
-    async function createAndFundPool(auctionId: number, tokenMint: PublicKey, tokenAmount: bigint, solAmount: bigint, adminKp: Keypair, connection: Connection): Promise<{ 
+    async function createAndFundPool(program: Program<MaxiAuction>, isMainnet: boolean, auctionId: number, tokenMint: PublicKey, tokenAmount: bigint, solAmount: bigint, adminKp: Keypair, connection: Connection): Promise<{ 
       marketId: PublicKey;
       poolId: PublicKey;
       marketInfo: Object;

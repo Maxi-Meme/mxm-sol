@@ -61,4 +61,7 @@ pub enum CustomError {
 
     #[msg("Invalid PDA.")]
     InvalidPDA,
+
+    #[msg("Lock percent must be between 10 and 1000 (1 and 100%)")]
+    InvalidLockPercent,
 }

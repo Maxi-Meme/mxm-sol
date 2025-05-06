@@ -48,6 +48,9 @@ pub struct WithdrawTokens<'info> {
     pub token_program: Program<'info, Token>,
 }
 
+//
+// TODO: only withdraw locked tokens!!
+//
 impl<'info> WithdrawTokens<'info> {
     pub fn process(&mut self) -> Result<()> {
         let auction = &self.auction_data_account;
@@ -64,6 +67,12 @@ impl<'info> WithdrawTokens<'info> {
         // Get the token balance
         let token_balance = self.auction_token_account.amount;
 
+        // Ensure lock_percent is valid (0 to 1000)
+        require!(auction.lock_percent <= 1000, CustomError::InvalidLockPercent);
+        
+        // Calculate amount to transfer: (token_balance * lock_percent) / 1000
+        let amount_to_transfer = ((token_balance as u128) * (auction.lock_percent as u128) / 1000) as u64;
+
         // Transfer all tokens to admin's token account
         token::transfer(
             CpiContext::new_with_signer(
@@ -79,7 +88,7 @@ impl<'info> WithdrawTokens<'info> {
                     &[bump],
                 ]],
             ),
-            token_balance,
+            amount_to_transfer,
         )?;
 
         Ok(())
