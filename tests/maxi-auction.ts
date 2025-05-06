@@ -317,9 +317,8 @@ describe("maxi-auction", () => {
   });  
 
   it("creates & fills an auction", async () => {
-    //await test_init();
     await test_create_auction();
-    await test_bid_auction(); // TODO: liq. move is breaking validations
+    await test_bid_auction();
   });
 
   it("creates & interacts with a v2 pool", async () => {
@@ -989,106 +988,111 @@ describe("maxi-auction", () => {
     assert.equal(auctionDataFetched.tokenMint, token.publicKey.toBase58(), "tokenMint comparison");
   }
 
-  async function test_bid_auction(fill_percent: number = 1.0) { // BID ALL SUPPLY by default, lock 10% for AMM
+    async function test_bid_auction(fill_percent = 1.0) { // Bid all supply by default, lock 10% for AMM
+      logger.color("magenta").log("User2 is bidding...");
     
-    logger.color("magenta").log("User2 is bidding...");
+      // Derive PDAs
+      const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+      const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+      const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
+      const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+      const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+      console.log("auctionId", auctionId, "auctionSol", auctionSol.toBase58(), "auctionData", auctionData.toBase58());
+    
+      // Fetch pre-bid auction data
+      const auctionPre = await program.account.auction.fetch(auctionData);
+      logObject("auctionPre", auctionPre);
+    
+      // Set up bidder and bid quantity
+      const signer = user2Kp;
+      const bidQty = new BN(auctionPre.tokenSupply.toNumber() / Math.pow(10, auctionPre.tokenDecimals) * fill_percent);
+      console.log("signer", signer.publicKey.toBase58(), "tokenSupply", auctionPre.tokenSupply.toString(), "bidQty", bidQty.toString());
+    
+      // Get initial balances
+      const bidderBalanceBefore = await connection.getBalance(signer.publicKey);
+      const auctionSolBalanceBefore = await connection.getBalance(auctionSol);
+      console.log(`Balances before bid: Bidder (${signer.publicKey.toBase58()}): ${(bidderBalanceBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL, Auction (${auctionSol.toBase58()}): ${(auctionSolBalanceBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+    
+      // Check if bid fills auction
+      const totalBidTokens = auctionPre.bids.reduce((acc, bid) => {
+        return acc.add(bid.bidQty.mul(new BN(Math.pow(10, auctionPre.tokenDecimals))));
+      }, new BN(0)); // 0 in this case
+      const remainingTokens = auctionPre.tokenSupply.sub(totalBidTokens);
+      const bidQtyLamports = bidQty.mul(new BN(Math.pow(10, auctionPre.tokenDecimals)));
+      const isFinalBid = bidQtyLamports.gte(remainingTokens); 
+      console.log('remainingTokens:', remainingTokens.toString());
+      console.log('bidQtyLamports:', bidQtyLamports.toString());
+      console.log('isFinalBid:', isFinalBid);
 
-    // Derive program-derived addresses
-    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
-    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
-    const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
-    console.log("auctionId", auctionId);
-    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
-    console.log("auctionSol", auctionSol.toBase58());
-    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
-    console.log("auctionData", auctionData.toBase58());
-
-    // Fetch auction data before the bid
-    const auctionPre = await program.account.auction.fetch(auctionData);
-    logObject("auctionPre", auctionPre);
-
-    const signer = user2Kp;
-    console.log("signer (user2Kp)", signer.publicKey.toBase58());
-    const bidQty = new BN(auctionPre.tokenSupply.toNumber() / (Math.pow(10, auctionPre.tokenDecimals)) * fill_percent);
-    console.log("tokenSupply", auctionPre.tokenSupply.toString());
-    console.log("bidQty", bidQty.toString());
-
-    // Fetch initial balances
-    const bidderBalanceBefore = await connection.getBalance(signer.publicKey);
-    const auctionSolBalanceBefore = await connection.getBalance(auctionSol);
-    console.log("Balances before placing bid (in SOL):");
-    console.log(`Bidder (${signer.publicKey.toBase58()}): ${(bidderBalanceBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-    console.log(`Auction SOL account (${auctionSol.toBase58()}): ${(auctionSolBalanceBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-
-    // Construct and send the transaction
-    const tx = await program.methods
-      .placeBid(bidQty, new BN(42))
-      .accounts({
-        bidder: signer.publicKey,
-        auctionDataAccount: auctionData,
-        auctionSolAccount: auctionSol,
-      })
-      .transaction();
-    tx.feePayer = signer.publicKey;
-    tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-
-    let sig;
-    try {
-      sig = await sendAndConfirmTransaction(connection, tx, [adminKp, signer]);
+      // Place bid transaction
+      const tx = await program.methods.placeBid(bidQty, new BN(42)).accounts({ bidder: signer.publicKey, auctionDataAccount: auctionData, auctionSolAccount: auctionSol }).transaction();
+      tx.feePayer = signer.publicKey;
+      tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      const sig = await sendAndConfirmTransaction(connection, tx, [adminKp, signer]).catch(err => { console.error("logs:", err.getLogs()); throw err; });
       await logSuccessTx(connection, sig, "placeBid");
-    } catch (err) {
-      console.error("logs:", await err.getLogs());
-      throw err;
+      logger.color("green").log("placeBid tx sig", sig);
+    
+      // Wait 2s if final bid for liquidity logic
+      if (isFinalBid) { console.log("Final bid detected, waiting 2s..."); await new Promise(resolve => setTimeout(resolve, 2000)); }
+    
+      // Fetch post-bid data
+      const bidderBalanceAfter = await connection.getBalance(signer.publicKey);
+      const auctionSolBalanceAfter = await connection.getBalance(auctionSol);
+      const auctionPost = await program.account.auction.fetch(auctionData);
+      const txDetails = await connection.getTransaction(sig, { commitment: "confirmed" });
+      const fee = txDetails.meta.fee;
+      logObject("auctionPost", auctionPost);
+    
+      // Calculate bid amount
+      const lastBid = auctionPost.bids[auctionPost.bids.length - 1];
+      const expectedAmount = lastBid.bidQty.mul(lastBid.bidSol);
+    
+      // Convert to BN for precision
+      const bidderBalanceBeforeBN = new BN(bidderBalanceBefore);
+      const bidderBalanceAfterBN = new BN(bidderBalanceAfter);
+      const auctionSolBalanceBeforeBN = new BN(auctionSolBalanceBefore);
+      const auctionSolBalanceAfterBN = new BN(auctionSolBalanceAfter);
+      const feeBN = new BN(fee);
+    
+      // Validate based on bid type
+      if (isFinalBid) {
+        // Check all SOL withdrawn
+        assert.equal(auctionSolBalanceAfter, 0, "All SOL should be withdrawn");
+      
+        // Calculate locked and expected remaining tokens
+        const lockPercent = auctionPost.lockPercent.toNumber();
+        const lockedTokensPercent = lockPercent / 10;
+        const totalTokens = auctionPost.tokenSupply.toNumber();
+        const lockedTokens = Math.floor((totalTokens * lockedTokensPercent) / 100); // Use floor for precision
+        const expectedRemainingTokens = totalTokens - lockedTokens;
+      
+        // Get auction token balance
+        const auctionTokenAccount = await getAssociatedTokenAddress(auctionPost.tokenMint, auctionSol, true);
+        const auctionTokenBalance = await connection.getTokenAccountBalance(auctionTokenAccount);
+        const remainingTokens = parseInt(auctionTokenBalance.value.amount);
+      
+        console.log('lockPercent', lockPercent);
+        console.log('lockedTokensPercent', lockedTokensPercent);
+        console.log('totalTokens', totalTokens);
+        console.log('lockedTokens', lockedTokens);
+        console.log('expectedRemainingTokens', expectedRemainingTokens);
+        console.log('remainingTokens', remainingTokens);
+      
+        assert.equal(remainingTokens, expectedRemainingTokens, "Remaining tokens should be total tokens minus locked tokens");
+      } else {
+        // Standard bid checks
+        assert.equal(auctionPost.bids.length - 1, auctionPre.bids.length, "Bid length should increase by 1");
+        assert.equal(auctionSolBalanceAfterBN.sub(auctionSolBalanceBeforeBN).eq(expectedAmount), true, "Auction SOL increase should match expected");
+        assert.equal(bidderBalanceBeforeBN.sub(bidderBalanceAfterBN).eq(expectedAmount.add(feeBN)), true, "Bidder SOL decrease should match expected + fee");
+      }
+    
+      // Log results
+      console.log("\nBid Validation Results:");
+      console.log(`Expected SOL spent: ${(expectedAmount.toNumber() / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
+      console.log(`Auction SOL increase: ${(auctionSolBalanceAfterBN.sub(auctionSolBalanceBeforeBN).toNumber() / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
+      console.log(`Bidder SOL decrease: ${(bidderBalanceBeforeBN.sub(bidderBalanceAfterBN).toNumber() / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
+      console.log(`Tx fee: ${(feeBN.toNumber() / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
     }
-    logger.color("green").log("placeBid transaction signature", sig);
-
-    // Fetch final balances and auction data after the bid
-    const bidderBalanceAfter = await connection.getBalance(signer.publicKey);
-    const auctionSolBalanceAfter = await connection.getBalance(auctionSol);
-    const auctionPost = await program.account.auction.fetch(auctionData);
-    logObject("auctionDataFetched_After", auctionPost);
-
-    // Fetch transaction fee
-    const txDetails = await connection.getTransaction(sig, { commitment: 'confirmed' });
-    const fee = txDetails.meta.fee;
-
-    // Calculate expected amount transferred
-    const lastBid = auctionPost.bids[auctionPost.bids.length - 1];
-    const bidQtyFetched = lastBid.bidQty;
-    const bidSol = lastBid.bidSol;
-    const expectedAmount = bidQtyFetched/*.div(new BN(10).pow(new BN(decimals)))*/.mul(bidSol);
-
-    // Convert balances to BN for precise arithmetic
-    const bidderBalanceBeforeBN = new BN(bidderBalanceBefore);
-    const bidderBalanceAfterBN = new BN(bidderBalanceAfter);
-    const auctionSolBalanceBeforeBN = new BN(auctionSolBalanceBefore);
-    const auctionSolBalanceAfterBN = new BN(auctionSolBalanceAfter);
-    const feeBN = new BN(fee);
-
-    // Assertions
-    assert.equal(auctionPost.bids.length - 1, auctionPre.bids.length, "bid length comparison");
-
-    console.log("auctionSolBalanceBeforeBN", auctionSolBalanceBeforeBN.toString());
-    console.log("auctionSolBalanceAfterBN", auctionSolBalanceAfterBN.toString());
-    console.log("expectedAmount", expectedAmount.toString());
-    assert.equal(
-      auctionSolBalanceAfterBN.sub(auctionSolBalanceBeforeBN).eq(expectedAmount),
-      true,
-      "auctionSol balance increase should match expected amount"
-    );
-    assert.equal(
-      bidderBalanceBeforeBN.sub(bidderBalanceAfterBN).eq(expectedAmount.add(feeBN)),
-      true,
-      "bidder balance decrease should match expected amount plus fee"
-    );
-
-    // Logging results
-    console.log("\nBid Validation Results:");
-    console.log(`Expected SOL spent for the bid: ${(expectedAmount.toNumber() / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
-    console.log(`Actual auction SOL balance increase: ${(auctionSolBalanceAfterBN.sub(auctionSolBalanceBeforeBN).toNumber() / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
-    console.log(`Actual bidder balance decrease: ${(bidderBalanceBeforeBN.sub(bidderBalanceAfterBN).toNumber() / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
-    console.log(`Transaction fee: ${(feeBN.toNumber() / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
-  }
 
   async function test_cancel_bid() {
     console.log("Testing cancel_bid function...");
@@ -2050,7 +2054,7 @@ function logObject(label, obj) {
 }
 
 async function logSuccessTx(connection, sig, label) {
-  await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
+  //await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
   const status = await connection.getSignatureStatus(sig);
   console.log("TX status:", status);
 
