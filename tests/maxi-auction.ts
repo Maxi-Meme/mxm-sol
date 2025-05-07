@@ -70,6 +70,25 @@ import { log } from "console";
 
 import { migrateAuction } from "./migrate-auction"
 import { bs58 } from "@coral-xyz/anchor/dist/cjs/utils/bytes";
+import "dotenv/config";
+import * as sql from "mssql";
+
+const DB_CONFIG: sql.config = {
+  user: process.env.DB_USERNAME,
+  password: process.env.DB_PASSWORD,
+  server: process.env.DB_SERVER,
+  database: process.env.DB_NAME,
+  options: {
+    encrypt: true,
+    trustServerCertificate: true,
+  },
+  pool: {
+    max: 20,
+    min: 0,
+    acquireTimeoutMillis: 30000,
+    idleTimeoutMillis: 30000
+  }
+};
 
 var connection;
 var isLocal = false;
@@ -80,7 +99,6 @@ var isMainnet = false;
 const TEST_FEE_ACCOUNT = Keypair.fromSecretKey(bs58.decode("4hbfT4t6HZtcBVUq983nHXnXs7KdQXxrNUdkCVPaNYT82qSd3hH7eVJkgVicHX9MtatidQuEi3E5nXJ5UbE9ExHp"));
 
 const auctionFilledPromises = new Map();
-
 
 describe("maxi-auction", () => {
   // setup provider
@@ -175,8 +193,8 @@ describe("maxi-auction", () => {
     logObject(">>> auctionMigrated", event);
   });
 
+  // setup fixed admin keypair, and new random user keypairs
   const adminKp = Keypair.fromSecretKey(Uint8Array.from(keypair));
-
   const USER_KPs = [];
   for (var i = 0; i < 5; i++) {
     USER_KPs[i] = !isLocal ? adminKp : Keypair.generate(); // on devnet test admin does everything
@@ -186,20 +204,14 @@ describe("maxi-auction", () => {
   const user3Kp = USER_KPs[2];
   const user4Kp = USER_KPs[3];
   const user5Kp = USER_KPs[4];
-  /*const user1Kp = !isLocal ? adminKp : Keypair.generate();
-  const user2Kp = !isLocal ? adminKp : Keypair.generate();
-  const user3Kp = !isLocal ? adminKp : Keypair.generate();
-  const user4Kp = !isLocal ? adminKp : Keypair.generate();
-  const user5Kp = !isLocal ? adminKp : Keypair.generate();
-  // const user6Kp = Keypair.generate();
-  // const user7Kp = Keypair.generate();
-  // const user8Kp = Keypair.generate();
-  // const user9Kp = Keypair.generate();
-  // const user10Kp = Keypair.generate();*/
-  const tokenKp1 = Keypair.generate();
-  const tokenKp2 = Keypair.generate();
+
+  //var tokenKp1;
 
   before(async () => {
+    // get a maxi keypair from DB
+    //tokenKp1 = Keypair.fromSecretKey(bs58.decode(await getAndLockMaxiPrivKey())); //Keypair.generate();
+    //tokenKp2 = Keypair.fromSecretKey(bs58.decode(await getAndLockMaxiPrivKey())); //Keypair.generate();
+
     if (isLocal) {
       logger.color("blue").log("Airdropping SOL to accounts...");
       logger.color("green").log("Airdrop SOL to admin");
@@ -258,10 +270,13 @@ describe("maxi-auction", () => {
   });
 
   it("places a bid", async () => {
+    await test_create_auction();
     await test_bid_auction(0.1);
   });
 
   it("cancels a bid", async () => {
+    await test_create_auction();
+    await test_bid_auction(0.5); // Bids for 50% of token supply 
     await test_cancel_bid();
   });  
 
@@ -446,6 +461,10 @@ describe("maxi-auction", () => {
   }
 
   async function test_create_pool_and_trade() { // https://github.com/raydium-io/raydium-sdk-V2-demo/tree/master/src/amm
+    if (isLocal) {
+      logger.color("yellow").log("Skipping pool creation on localnet");
+      return;
+    }
     const txVersion = TxVersion.LEGACY; // TxVersion.V0
 
     // **Step 1: Set up connection and keypairs && Initialize the Raydium SDK **
@@ -795,7 +814,7 @@ describe("maxi-auction", () => {
       defaultTokenDecimals: TestTokenDecimals,
       defaultStartPriceLamports: new BN(TestStartPriceSol * LAMPORTS_PER_SOL),
       //defaultLockPercent: new BN(TestDefaultLockPercent),
-      feeAccount: TEST_FEE_ACCOUNT,
+      feeAccount: TEST_FEE_ACCOUNT.publicKey,
     };
     logObject("newConfig", newConfig);
 
@@ -880,16 +899,14 @@ describe("maxi-auction", () => {
     logger.color("magenta").log("User1 is creating auction...");
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const globalInfoTest = await program.account.globalInfo.fetchNullable(globalInfo);
-    if (!globalInfoTest) {
-      throw("Global Info not initialized!");
-    }
-    else {
-      console.log(globalInfoTest);
-    }
-
+    if (!globalInfoTest) throw ("Global Info not initialized!");
     const signer = user1Kp;
+
+    // use a real ...maxi keypair if we're running e2e on devnet/mainnet
+    const tokenKp1 = isLocal ? Keypair.generate() : Keypair.fromSecretKey(bs58.decode(await getAndLockMaxiPrivKey()));
     const token = tokenKp1;
 
+    // test auction data
     const xId = new BN(42);
     const name = TestTokenName;
     const symbol = TestTokenSymbol;
@@ -922,7 +939,7 @@ describe("maxi-auction", () => {
     tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
 
     try {
-    console.log("*** simulateTransaction createAuction", await connection.simulateTransaction(tx));
+      console.log("*** simulateTransaction createAuction", await connection.simulateTransaction(tx));
     }
     catch (error) {
       console.error("Error during transaction signing or confirmation:", error);
@@ -945,6 +962,8 @@ describe("maxi-auction", () => {
       }
       throw err;
     }
+
+    await markMaxiKeyUsed(token.publicKey.toBase58());
 
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
     const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
@@ -1138,10 +1157,6 @@ describe("maxi-auction", () => {
 
   async function test_cancel_bid() {
     console.log("Testing cancel_bid function...");
-
-    // Place a bid for 50% of the auction using the existing test functions
-    await test_create_auction();
-    await test_bid_auction(0.5); // Bids for 50% of token supply 
 
     // Derive PDAs
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
@@ -2148,4 +2163,49 @@ async function getTransactionDetailsWithRetry(connection, signature, maxAttempts
 
   return txDetails;
 }
+
+export const getAndLockMaxiPrivKey = async () => {
+  const pool = new sql.ConnectionPool(DB_CONFIG);
+  await pool.connect();  // Select the oldest available key (unlocked and unused)
+  const selectQuery = `
+    SELECT TOP 1 PublicKey, SecretKey
+    FROM [dbo].[KeyPair]
+    WHERE locked_utc IS NULL
+    AND used_utc IS NULL
+    ORDER BY created_utc ASC
+  `;
+  const selectResult = await pool.request().query(selectQuery);
+  if (selectResult.recordset.length === 0) throw new Error("No available maxi public keys found");
+
+  const publicKey = selectResult.recordset[0].PublicKey;
+  const secretKey = selectResult.recordset[0].SecretKey;
+  const lockQuery = `
+    UPDATE [dbo].[KeyPair]
+    SET locked_utc = GETUTCDATE()
+    WHERE PublicKey = @publicKey
+  `;
+  await pool
+    .request()
+    .input("publicKey", sql.VarChar(255), publicKey)
+    .query(lockQuery);
+
+  await pool.close();
+  console.log(`Successfully locked key: ${publicKey}`);
+  return secretKey;
+};
+const markMaxiKeyUsed = async (publicKey: string) => {
+  const pool = new sql.ConnectionPool(DB_CONFIG);
+  await pool.connect();
+  const markUsedQuery = `
+      UPDATE [dbo].[KeyPair] 
+      SET used_utc = GETUTCDATE()
+      WHERE PublicKey = @publicKey
+    `;
+  await pool
+    .request()
+    .input("publicKey", sql.VarChar(255), publicKey)
+    .query(markUsedQuery);
+  console.log(`Successfully marked key as used: ${publicKey}`);
+  await pool.close();
+};
 
