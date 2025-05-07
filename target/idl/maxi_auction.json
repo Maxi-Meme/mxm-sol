@@ -1,5 +1,5 @@
 {
-  "address": "DWru3doRX4c8ioSD81anjE2ayB5x1gh19QB5KP68NgVf",
+  "address": "J7EViSytKqGGfFnexQZNRmyttRCsy7K17HTYZLPpPS3y",
   "metadata": {
     "name": "maxi_auction",
     "version": "0.1.2",
@@ -700,6 +700,10 @@
           "writable": true
         },
         {
+          "name": "fee_account",
+          "writable": true
+        },
+        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         }
@@ -1044,76 +1048,81 @@
     },
     {
       "code": 6005,
+      "name": "Overflow",
+      "msg": "Overflow."
+    },
+    {
+      "code": 6006,
       "name": "NotEnoughTokensLeft",
       "msg": "Not enough tokens left."
     },
     {
-      "code": 6006,
+      "code": 6007,
       "name": "MaxBidsReached",
       "msg": "Max number of bids reached."
     },
     {
-      "code": 6007,
+      "code": 6008,
       "name": "AuctionStillLive",
       "msg": "Auction is still live."
     },
     {
-      "code": 6008,
+      "code": 6009,
       "name": "AuctionEnded",
       "msg": "Auction is ended."
     },
     {
-      "code": 6009,
+      "code": 6010,
       "name": "AuctionNotFinished",
       "msg": "Auction is not finished."
     },
     {
-      "code": 6010,
+      "code": 6011,
       "name": "NoBidFoundForCaller",
       "msg": "No bid found for caller."
     },
     {
-      "code": 6011,
+      "code": 6012,
       "name": "InvalidClearingPrice",
       "msg": "Invalid clearing price."
     },
     {
-      "code": 6012,
+      "code": 6013,
       "name": "InvalidRemainingAccounts",
       "msg": "Invalid length of remaining accounts."
     },
     {
-      "code": 6013,
+      "code": 6014,
       "name": "InvalidUserAccount",
       "msg": "Invalid user account."
     },
     {
-      "code": 6014,
+      "code": 6015,
       "name": "InvalidUserTokenAccount",
       "msg": "Invalid user's token account."
     },
     {
-      "code": 6015,
+      "code": 6016,
       "name": "BidAlreadyClaimed",
       "msg": "Bid already claimed."
     },
     {
-      "code": 6016,
+      "code": 6017,
       "name": "AuctionNotStarted",
       "msg": "Auction not started."
     },
     {
-      "code": 6017,
+      "code": 6018,
       "name": "InvalidBidQuantity",
       "msg": "Invalid bid quantity."
     },
     {
-      "code": 6018,
+      "code": 6019,
       "name": "InvalidPDA",
       "msg": "Invalid PDA."
     },
     {
-      "code": 6019,
+      "code": 6020,
       "name": "InvalidLockPercent",
       "msg": "Lock percent must be between 10 and 1000 (1 and 100%)"
     }
@@ -1277,6 +1286,10 @@
           {
             "name": "is_claimed",
             "type": "bool"
+          },
+          {
+            "name": "bid_fee",
+            "type": "u64"
           }
         ]
       }
@@ -1337,6 +1350,10 @@
           {
             "name": "default_start_price_lamports",
             "type": "u64"
+          },
+          {
+            "name": "fee_account",
+            "type": "pubkey"
           }
         ]
       }
@@ -1391,6 +1408,10 @@
           },
           {
             "name": "bid_qty",
+            "type": "u64"
+          },
+          {
+            "name": "bid_fee",
             "type": "u64"
           }
         ]

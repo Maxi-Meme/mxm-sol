@@ -88,11 +88,12 @@ impl<'info> Claim<'info> {
         }
 
         if bid.bid_sol > clearing_price {
-            let paid = bid.bid_qty * bid.bid_sol;
+            let paid = bid.bid_qty * bid.bid_sol - bid.bid_fee;
             let exact = bid.bid_qty * clearing_price;
             let owed = paid.saturating_sub(exact);
 
-            // Returns the excess amount of SOL sent by the user.
+            // TODO: test these refunds...!!
+            // Returns the excess amount of SOL sent by the user
             msg!("sending excess sol to {}", bid.bidder);
             let _ = sol_transfer_with_signer(
                 self.auction_sol_account.to_account_info(),

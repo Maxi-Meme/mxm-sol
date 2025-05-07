@@ -76,7 +76,7 @@ pub(crate) fn get_auction_clearing_price(auction: &Auction) -> Option<u64> {
                 return None;
             }
             let last_bid = auction.bids.last().unwrap();
-            Some(last_bid.bid_sol)
+            Some(last_bid.bid_sol) 
         }
         AuctionStatus::ClosedFullyAllocated => {
             let token_qty = (auction

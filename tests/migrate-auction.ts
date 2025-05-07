@@ -34,19 +34,19 @@ import { MaxiAuction } from "../target/types/maxi_auction";
     console.log(`migrateAuction => Withdrawn ${solWithdrawn.toString()} lamports and ${tokensWithdrawn.toString()} tokens`);
   
     // Wrap all admin's SOL 
-      const adminWsolAccount = await getOrCreateAssociatedTokenAccount(connection, adminKp, new PublicKey(TOKEN_WSOL.address), adminKp.publicKey);
-      const wrapTx = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: adminKp.publicKey,
-          toPubkey: adminWsolAccount.address,
-          lamports: solWithdrawn,
-        }),
-        createSyncNativeInstruction(adminWsolAccount.address)
-      );
-      wrapTx.feePayer = adminKp.publicKey;
-      wrapTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-      const wrapSig = await sendAndConfirmTransaction(connection, wrapTx, [adminKp]);
-      console.log(`${wrapSig} migrateAuction => Wrapped SOL into WSOL`);
+    const adminWsolAccount = await getOrCreateAssociatedTokenAccount(connection, adminKp, new PublicKey(TOKEN_WSOL.address), adminKp.publicKey);
+    const wrapTx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: adminKp.publicKey,
+        toPubkey: adminWsolAccount.address,
+        lamports: solWithdrawn,
+      }),
+      createSyncNativeInstruction(adminWsolAccount.address)
+    );
+    wrapTx.feePayer = adminKp.publicKey;
+    wrapTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+    const wrapSig = await sendAndConfirmTransaction(connection, wrapTx, [adminKp]);
+    console.log(`${wrapSig} migrateAuction => Wrapped SOL into WSOL`);
   
     // Create & fund a new market/pool
     const { marketId, poolId, marketInfo, poolKeys }  = await createAndFundPool(program, isMainnet, auctionId, tokenMint, tokensWithdrawn, solWithdrawn, adminKp, connection);
@@ -85,7 +85,7 @@ import { MaxiAuction } from "../target/types/maxi_auction";
         })
         .signers([adminKp])
         .rpc();
-      console.log(`${withdrawSolSig} migrateAuction (${auctionId}) => Withdrawn SOL`);
+      console.log(`withdrawFunds -> ${withdrawSolSig} migrateAuction (${auctionId}) => Withdrawn SOL`);
       const solAfter = BigInt(await connection.getBalance(auctionSol));
       const solWithdrawn = solBefore - solAfter;
     
@@ -102,7 +102,7 @@ import { MaxiAuction } from "../target/types/maxi_auction";
         })
         .signers([adminKp])
         .rpc();
-      console.log(`${withdrawTokenSig} migrateAuction (${auctionId}) => Withdrawn tokens`);
+      console.log(`withdrawFunds -> ${withdrawTokenSig} migrateAuction (${auctionId}) => Withdrawn tokens`);
       const tokenAfter = BigInt((await connection.getTokenAccountBalance(auctionTokenAccount)).value.amount);
       const tokenWithdrawn = tokenBefore - tokenAfter;
     
@@ -121,6 +121,7 @@ import { MaxiAuction } from "../target/types/maxi_auction";
       const baseDecimals = mintAccount.decimals;
   
       // Create market
+      console.log(`createAndFundPool -> raydium.marketV2.create: mintAccount ${tokenMint.toBase58()}, baseDecimals ${baseDecimals}...`);
       const { execute: execCM, extInfo: extInfoCM } = await raydium.marketV2.create({
         baseInfo: { mint: tokenMint, decimals: baseDecimals, },
         quoteInfo: { mint: WSOLMint, decimals: 9, }, // WSOL
@@ -129,7 +130,7 @@ import { MaxiAuction } from "../target/types/maxi_auction";
         txVersion: TxVersion.LEGACY,
       });
       const cmSigs = await execCM({ sequentially: true });
-      cmSigs.txIds.forEach(x => console.log(`${x} createAndFundPool (${auctionId}) => execCM OK`));
+      cmSigs.txIds.forEach(x => console.log(`createAndFundPool -> ${x} createAndFundPool (${auctionId}) => execCM OK`));
       const marketId = extInfoCM.address.marketId;
       const marketInfo = Object.keys(extInfoCM.address).reduce(
         (acc, cur) => ({ ...acc, [cur]: extInfoCM.address[cur as keyof typeof extInfoCM.address].toBase58(), }), {} );
@@ -146,6 +147,8 @@ import { MaxiAuction } from "../target/types/maxi_auction";
       }
       const baseAmount = new BN(tokenAmount.toString());
       const quoteAmount = new BN(solAmount.toString());
+      console.log(`createAndFundPool -> baseAmount`, baseAmount.toString());
+      console.log(`createAndFundPool -> quoteAmount`, quoteAmount.toString());
       if (baseAmount.mul(quoteAmount).lte(new BN(1).mul(new BN(10 ** baseMintInfo.decimals)).pow(new BN(2)))) {
         throw new Error('initial liquidity too low');
       }    
@@ -163,7 +166,7 @@ import { MaxiAuction } from "../target/types/maxi_auction";
         feeDestinationId: isMainnet ? FEE_DESTINATION_ID : DEVNET_PROGRAM_ID.FEE_DESTINATION_ID,
       });
       const { txId: cpSig } = await execCP({ sendAndConfirm: true });
-      console.log(`${cpSig} createAndFundPool (${auctionId}) => execCP OK`);
+      console.log(`createAndFundPool -> ${cpSig} createAndFundPool (${auctionId}) => execCP OK`);
       const poolId = extInfoCP.address.ammId;
       const poolKeys = Object.keys(extInfoCP.address).reduce(
         (acc, cur) => ({ ...acc, [cur]: extInfoCP.address[cur as keyof typeof extInfoCP.address].toBase58(), }), {} );    

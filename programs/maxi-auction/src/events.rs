@@ -14,8 +14,9 @@ pub struct NewBid {
     pub auction_id: u64,
     pub bidder: Pubkey,
     pub x_id: u64,
-    pub bid_sol: u64, // LAMPORTS!!!
-    pub bid_qty: u64, // TOKEN UNITS!!!
+    pub bid_sol: u64, // LAMPORTS
+    pub bid_qty: u64, // WHOLE TOKEN UNITS!!!
+    pub bid_fee: u64, // LAMPORTS
 }
 
 #[event]

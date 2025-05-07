@@ -20,6 +20,9 @@ pub enum CustomError {
     #[msg("Reentrancy guard triggered.")]
     ReentrancyGuard,
 
+    #[msg("Overflow.")]
+    Overflow,
+
     #[msg("Not enough tokens left.")]
     NotEnoughTokensLeft,
 

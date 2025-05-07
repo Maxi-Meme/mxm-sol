@@ -35,94 +35,101 @@ pub struct PlaceBid<'info> {
     #[account(mut)]
     pub auction_data_account: Box<Account<'info, Auction>>,
 
+    /// CHECK: Revenue account to receive the 1% fee
+    #[account(
+        mut,
+        address = global_info.config.fee_account
+    )]
+    pub fee_account: AccountInfo<'info>,    
+
     #[account(address = anchor_lang::system_program::ID)]
     pub system_program: Program<'info, System>,
 }
 
 impl<'info> PlaceBid<'info> {
-    pub fn process(&mut self, bid_qty_tokens: u64 /* token units, i.e. can't bid any decimals */, x_id: u64) -> Result<()> {
-        //msg!("Calling place_bid for auction {}", self.auction_data_account.id);
-
+    pub fn process(&mut self, bid_quantity: u64, x_id: u64) -> Result<()> {
         let auction = &mut self.auction_data_account;
-        let default_start_price_lamports = self.global_info.config.default_start_price_lamports;
+        let default_start_price = self.global_info.config.default_start_price_lamports;
 
-        // Log initial state
-        //msg!("Initial bids length: {}", auction.bids.len());
-        // msg!("auction_data_account balance: {}", self.auction_data_account.lamports());
-        // msg!("auction_data_account data size: {}", self.auction_data_account.data_len());
-
+        // Validate bid and auction state
         require!(auction.bids.len() < MAX_BIDS, CustomError::MaxBidsReached);
-        require!(bid_qty_tokens > 0, CustomError::InvalidBidQuantity);
+        require!(bid_quantity > 0, CustomError::InvalidBidQuantity);
 
-        // Check if auction has started
         let clock = Clock::get()?;
         require!(clock.unix_timestamp >= auction.start_timestamp, CustomError::AuctionNotStarted);
 
-        // ??? intent is: re-entrancy / concurrency guard - how effective is this?!?
-        require!(!auction.is_locked, CustomError::ReentrancyGuard);
+        // Prevent re-entrancy or concurrent modifications
+        require!(!auction.is_locked, CustomError::ReentrancyGuard); // DM: ?????
         auction.is_locked = true;
 
-            let current_price_lamports_per_token = get_current_price(auction, clock.unix_timestamp, default_start_price_lamports).unwrap_or(default_start_price_lamports);
-            msg!("current_price_lamports_per_token: {}", current_price_lamports_per_token);
+        // Calculate current price and remaining tokens
+        let current_price = get_current_price(auction, clock.unix_timestamp, default_start_price).unwrap_or(default_start_price);
+        let remaining_tokens = get_remaining_tokens(auction);
+        require!(bid_quantity <= remaining_tokens, CustomError::NotEnoughTokensLeft);
 
-            let remaining_tokens = get_remaining_tokens(auction);
-            msg!("bid_qty_tokens: {}", bid_qty_tokens);
-            msg!("auction.token_supply: {}", auction.token_supply);
-            msg!("remaining_tokens: {}", remaining_tokens);
-            require!(bid_qty_tokens <= remaining_tokens, CustomError::NotEnoughTokensLeft);
+        // Calculate total cost with overflow protection
+        let total_cost = bid_quantity.checked_mul(current_price).ok_or(CustomError::Overflow)?;
 
-            // Calculate the total spend
-            let total_amount = bid_qty_tokens/*.saturating_div(10u64.pow(auction.token_decimals as u32)))*/ * current_price_lamports_per_token;
+        // Calculate 1% fee and amount for auction account
+        let fee = total_cost / 100; // 1% fee, integer division rounds down
+        let rent = Rent::get()?.minimum_balance(165); // For an ATA
+        let final_fee = fee.max(rent); // Use the higher of fee or rent        
+        let auction_amount = total_cost - final_fee;
 
-            //msg!("calculated amount (bid_qty_tokens * current_price): {}", total_amount);
+        msg!("bid_quantity: {}", bid_quantity);
+        msg!("current_price: {}", current_price);
+        msg!("remaining_tokens: {}", remaining_tokens);
 
-            // Minimum amount to cover the rent
-            //let rent_exempt_minimum: u64 = 10_000_000; // 0.01 SOL to cover the rent
-            let amount = /*if total_amount < rent_exempt_minimum {
-                msg!("Amount too low to cover the rent. Using the minimum amount: {} lamports", rent_exempt_minimum);
-                rent_exempt_minimum
-            } else {
-                total_amount
-            };*/ total_amount;
-            msg!("final amount to transfer: {}", amount);
+        msg!("total_cost: {}", total_cost);
+        msg!("auction_amount: {}", auction_amount);
+        msg!("final_fee: {}", final_fee);
 
-            // transfer from bidder to auction_sol_account
-            msg!("bidder balance before transfer: {}", self.bidder.lamports());
-            sol_transfer_user(
-                self.bidder.to_account_info(),
-                self.auction_sol_account.to_account_info(),
-                self.system_program.to_account_info(),
-                amount,
-            )?;
-            msg!("bidder balance after transfer: {}", self.bidder.lamports());
+        // Transfer auction amount to auction_sol_account
+        sol_transfer_user(
+            self.bidder.to_account_info(),
+            self.auction_sol_account.to_account_info(),
+            self.system_program.to_account_info(),
+            auction_amount,
+        )?;
 
-            // save & emit the bid
-            auction.bids.push(Bid {
-                bidder: self.bidder.key(),
-                x_id,
-                bid_timestamp: clock.unix_timestamp,
-                bid_qty: bid_qty_tokens,
-                bid_sol: current_price_lamports_per_token,
-                is_claimed: false,
-            });
-            emit!(NewBid {
+        // Transfer fee to fee_account
+        sol_transfer_user(
+            self.bidder.to_account_info(),
+            self.fee_account.to_account_info(),
+            self.system_program.to_account_info(),
+            final_fee,
+        )?;
+
+        // Record the bid
+        auction.bids.push(Bid {
+            bidder: self.bidder.key(),
+            x_id,
+            bid_timestamp: clock.unix_timestamp,
+            bid_qty: bid_quantity,
+            bid_sol: current_price, 
+            is_claimed: false,
+            bid_fee: final_fee,
+        });
+
+        // Emit bid event
+        emit!(NewBid {
+            auction_id: auction.id,
+            bidder: self.bidder.key(),
+            x_id,
+            bid_qty: bid_quantity,
+            bid_sol: current_price,
+            bid_fee: final_fee,
+        });
+
+        // Check if auction is fully allocated
+        if remaining_tokens - bid_quantity == 0 {
+            auction.is_finished = true;
+            emit!(AuctionFilled {
                 auction_id: auction.id,
-                bidder: self.bidder.key(),
-                x_id,
-                bid_qty: bid_qty_tokens,
-                bid_sol: current_price_lamports_per_token,
             });
+        }
 
-            // check if auction is finished
-            if remaining_tokens - bid_qty_tokens == 0 {
-                auction.is_finished = true;
-                emit!(AuctionFilled {
-                    auction_id: auction.id,
-                });
-            }
-
-        // ???
-        auction.is_locked = false;
+        auction.is_locked = false; // DM: ?????
         Ok(())
     }
 }

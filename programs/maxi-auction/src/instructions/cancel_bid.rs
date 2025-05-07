@@ -37,14 +37,16 @@ impl<'info> CancelBid<'info> {
 
         msg!("bid.bid_qty: {}", bid.bid_qty);
         msg!("bid.bid_sol: {}", bid.bid_sol);
+        msg!("bid.bid_fee: {}", bid.bid_fee);
 
-        let refund_amount = bid.bid_qty * bid.bid_sol;
+        // TODO: dedect bid_fee amount
+        let refund_amount = bid.bid_qty * bid.bid_sol - bid.bid_fee;
             /*.checked_mul(bid.bid_sol) // Returns Option<u64>
             .and_then(|product| product.checked_div(10u64.pow(auction.token_decimals as u32)))
             .ok_or(CustomError::CalculationError)?;*/
 
         msg!("refund_amount: {}", refund_amount);
-
+        
         sol_transfer_with_signer(
             self.auction_sol_account.clone().to_account_info(),
             self.caller.to_account_info(),

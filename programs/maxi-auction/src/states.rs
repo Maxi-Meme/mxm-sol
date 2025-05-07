@@ -8,6 +8,7 @@ pub struct Config {
     pub default_token_decimals: u8,
     pub default_start_price_lamports: u64,
     //pub default_lock_percent: u64,
+    pub fee_account: Pubkey,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Default, Debug)]
@@ -19,6 +20,7 @@ pub struct Bid {
     pub bid_qty: u64,       // 8
     pub bid_sol: u64,       // 8
     pub is_claimed: bool,   // 1
+    pub bid_fee: u64,       // 8
 }
 
 #[derive(PartialEq, Eq, Debug)]
