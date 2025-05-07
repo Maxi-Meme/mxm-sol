@@ -43,6 +43,7 @@ const DB_CONFIG: sql.config = {
 };
 
 // migrate auction liquidity to a new raydium pool
+// https://github.com/raydium-io/raydium-sdk-V2-demo/tree/master/src/amm
 export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: boolean, auctionId: number, adminKp: Keypair, connection: Connection) => {
 
   // Withdraw tokens (some) & sol (all) to admin
