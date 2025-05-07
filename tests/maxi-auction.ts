@@ -288,11 +288,11 @@ describe("maxi-auction", () => {
 
   it("fills an auction", async () => {
     await test_create_auction();
-    await test_bid_auction();
+    await test_bid_auction(); // fill
   });
 
   it("filled auction does not allow new bids", async () => {
-    if (isLocal) {
+    //if (isLocal) {
       await test_create_auction();
       await test_bid_auction(0.5);
       await test_bid_auction(0.5); // fill auction
@@ -300,26 +300,22 @@ describe("maxi-auction", () => {
         await test_bid_auction(0.1); // must fail
       }
       catch (err) {
-        assert.equal(err.toString().includes("Not enough tokens"), true, "Contract error was expected.");
         console.log("Expected Error: ", err);
+        assert.equal(err.toString().includes("AuctionEnded"), true, "Contract error was expected.");
       }
-    }
-    else {
-      const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
-      const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
-      const auctionId = 3; // auction id 3 - liq. moved...
-      const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
-      const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
-      const auctionDataFetched = await program.account.auction.fetch(auctionData);
-      const tokenMint = auctionDataFetched.tokenMint;
-      const auctionTokenAccount = await getAssociatedTokenAddress(tokenMint, auctionSol, true);
-
-      const auctionSolBalance = await connection.getBalance(auctionSol);
-      const auctionTokenBalance = BigInt(await connection.getTokenAccountBalance(auctionTokenAccount).value.amount);
-
-      // bids > 0, balances all 0 means liq. moved -- enforce in SC on bid... (reject bid?)
-      //throw ("TODO"); // want good behavior after liq. is moved and user tries to bid...
-    }
+    //}
+    //else {
+    //const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    //const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    //const auctionId = 7;  //Number(globalInfoAccount.auctionsNum) - 1;
+    //try {
+    //  await test_bid_auction(0.1, user2Kp, auctionId); // should fail; auction liq. already moved
+    //}
+    //catch (err) {
+    //  console.log("Expected Error: ", err);
+    //  assert.equal(err.toString().includes("AuctionEnded"), true, "Contract error was expected.");
+    //}
+    //}
   });
 
   it("creates & interacts with a v2 pool", async () => {
@@ -478,7 +474,8 @@ describe("maxi-auction", () => {
     const adminBalanceAtStart = await connection.getBalance(adminKp.publicKey);
     const txVersion = TxVersion.LEGACY; // TxVersion.V0
     const LIQ_SOL = 0.1; // max one decimal please
-    const SUPPLY_TOKENS = 69_000_000; //1_000_000;
+    const SUPPLY_TOKENS = 1_000_000_000; //1_000_000;
+    const SUPPLY_DECIMALS = 9;
     const LIQ_TOKENS = SUPPLY_TOKENS * 0.1;
 
     // **Step 1: Set up connection and keypairs && Initialize the Raydium SDK **
@@ -487,10 +484,9 @@ describe("maxi-auction", () => {
     logger.color("green").log("Raydium SDK loaded");
 
     // **Step 2: Mint a new fucking token**
-    const MINT_DECIMALS = 9;
-    const tokenMint = await createMint(connection, minterKp, minterKp.publicKey, null, MINT_DECIMALS);
+    const tokenMint = await createMint(connection, minterKp, minterKp.publicKey, null, SUPPLY_DECIMALS);
     const minterTokenAccount = await getOrCreateAssociatedTokenAccount(connection, minterKp, tokenMint, minterKp.publicKey); // ATA
-    const totalSupply = new BN(SUPPLY_TOKENS).mul(new BN(10).pow(new BN(MINT_DECIMALS)));
+    const totalSupply = new BN(SUPPLY_TOKENS).mul(new BN(10).pow(new BN(SUPPLY_DECIMALS)));
     await mintTo(connection, minterKp, tokenMint, minterTokenAccount.address, minterKp, BigInt(totalSupply.toString()));
     console.log('WSOLMint', WSOLMint.toBase58());
     console.log('tokenMint', tokenMint.toBase58());
@@ -533,7 +529,7 @@ describe("maxi-auction", () => {
       baseInfo: {
         // create market doesn't support token 2022
         mint: tokenMint, //RAYMint,
-        decimals: MINT_DECIMALS,
+        decimals: SUPPLY_DECIMALS,
       },
       quoteInfo: {
         // create market doesn't support token 2022
@@ -577,13 +573,13 @@ describe("maxi-auction", () => {
     if (baseMintInfo.programId !== TOKEN_PROGRAM_ID.toBase58() || quoteMintInfo.programId !== TOKEN_PROGRAM_ID.toBase58()) {
       throw new Error('baseMint or quoteMint is not a supported token type');
     }
-    const baseAmount = new BN(LIQ_TOKENS).mul(new BN(10).pow(new BN(MINT_DECIMALS)));
+    const baseAmount = new BN(LIQ_TOKENS).mul(new BN(10).pow(new BN(SUPPLY_DECIMALS)));
     const quoteAmount = new BN(LIQ_SOL * 10).mul(new BN(10).pow(new BN(8)));
     console.log('baseAmount', baseAmount.toString());
     console.log('quoteAmount', quoteAmount.toString());
 
-    console.log('baseAmount (tokens)', baseAmount.toNumber() / 10 ** MINT_DECIMALS);
-    console.log('quoteAmount (wsol)', quoteAmount.toNumber() / 10 ** 9);
+    console.log('baseAmount (tokens)', BigInt(baseAmount.toString()) / BigInt(10 ** SUPPLY_DECIMALS));
+    console.log('quoteAmount (wsol)', BigInt(quoteAmount.toString()) / BigInt(10 ** 9));
 
     if (baseAmount.mul(quoteAmount).lte(new BN(1).mul(new BN(10 ** baseMintInfo.decimals)).pow(new BN(2)))) {
       throw new Error('initial liquidity too low, try adding more baseAmount/quoteAmount');
@@ -670,7 +666,7 @@ describe("maxi-auction", () => {
       marketId: 'FYiWxYY2w5L4wXGNCSK4ouvxTnP6CyPKmyb6B4jPye6T',
       ammConfigId: '8QN9yfKqWDoKjvZmqFsgCzAqwZBQuzVVnC388dN5RCPo',
       feeDestinationId: '3XMrhbv989VxAMi3DErLV9eJht1pHppW5LbKxe9fkEFR'
-    };
+    };*/
   
     // **Step 6: Query the damn pool price**
     const poolId = poolKeys['ammId'];
@@ -783,7 +779,7 @@ describe("maxi-auction", () => {
     await swap(true);
     poolInfo = await getPrice();
     await swap(false);
-    poolInfo = await getPrice();*/
+    poolInfo = await getPrice();
 
     //
     // Step 9 - add some liquidity to the pool
@@ -985,13 +981,13 @@ describe("maxi-auction", () => {
     assert.equal(auctionDataFetched.tokenMint, token.publicKey.toBase58(), "tokenMint comparison");
   }
 
-  async function test_bid_auction(fill_percent = 1.0, bidderKp = user2Kp) { // Bid all supply by default, lock 10% for AMM
+  async function test_bid_auction(fill_percent = 1.0, bidderKp = user2Kp, useAuctionId = undefined) { // Bid all supply by default, lock 10% for AMM
     logger.color("magenta").log(`${bidderKp.publicKey} is bidding...`);
 
     // Derive PDAs
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
-    const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
+    const auctionId = useAuctionId || Number(globalInfoAccount.auctionsNum) - 1;
     const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
     const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
     console.log("auctionId", auctionId, "auctionSol", auctionSol.toBase58(), "auctionData", auctionData.toBase58());

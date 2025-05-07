@@ -62,6 +62,12 @@ impl<'info> PlaceBid<'info> {
         require!(!auction.is_locked, CustomError::ReentrancyGuard); // DM: ?????
         auction.is_locked = true;
 
+        // Ensure the auction hasn't ended
+        require!(!auction.is_finished, CustomError::AuctionEnded);
+
+        // Abort if liquidity has already been moved
+        require!(!(auction.bids.len() > 0 && self.auction_sol_account.lamports() == 0), CustomError::AuctionLiquidityMoved);
+
         // Calculate current price and remaining tokens
         let current_price = get_current_price(auction, clock.unix_timestamp, default_start_price).unwrap_or(default_start_price);
         let remaining_tokens = get_remaining_tokens(auction);

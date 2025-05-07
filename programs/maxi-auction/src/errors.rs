@@ -67,4 +67,10 @@ pub enum CustomError {
 
     #[msg("Lock percent must be between 10 and 1000 (1 and 100%)")]
     InvalidLockPercent,
+
+    #[msg("Auction liquidity already moved.")]
+    AuctionLiquidityMoved,
+
+    #[msg("Iternal Error.")]
+    InternalError,
 }

@@ -1125,6 +1125,16 @@
       "code": 6020,
       "name": "InvalidLockPercent",
       "msg": "Lock percent must be between 10 and 1000 (1 and 100%)"
+    },
+    {
+      "code": 6021,
+      "name": "AuctionLiquidityMoved",
+      "msg": "Auction liquidity already moved."
+    },
+    {
+      "code": 6022,
+      "name": "InternalError",
+      "msg": "Iternal Error."
     }
   ],
   "types": [
