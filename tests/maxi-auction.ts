@@ -305,7 +305,20 @@ describe("maxi-auction", () => {
       }
     }
     else {
-      throw ("TODO"); // want good behavior after liq. is moved and user tries to bid...
+      const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+      const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+      const auctionId = 3; // auction id 3 - liq. moved...
+      const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+      const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+      const auctionDataFetched = await program.account.auction.fetch(auctionData);
+      const tokenMint = auctionDataFetched.tokenMint;
+      const auctionTokenAccount = await getAssociatedTokenAddress(tokenMint, auctionSol, true);
+
+      const auctionSolBalance = await connection.getBalance(auctionSol);
+      const auctionTokenBalance = BigInt(await connection.getTokenAccountBalance(auctionTokenAccount).value.amount);
+
+      // bids > 0, balances all 0 means liq. moved -- enforce in SC on bid... (reject bid?)
+      //throw ("TODO"); // want good behavior after liq. is moved and user tries to bid...
     }
   });
 

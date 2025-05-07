@@ -84,7 +84,7 @@ impl<'info> PlaceBid<'info> {
         msg!("auction_amount: {}", auction_amount);
         msg!("final_fee: {}", final_fee);
 
-        // Transfer auction amount to auction_sol_account
+        // auction amount to auction_sol_account
         sol_transfer_user(
             self.bidder.to_account_info(),
             self.auction_sol_account.to_account_info(),
@@ -92,7 +92,7 @@ impl<'info> PlaceBid<'info> {
             auction_amount,
         )?;
 
-        // Transfer fee to fee_account
+        // fee to fee_account
         sol_transfer_user(
             self.bidder.to_account_info(),
             self.fee_account.to_account_info(),

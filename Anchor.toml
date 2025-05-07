@@ -8,7 +8,7 @@ skip-lint = false
 maxi_auction = "BtYkQoACW23CEZqHynCm1crbiHvBzUzecbQJBC42ihAD"
 
 [programs.localnet]
-maxi_auction = "A9odCeM5g5L9SiQeuGTT1crgpUsvRHPkdsxNbqg2y8nd"
+maxi_auction = "BtYkQoACW23CEZqHynCm1crbiHvBzUzecbQJBC42ihAD"
 
 [registry]
 url = "https://api.apr.dev"
