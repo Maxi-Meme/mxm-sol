@@ -9,6 +9,7 @@ pub struct Config {
     pub default_start_price_lamports: u64,
     //pub default_lock_percent: u64,
     pub fee_account: Pubkey,
+    pub min_total_sol: u64,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Default, Debug)]
@@ -23,10 +24,11 @@ pub struct Bid {
     pub bid_fee: u64,       // 8
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Default, AnchorSerialize, AnchorDeserialize, Clone )]
 pub enum AuctionStatus {
+    #[default]
     Pending,
     Live,
-    Expired,
-    ClosedFullyAllocated,
+    Succeeded,
+    Failed,
 }

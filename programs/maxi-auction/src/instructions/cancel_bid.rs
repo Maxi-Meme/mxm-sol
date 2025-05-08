@@ -1,11 +1,21 @@
 use crate::{
     account::Auction, constants::AUCTION_SOL_SEED, errors::CustomError, events::BidCancelled,
+    constants::{GLOBAL_INFO_SEED,},
+    account::{GlobalInfo},
+    helper::get_status_and_clearing_price,
     processor::sol_transfer_with_signer,
 };
 use anchor_lang::prelude::*;
 
 #[derive(Accounts)]
 pub struct CancelBid<'info> {
+    #[account(
+        mut,
+        seeds = [GLOBAL_INFO_SEED.as_ref()],
+        bump,
+    )]
+    pub global_info: Box<Account<'info, GlobalInfo>>,
+
     #[account(mut)]
     pub caller: Signer<'info>,
 
@@ -21,13 +31,17 @@ pub struct CancelBid<'info> {
     pub system_program: Program<'info, System>,
 }
 
-impl<'info> CancelBid<'info> {
+//
+// for ongoing auctions:
+// returns the bidder's SOL - only available during the auction timespan
+//
+impl<'info> CancelBid<'info> { 
     pub fn process(&mut self) -> Result<()> {
         msg!("Calling cancel_bid for auction {}", self.auction_data_account.id);
         let auction = &mut self.auction_data_account;
         let caller = self.caller.key();
 
-        // Ensure the auction hasn't ended
+        // Abort if the auction has finished (any state)
         require!(!auction.is_finished, CustomError::AuctionEnded);
 
         // Abort if liquidity has already been moved
@@ -77,6 +91,12 @@ impl<'info> CancelBid<'info> {
             auction_id: auction.id,
             bidder: caller,
         });
+
+        // Update status & clearing price
+        let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(auction, Clock::get().unwrap().unix_timestamp, self.global_info.config.min_total_sol);
+        msg!("updated auction_status: {:?}", auction_status);
+        auction.last_status = auction_status;
+        auction.clearing_price = clearing_price_wrapped.unwrap_or(0);
 
         Ok(())
     }

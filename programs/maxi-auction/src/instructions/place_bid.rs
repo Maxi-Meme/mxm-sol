@@ -4,6 +4,7 @@ use crate::{
     errors::CustomError,
     events::{AuctionFilled, NewBid},
     helper::{get_current_price, get_remaining_tokens},
+    helper::{get_status_and_clearing_price},
     processor::sol_transfer_user,
     states::Bid,
 };
@@ -57,10 +58,6 @@ impl<'info> PlaceBid<'info> {
 
         let clock = Clock::get()?;
         require!(clock.unix_timestamp >= auction.start_timestamp, CustomError::AuctionNotStarted);
-
-        // Prevent re-entrancy or concurrent modifications
-        require!(!auction.is_locked, CustomError::ReentrancyGuard); // DM: ?????
-        auction.is_locked = true;
 
         // Ensure the auction hasn't ended
         require!(!auction.is_finished, CustomError::AuctionEnded);
@@ -130,12 +127,18 @@ impl<'info> PlaceBid<'info> {
         // Check if auction is fully allocated
         if remaining_tokens - bid_quantity == 0 {
             auction.is_finished = true;
+
             emit!(AuctionFilled {
                 auction_id: auction.id,
             });
         }
 
-        auction.is_locked = false; // DM: ?????
+        // Update status & clearing price
+        let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(auction, Clock::get().unwrap().unix_timestamp, self.global_info.config.min_total_sol);
+        msg!("updated auction_status: {:?}", auction_status);
+        auction.last_status = auction_status;
+        auction.clearing_price = clearing_price_wrapped.unwrap();
+
         Ok(())
     }
 }

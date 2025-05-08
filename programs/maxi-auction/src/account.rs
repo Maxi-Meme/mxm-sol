@@ -1,4 +1,4 @@
-use crate::states::{Bid, Config};
+use crate::states::{Bid, Config, AuctionStatus};
 use anchor_lang::prelude::*;
 
 /// Global state for the auction system.
@@ -23,9 +23,10 @@ pub struct Auction {
     pub token_supply: u64,    // 8
     pub token_decimals: u8,   // 1
     pub lock_percent: u64,    // 8
-    pub is_locked: bool,      // 1
     pub bump: u8,             // 1
     pub delay_in_seconds: u64, // 8
     pub bids: Vec<Bid>,       // 73 * max_bid
     pub start_price: u64,     // 8
+    pub clearing_price: u64,  // 8
+    pub last_status: AuctionStatus, // 1
 }

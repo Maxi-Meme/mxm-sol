@@ -31,26 +31,16 @@ import {
   globalInfoSeed,
   auctionSolSeed,
   auctionDataSeed,
-  TestBidQty1,
-  TestBidQty2,
-  TestBidQty3,
-  TestBidQty4,
-  TestBidQty5,
-  TestBidSol1,
-  TestBidSol2,
-  TestBidSol3,
-  TestBidSol4,
-  TestBidSol5,
-  TestDefaultLockPercent,
-  TestHours,
-  TestLockPercent,
-  TestStartPriceSol,
-  TestTokenDecimals,
-  TestTokenName,
+
+  TEST_LOCK_PERCENT,
+  TEST_STARTPRICE_SOL,
+  TEST_TOKEN_DECIMALS,
+  TEST_TOKEN_NAME,
   //TestTokenQty,
-  TestTokenSupply,
-  TestTokenSymbol,
-  TestTokenUri,
+  TEST_TOKEN_SUPPLY,
+  TEST_TOKEN_SYMBOL,
+  TEST_TOKEN_URI,
+  TEST_MINTOTAL_SOL,
 } from "./config";
 //import { createMarket } from "./create-market";
 
@@ -288,7 +278,7 @@ describe("maxi-auction", () => {
 
   it("fills an auction", async () => {
     await test_create_auction();
-    await test_bid_auction(); // fill
+    await test_bid_auction(1.0); // fill
   });
 
   it("filled auction does not allow new bids", async () => {
@@ -330,7 +320,22 @@ describe("maxi-auction", () => {
     await test_admin_withdraws(2);
   });
 
-  it("allows bidders to claim in full & admin to setup v2 pool", async () => {
+  it("lets bidders claim change and tokens on successful auction", async () => {
+    await test_create_auction(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
+    await test_bid_auction(0.5, user1Kp);
+
+    await new Promise(resolve => setTimeout(resolve, 5000)); //wait 5s
+    await test_bid_auction(0.3, user2Kp);
+
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    await test_bid_auction(0.2, user3Kp); // will moveliq on devnet
+
+    await test_claim_auction(user1Kp);
+  });
+
+
+
+  it("lets bidders to claim in full & admin to setup v2 pool", async () => {
     
     // TODO... multiple bids, + claim + pool setup -- expect zero left in contract....
 
@@ -800,12 +805,12 @@ describe("maxi-auction", () => {
     console.log("connection.rpcEndpoint", connection.rpcEndpoint);
 
     const newConfig = {
-      admin: adminKp.publicKey, //new PublicKey("7Q823wjwGC5X78XLb1QeFABtkwSP17ytHhqneCPC8aYL"),
-      defaultTokenSupply: new BN(TestTokenSupply),
-      defaultTokenDecimals: TestTokenDecimals,
-      defaultStartPriceLamports: new BN(TestStartPriceSol * LAMPORTS_PER_SOL),
-      //defaultLockPercent: new BN(TestDefaultLockPercent),
+      admin: adminKp.publicKey,
+      defaultTokenSupply: new BN(TEST_TOKEN_SUPPLY),
+      defaultTokenDecimals: TEST_TOKEN_DECIMALS,
+      defaultStartPriceLamports: new BN(TEST_STARTPRICE_SOL * LAMPORTS_PER_SOL),
       feeAccount: TEST_FEE_ACCOUNT.publicKey,
+      minTotalSol: new BN(TEST_MINTOTAL_SOL * LAMPORTS_PER_SOL)
     };
     logObject("newConfig", newConfig);
 
@@ -825,10 +830,10 @@ describe("maxi-auction", () => {
 
     try {
       const simulationResult = await connection.simulateTransaction(tx);
-      console.log("Simulation result:", simulationResult);
+      logObject("simulationResult", simulationResult);
       if (simulationResult.value.err) {
-        console.dir('simulationResult.value.err', simulationResult.value.err);
-        throw new Error(`Simulation failed: ${simulationResult.value.err.toString()}`);
+        logObject("simulationResult.value.err", simulationResult.value.err);
+        throw new Error(`Simulation failed`);
       }
 
       var sig;
@@ -854,13 +859,13 @@ describe("maxi-auction", () => {
 
       console.log("\n");
       console.log("config.defaultTokenSupply", config.defaultTokenSupply.toString());
-      console.log("TestTokenSupply", TestTokenSupply);
-      assert.equal(parseFloat(config.defaultTokenSupply.toString()), TestTokenSupply);
+      console.log("TestTokenSupply", TEST_TOKEN_SUPPLY);
+      assert.equal(parseFloat(config.defaultTokenSupply.toString()), TEST_TOKEN_SUPPLY);
 
       console.log("\n");
       console.log("config.defaultTokenDecimals", config.defaultTokenDecimals.toString());
-      console.log("TestTokenDecimals", TestTokenDecimals);
-      assert.equal(parseFloat(config.defaultTokenDecimals.toString()), TestTokenDecimals);
+      console.log("TestTokenDecimals", TEST_TOKEN_DECIMALS);
+      assert.equal(parseFloat(config.defaultTokenDecimals.toString()), TEST_TOKEN_DECIMALS);
 
       // console.log("\n");
       // console.log("config.defaultLockPercent", config.defaultLockPercent.toString());
@@ -869,7 +874,7 @@ describe("maxi-auction", () => {
 
       console.log("\n");
       console.log("config.defaultStartPriceLamports", config.defaultStartPriceLamports.toNumber());
-      console.log("Math.round(TestStartPriceSol * LAMPORTS_PER_SOL)", Math.round(TestStartPriceSol * LAMPORTS_PER_SOL));
+      console.log("Math.round(TestStartPriceSol * LAMPORTS_PER_SOL)", Math.round(TEST_STARTPRICE_SOL * LAMPORTS_PER_SOL));
 
       console.log("\n");
       console.log("newConfig.feeAccount", newConfig.feeAccount.toBase58());
@@ -886,7 +891,8 @@ describe("maxi-auction", () => {
     }
   }
 
-  async function test_create_auction(auction_lock_percent = undefined) { // 0-1
+  async function test_create_auction(auction_lock_percent = undefined, // 0-1
+    duration_hours_div100 = undefined) {
     logger.color("magenta").log("User1 is creating auction...");
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const globalInfoTest = await program.account.globalInfo.fetchNullable(globalInfo);
@@ -899,11 +905,11 @@ describe("maxi-auction", () => {
 
     // test auction data
     const xId = new BN(42);
-    const name = TestTokenName;
-    const symbol = TestTokenSymbol;
-    const uri = TestTokenUri;
-    const durationHours = new BN(10); // about 5mins: unit is actually hours_div_100, or 36s 
-    const lockPercent = new BN(auction_lock_percent * 1000 || TestLockPercent); 
+    const name = TEST_TOKEN_NAME;
+    const symbol = TEST_TOKEN_SYMBOL;
+    const uri = TEST_TOKEN_URI;
+    const durationHours = new BN(duration_hours_div100 | 10); // about 5mins: unit is actually hours_div_100, or 36s 
+    const lockPercent = new BN(auction_lock_percent * 1000 || TEST_LOCK_PERCENT); 
     const delaySeconds = new BN(0);
 
     // Log balances of all signing accounts before the transaction
@@ -973,10 +979,6 @@ describe("maxi-auction", () => {
     assert.equal(parseFloat(auctionDataFetched.id.toString()), auctionId);
     assert.equal(auctionDataFetched.isFinished, false);
     assert.equal(auctionDataFetched.creator, signer.publicKey.toBase58());
-
-    //const startTimestamp = parseFloat(auctionDataFetched.startTimestamp.toString());
-    //const endTimestamp = parseFloat(auctionDataFetched.endTimestamp.toString());
-    //assert.equal(endTimestamp - startTimestamp, TestHours * 36 /* hours_div_100 lol*/, "duration comparison");
 
     assert.equal(auctionDataFetched.tokenMint, token.publicKey.toBase58(), "tokenMint comparison");
   }
@@ -1365,7 +1367,7 @@ async function getTransactionDetailsWithRetry(connection, signature, maxAttempts
   return txDetails;
 }
 
-export const getAndLockMaxiPrivKey = async () => {
+const getAndLockMaxiPrivKey = async () => {
   const pool = new sql.ConnectionPool(DB_CONFIG);
   await pool.connect();  // Select the oldest available key (unlocked and unused)
   const selectQuery = `

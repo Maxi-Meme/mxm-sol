@@ -213,7 +213,6 @@ impl<'info> CreateAuction<'info> {
         auction_data_account.lock_percent = lock_percent; //lock_percent.unwrap_or(global_info.config.default_lock_percent);
         auction_data_account.bids = vec![];
         auction_data_account.bump = auction_bump;
-        auction_data_account.is_locked = false;
         auction_data_account.delay_in_seconds = delay_in_seconds;
         auction_data_account.start_price = global_info.config.default_start_price_lamports;
 

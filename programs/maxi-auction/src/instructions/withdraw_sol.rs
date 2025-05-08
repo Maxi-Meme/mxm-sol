@@ -4,8 +4,8 @@ use crate::{
 };
 use anchor_lang::{prelude::*, solana_program, system_program};
 use solana_program::{
-    entrypoint::ProgramResult,
-    program::{invoke, invoke_signed},
+    //entrypoint::ProgramResult,
+    program::{invoke_signed},
 };
 
 #[derive(Accounts)]

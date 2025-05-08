@@ -1,9 +1,11 @@
 use crate::{
     account::Auction, constants::AUCTION_SOL_SEED, errors::CustomError,
-    account::GlobalInfo, constants::GLOBAL_INFO_SEED, states::Config,
+    account::GlobalInfo, constants::GLOBAL_INFO_SEED, 
+    //states::Config,
 };
 use anchor_spl::token::{self, Token, TokenAccount};
-use anchor_lang::{system_program, prelude::*};
+//use anchor_lang::{system_program, prelude::*};
+use anchor_lang::prelude::*;
 
 #[derive(Accounts)]
 pub struct WithdrawTokens<'info> {
