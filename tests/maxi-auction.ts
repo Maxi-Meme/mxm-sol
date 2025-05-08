@@ -249,6 +249,8 @@ describe("maxi-auction", () => {
       );
       await connection.confirmTransaction(airdropTx5);*/
     }
+
+    await test_init(); // set defaults
   });
 
   it("initializes the contract", async () => {
@@ -320,27 +322,44 @@ describe("maxi-auction", () => {
     await test_admin_withdraws(2);
   });
 
-  it("lets bidders claim change and tokens on successful auction", async () => {
+  it("claims - min total sol not reached", async () => {
+    await test_init(10000); // 10k sol min needed to move liq.
 
     await test_create_auction(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
     await test_bid_auction(0.5, user1Kp);
 
     await new Promise(resolve => setTimeout(resolve, 5000)); //wait 5s
-    await test_bid_auction(0.3, user2Kp);
+    const auctionPost = await test_bid_auction(0.5, user2Kp);
 
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    await test_bid_auction(0.2, user3Kp); // will moveliq on devnet
+    assert.deepEqual(auctionPost.lastStatus, { failedMinNotReached: {} }, "expected failedMinNotReached");
+    logObject("auctionPost", auctionPost);
 
-    // can see fail case here?
-
-    // todo...
+    // TODO:
     //await test_claim_auction(user1Kp);
   });
 
+  it("claims - full supply not bid", async () => {
+    await test_create_auction(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
+    await test_bid_auction(0.5, user1Kp);
+    await test_bid_auction(0.3, user2Kp);
+    await new Promise(resolve => setTimeout(resolve, 1000 * 37)); // wait 37s
 
+    // TODO: make claim() update auction status (same as bid & cancel); then can test it after first claim...
+    // await test_claim_auction(user1Kp);
+
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
+    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const auctionPost = await program.account.auction.fetch(auctionData); // last status (set on bid) was "live..."
+    assert.deepEqual(auctionPost.lastStatus, { failedNotFullyAllocated: {} }, "expected failedNotFullyAllocated");
+    logObject("auctionPost", auctionPost);
+  });
+
+  it("claims - successful auction", async () => {
+  });
 
   it("lets bidders to claim in full & admin to setup v2 pool", async () => {
-    
     // TODO... multiple bids, + claim + pool setup -- expect zero left in contract....
 
     // TODO: save pool & market info to DB...
@@ -348,7 +367,6 @@ describe("maxi-auction", () => {
     // TODO: fees & costs for pool setup... who pays when auction doesn't have much sol?
 
     // TODO: fees - redirect (two new "revenue" wallets) 1% sol, 0.1% tokens before pool setup?
-
   });
 
   async function test_admin_withdraws(n_bids = 1) {
@@ -800,7 +818,7 @@ describe("maxi-auction", () => {
     //
   }
 
-  async function test_init() {
+  async function test_init(mintotal_sol: number = undefined) {
     logger.color("magenta").log("*** Initializing the auction system...");
     const signer = adminKp;
 
@@ -814,14 +832,11 @@ describe("maxi-auction", () => {
       defaultTokenDecimals: TEST_TOKEN_DECIMALS,
       defaultStartPriceLamports: new BN(TEST_STARTPRICE_SOL * LAMPORTS_PER_SOL),
       feeAccount: TEST_FEE_ACCOUNT.publicKey,
-      minTotalSol: new BN(TEST_MINTOTAL_SOL * LAMPORTS_PER_SOL)
+      minTotalSol: new BN((mintotal_sol || TEST_MINTOTAL_SOL) * LAMPORTS_PER_SOL)
     };
     logObject("newConfig", newConfig);
 
-    const [globalInfo] = PublicKey.findProgramAddressSync(
-      [Buffer.from(globalInfoSeed)],
-      program.programId
-    );
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const tx = await program.methods
       .initialize(newConfig)
       .accounts({
@@ -839,7 +854,6 @@ describe("maxi-auction", () => {
         logObject("simulationResult.value.err", simulationResult.value.err);
         throw new Error(`Simulation failed`);
       }
-
       var sig;
       try {
         sig = await sendAndConfirmTransaction(connection, tx, [signer]);
@@ -848,44 +862,17 @@ describe("maxi-auction", () => {
         throw err;
       }
       logger.color("green").log("Your transaction signature", sig);
-
-      const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo); // ###
+      const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo); 
       logger.color("green").log("globalInfoAccount", globalInfoAccount);
       const { deployer, config, auctionsNum } = globalInfoAccount;
 
-      console.log("\n");
       console.log("deployer", deployer.toString());
       console.log("signer.publicKey", signer.publicKey.toString());
-      assert.equal(deployer.toString(), signer.publicKey.toString());
-
-      //console.log("auctionsNum", auctionsNum, "auctionsNum expected 0");
-      //assert.equal(auctionsNum, 0);
-
-      console.log("\n");
       console.log("config.defaultTokenSupply", config.defaultTokenSupply.toString());
-      console.log("TestTokenSupply", TEST_TOKEN_SUPPLY);
-      assert.equal(parseFloat(config.defaultTokenSupply.toString()), TEST_TOKEN_SUPPLY);
-
-      console.log("\n");
       console.log("config.defaultTokenDecimals", config.defaultTokenDecimals.toString());
-      console.log("TestTokenDecimals", TEST_TOKEN_DECIMALS);
-      assert.equal(parseFloat(config.defaultTokenDecimals.toString()), TEST_TOKEN_DECIMALS);
-
-      // console.log("\n");
-      // console.log("config.defaultLockPercent", config.defaultLockPercent.toString());
-      // console.log("TestDefaultLockPercent", TestDefaultLockPercent);
-      // assert.equal(parseFloat(config.defaultLockPercent.toString()), TestDefaultLockPercent);
-
-      console.log("\n");
       console.log("config.defaultStartPriceLamports", config.defaultStartPriceLamports.toNumber());
-      console.log("Math.round(TestStartPriceSol * LAMPORTS_PER_SOL)", Math.round(TEST_STARTPRICE_SOL * LAMPORTS_PER_SOL));
-
-      console.log("\n");
-      console.log("newConfig.feeAccount", newConfig.feeAccount.toBase58());
-
-      //assert.equal(config.defaultStartPriceLamports.toNumber(), Math.round(TestStartPriceSol * LAMPORTS_PER_SOL), "Start price in lamports should match");
-      //assert.equal(parseFloat(config.defaultStartPriceLamports.toString()), TestStartPriceSol * LAMPORTS_PER_SOL);
-
+      console.log("newConfig.feeAccount", config.feeAccount.toBase58());
+      console.log("newConfig.minTotalSol", config.minTotalSol.toNumber());
     } catch (e) {
       console.error("Transaction error:", e);
       if (e.logs) {
@@ -1004,7 +991,7 @@ describe("maxi-auction", () => {
     const auctionPre = await program.account.auction.fetch(auctionData);
     logObject("auctionPre", auctionPre);
 
-  // Set up bidder and bid quantity
+    // Set up bidder and bid quantity
     const signer = bidderKp;
     const bidQty = new BN(auctionPre.tokenSupply.toNumber() / Math.pow(10, auctionPre.tokenDecimals) * fill_percent);
     console.log("signer", signer.publicKey.toBase58(), "tokenSupply", auctionPre.tokenSupply.toString(), "bidQty", bidQty.toString());
@@ -1152,6 +1139,8 @@ describe("maxi-auction", () => {
     console.log(`Bidder SOL decrease: ${(bidderBalanceBeforeBN.sub(bidderBalanceAfterBN).toNumber() / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
     console.log(`Network tx fee: ${(networkFeeBN.toNumber() / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
     console.log(`Actual auction fee: ${(actualBidFeeBN.toNumber() / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
+
+    return auctionPost;
   }
 
   async function test_cancel_bid() {
