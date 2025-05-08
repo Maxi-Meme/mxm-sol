@@ -409,31 +409,29 @@ describe("maxi-auction", () => {
   it("claims - successful auction", async () => {
     await test_create_auction(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
 
-    /*await test_bid_auction(0.5, user1Kp);
+    const bidResult1 = await test_bid_auction(0.5, user1Kp);
     await sleep(3);
-    await test_bid_auction(0.3, user2Kp);
+    const bidResult2 = await test_bid_auction(0.3, user2Kp);
     await sleep(3);
-    const lastBidResult = await test_bid_auction(0.2, user3Kp); // will moveliq on devnet*/
+    const bidResult3 = await test_bid_auction(0.2, user3Kp); // will moveliq on devnet*/
 
-    const lastBidResult = await test_bid_auction(1.0, user1Kp);
+    assert.deepEqual(bidResult3.auctionPost.lastStatus, { succeeded: {} }, "expected succeeded"); // expect this on LAST FILLING BID
 
-    assert.deepEqual(lastBidResult.auctionPost.lastStatus, { succeeded: {} }, "expected succeeded");
-
-    const { solTransferred: solTransferred1, tokensTransferred: tokensTransferred1 } = await test_claim_auction(user1Kp, true);
-    /*const { solTransferred: solTransferred2, tokensTransferred: tokensTransferred2 } = await test_claim_auction(user2Kp, true);
-    const { solTransferred: solTransferred3, tokensTransferred: tokensTransferred3 } = await test_claim_auction(user3Kp, true);*/
+    const { solTransferred: solTransferred1, tokensTransferred: tokensTransferred1 } = await test_claim_auction(user1Kp, true, bidResult1);
+    const { solTransferred: solTransferred2, tokensTransferred: tokensTransferred2 } = await test_claim_auction(user2Kp, true, bidResult2);
+    const { solTransferred: solTransferred3, tokensTransferred: tokensTransferred3 } = await test_claim_auction(user3Kp, true, bidResult3);
 
     // first bidder should get change, & tokens
     assert.equal(solTransferred1 > 0, true, "first bidder should get change");
     assert.equal(tokensTransferred1 > 0, true, "first bidder should get tokens");
 
     // same for second bidder
-    /*assert.equal(solTransferred2 > 0, true, "second bidder should get change");
+    assert.equal(solTransferred2 > 0, true, "second bidder should get change");
     assert.equal(tokensTransferred2 > 0, true, "second bidder should get tokens");
 
     // last bidder gets no change, but gets tokens
     assert.equal(solTransferred3 == 0, true, "last bidder should get no change");
-    assert.equal(tokensTransferred3 > 0, true, "last bidder should get tokens");*/
+    assert.equal(tokensTransferred3 > 0, true, "last bidder should get tokens");
 
     // TODO:
     // check total # of tokens remaining in auction == lock amount OR zero if we did the liqmove on devnet...
@@ -442,14 +440,10 @@ describe("maxi-auction", () => {
   it("lets bidders to claim in full & admin to setup v2 pool", async () => {
     // TODO... multiple bids, + claim + pool setup -- expect zero left in contract....
 
-    // TODO: save pool & market info to DB...
-
-    // TODO: fees & costs for pool setup... who pays when auction doesn't have much sol?
-
-    // TODO: fees - redirect (two new "revenue" wallets) 1% sol, 0.1% tokens before pool setup?
+    // TODO: pool token fees - 0.1% tokens before pool setup...
   });
 
-  async function test_claim_auction(bidderKp: Keypair, assumeSuccessAuction: boolean = true): Promise<{ solTransferred: number, tokensTransferred: number }> {
+  async function test_claim_auction(bidderKp: Keypair, assumeSuccessAuction: boolean = true, bidResult: any = undefined): Promise<{ solTransferred: number, tokensTransferred: number }> {
     logger.color("magenta").log(`${bidderKp.publicKey} is claiming...`);
 
     // **Derive PDAs**
@@ -536,8 +530,9 @@ describe("maxi-auction", () => {
     console.log(`Balances after claim: Bidder SOL: ${(bidderSolAfter / LAMPORTS_PER_SOL).toFixed(10)}, Tokens: ${bidderTokenAfter}, Auction SOL: ${(auctionSolAfter / LAMPORTS_PER_SOL).toFixed(10)}, Tokens: ${auctionTokenAfter}`);
 
     // **Calculate actual transfers**
-    console.log("bidderSolBefore", bidderSolBefore, "bidderSolAfter", bidderSolAfter, "networkFee", networkFee);
-    const solTransferredToBidder = bidderSolAfter - bidderSolBefore + networkFee; // Add network fee since bidder pays it
+    const bidFee = bidResult.feeIncreaseBN.toNumber();
+    console.log("bidderSolBefore", bidderSolBefore, "bidderSolAfter", bidderSolAfter, "networkFee", networkFee, "bidFee", bidFee);
+    const solTransferredToBidder = bidderSolAfter - bidderSolBefore + networkFee + bidFee; // Add all fees since bidder pays them...
     const tokensTransferredToBidder = bidderTokenAfter - bidderTokenBefore;
     const solTransferredFromAuction = auctionSolBefore - auctionSolAfter;
     const tokensTransferredFromAuction = parseInt(auctionTokenBefore) - parseInt(auctionTokenAfter);

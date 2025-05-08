@@ -101,14 +101,15 @@ impl<'info> Claim<'info> {
         if auction_status == AuctionStatus::Succeeded {
             if clearing_price == 0 { return err!(CustomError::InvalidClearingPrice); }
 
-            // return sol change
             if bid.bid_sol > clearing_price {
                 let paid = bid.bid_qty * bid.bid_sol - bid.bid_fee;
                 let exact = bid.bid_qty * clearing_price;
                 let owed = paid.saturating_sub(exact);
-                msg!("owed: {}", owed);
-                msg!("paid: {}", paid);
                 msg!("exact: {}", exact);
+                msg!("owed: {}", owed);
+                msg!("exact: {}", exact);
+                
+                // return sol change
                 sol_transfer_with_signer(
                     self.auction_sol_account.to_account_info(),
                     self.caller.to_account_info(),
@@ -122,11 +123,9 @@ impl<'info> Claim<'info> {
                 )?;
             }
 
-            // calculate claimable tokens: apply inverse of lock_percent
-            require!(lock_percent <= 1000, CustomError::InvalidLockPercent);
-            claim_token_qty = (bid.bid_qty as u128 * (1000 - lock_percent as u128) / 1000) as u64;
-
             // return tokens
+            require!(lock_percent <= 1000, CustomError::InvalidLockPercent); // calculate claimable tokens: apply inverse of lock_percent
+            claim_token_qty = (bid.bid_qty as u128 * (1000 - lock_percent as u128) / 1000) as u64;
             let cpi_accounts = SplTransfer {
                 from: self.auction_token_account.to_account_info(),
                 to: self.caller_token_account.to_account_info(),
