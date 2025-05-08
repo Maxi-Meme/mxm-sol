@@ -56,8 +56,8 @@ pub(crate) fn get_status_and_clearing_price(
             .and_then(|product| product.checked_sub(b.bid_fee))
             .and_then(|net| acc.checked_add(net))
     });
-    let allocated_qty = match allocated_qty_opt { Some(qty) => qty, None => return (AuctionStatus::Failed, None), }; 
-    let total_sol = match total_sol_opt { Some(sol) => sol, None => return (AuctionStatus::Failed, None), };
+    let allocated_qty = allocated_qty_opt.unwrap_or(0);
+    let total_sol = total_sol_opt.unwrap_or(0);
 
     // TODO 1: check this value looks reasonable - look at logs
 
@@ -71,12 +71,15 @@ pub(crate) fn get_status_and_clearing_price(
     msg!("get_status_and_clearing_price - min_total_sol: {}", min_total_sol); 
     let status = if allocated_qty >= supply_qty && total_sol >= min_total_sol { // fully allocated, and min total sol reached
         AuctionStatus::Succeeded
-    } else if current_time < auction.start_timestamp {
+    } else if allocated_qty >= supply_qty && total_sol < min_total_sol { // fully allocated, but min total sol not reached
+        AuctionStatus::FailedMinNotReached
+    }
+    else if current_time < auction.start_timestamp {
         AuctionStatus::Pending
     } else if current_time < auction.end_timestamp {
         AuctionStatus::Live
     } else {
-        AuctionStatus::Failed
+        AuctionStatus::FailedNotFullyAllocated
     };
 
     // Calculate the clearing price based on the status
@@ -106,9 +109,11 @@ pub(crate) fn get_status_and_clearing_price(
             }
             None // No exact match found
         }
-        
-        AuctionStatus::Failed => {
-            None // Auction failed, no clearing price
+        AuctionStatus::FailedMinNotReached => {
+            None 
+        }
+        AuctionStatus::FailedNotFullyAllocated => {
+            None 
         }
     };
 

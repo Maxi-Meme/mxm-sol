@@ -137,7 +137,7 @@ impl<'info> PlaceBid<'info> {
         let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(auction, Clock::get().unwrap().unix_timestamp, self.global_info.config.min_total_sol);
         msg!("updated auction_status: {:?}", auction_status);
         auction.last_status = auction_status;
-        auction.clearing_price = clearing_price_wrapped.unwrap();
+        auction.clearing_price = clearing_price_wrapped.unwrap_or(0);
 
         Ok(())
     }

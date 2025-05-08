@@ -1320,7 +1320,10 @@
             "name": "Succeeded"
           },
           {
-            "name": "Failed"
+            "name": "FailedMinNotReached"
+          },
+          {
+            "name": "FailedNotFullyAllocated"
           }
         ]
       }
