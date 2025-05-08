@@ -348,22 +348,22 @@ describe("maxi-auction", () => {
     console.log("Initial token balance:", initialTokens.toString());
 
     // Place bids and capture results for both users
-    const bid1Result = await test_bid_auction(0.5, user1Kp);
-    const bid2Result = await test_bid_auction(0.5, user2Kp); // Full fill
+    const bidResult1 = await test_bid_auction(0.5, user1Kp);
+    const bidResult2 = await test_bid_auction(0.5, user2Kp); // Full fill
 
     // Calculate total bids and total fees using returned values
-    const totalBids = bid1Result.bidAmountBN.add(bid2Result.bidAmountBN);
-    const totalFees = bid1Result.feeIncreaseBN.add(bid2Result.feeIncreaseBN);
+    const totalBids = bidResult1.bidAmountBN.add(bidResult2.bidAmountBN);
+    const totalFees = bidResult1.feeIncreaseBN.add(bidResult2.feeIncreaseBN);
     console.log("Total bid amount (lamports):", totalBids.toString());
     console.log("Total fees paid (lamports):", totalFees.toString());
 
     // Verify auction status
-    assert.deepEqual(bid2Result.auctionPost.lastStatus, { failedMinNotReached: {} }, "expected failedMinNotReached");
-    logObject("auctionPost", bid2Result.auctionPost);
+    assert.deepEqual(bidResult2.auctionPost.lastStatus, { failedMinNotReached: {} }, "expected failedMinNotReached");
+    logObject("auctionPost", bidResult2.auctionPost);
 
     // Test auction failure path with claims
-    const claimResult1 = await test_claim_auction(user1Kp, false);
-    const claimResult2 = await test_claim_auction(user2Kp, false);
+    const claimResult1 = await test_claim_auction(user1Kp, false, bidResult1);
+    const claimResult2 = await test_claim_auction(user2Kp, false, bidResult2);
 
     // Calculate total SOL returned to users
     const totalSolReturned = new BN(claimResult1.solTransferred).add(new BN(claimResult2.solTransferred));
@@ -387,16 +387,21 @@ describe("maxi-auction", () => {
     assert.equal(claimResult1.solTransferred > 0, true, "SOL should be transferred in failure path");
     assert.equal(claimResult2.tokensTransferred == 0, true, "Tokens should not be transferred in failure path");
     assert.equal(claimResult2.solTransferred > 0, true, "SOL should be transferred in failure path");
+
+    // check no sol left in the auction - returned in full
+    const auctionSolBalance = await connection.getBalance(auctionSol);
+    assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction");
   });
 
   it("claims - full supply not bid", async () => {
     await test_create_auction(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
-    await test_bid_auction(0.5, user1Kp);
-    await test_bid_auction(0.3, user2Kp);
+    const bidResult1 = await test_bid_auction(0.5, user1Kp);
+    const bidResult2 = await test_bid_auction(0.3, user2Kp);
+    logger.color("magenta").log("sleeping 36s...");
     await sleep(36);
 
-    await test_claim_auction(user1Kp, false); // should update auction status to "failedNotFullyAllocated"
-
+    // claim 1/2 - check status updated
+    await test_claim_auction(user1Kp, false, bidResult1); // should update auction status to "failedNotFullyAllocated"
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
     const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
@@ -404,6 +409,12 @@ describe("maxi-auction", () => {
     const auctionPost = await program.account.auction.fetch(auctionData); // last status (set on bid) was "live..."
     assert.deepEqual(auctionPost.lastStatus, { failedNotFullyAllocated: {} }, "expected failedNotFullyAllocated");
     logObject("auctionPost", auctionPost);
+
+    // claim 2/2 - check no sol left in the auction - returned in full
+    await test_claim_auction(user1Kp, false, bidResult2);
+    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const auctionSolBalance = await connection.getBalance(auctionSol);
+    assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction");
   });
 
   it("claims - successful auction", async () => {
@@ -433,8 +444,17 @@ describe("maxi-auction", () => {
     assert.equal(solTransferred3 == 0, true, "last bidder should get no change");
     assert.equal(tokensTransferred3 > 0, true, "last bidder should get tokens");
 
+    // check correct amount of sol is left in the auction...
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const auctionId = Number(globalInfoAccount.auctionsNum) - 1; // Claim against the last auction
+    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const auctionSolBalance = await connection.getBalance(auctionSol);
+    //...
+
     // TODO:
-    // check total # of tokens remaining in auction == lock amount OR zero if we did the liqmove on devnet...
+    //  test on devnet, with liqmove...
+    //    check total # of tokens remaining in auction == lock amount OR zero if we did the liqmove on devnet...
   });
 
   it("lets bidders to claim in full & admin to setup v2 pool", async () => {
@@ -533,8 +553,13 @@ describe("maxi-auction", () => {
     const bidFee = bidResult.feeIncreaseBN.toNumber();
     console.log("bidderSolBefore", bidderSolBefore, "bidderSolAfter", bidderSolAfter, "networkFee", networkFee, "bidFee", bidFee);
     const solTransferredToBidder = bidderSolAfter - bidderSolBefore + networkFee + bidFee; // Add all fees since bidder pays them...
+
     const tokensTransferredToBidder = bidderTokenAfter - bidderTokenBefore;
+    console.log("tokensTransferredToBidder", tokensTransferredToBidder, "bidderTokenBefore", bidderTokenBefore, "bidderTokenAfter", bidderTokenAfter);
+
     const solTransferredFromAuction = auctionSolBefore - auctionSolAfter;
+    console.log("solTransferredFromAuction", solTransferredFromAuction, "auctionSolBefore", auctionSolBefore, "auctionSolAfter", auctionSolAfter);
+
     const tokensTransferredFromAuction = parseInt(auctionTokenBefore) - parseInt(auctionTokenAfter);
     console.log(`Actual transfers - SOL to bidder: ${(solTransferredToBidder / LAMPORTS_PER_SOL).toFixed(6)}, Tokens to bidder: ${tokensTransferredToBidder}`);
     console.log(`Actual transfers - SOL from auction: ${(solTransferredFromAuction / LAMPORTS_PER_SOL).toFixed(6)}, Tokens from auction: ${tokensTransferredFromAuction}`);
