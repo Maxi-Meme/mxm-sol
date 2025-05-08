@@ -37,7 +37,7 @@ pub struct CancelBid<'info> {
 //
 impl<'info> CancelBid<'info> { 
     pub fn process(&mut self) -> Result<()> {
-        msg!("Calling cancel_bid for auction {}", self.auction_data_account.id);
+        //msg!("Calling cancel_bid for auction {}", self.auction_data_account.id);
         let auction = &mut self.auction_data_account;
         let caller = self.caller.key();
 
@@ -55,10 +55,10 @@ impl<'info> CancelBid<'info> {
         let bid_index = bid_index.unwrap();
         let bid = &auction.bids[bid_index];
 
-        msg!("Sending SOL to bidder: {}", bid.bidder);
-        msg!("bid.bid_qty: {}", bid.bid_qty);
-        msg!("bid.bid_sol: {}", bid.bid_sol);
-        msg!("bid.bid_fee: {}", bid.bid_fee);
+        //msg!("Sending SOL to bidder: {}", bid.bidder);
+        //msg!("bid.bid_qty: {}", bid.bid_qty);
+        //msg!("bid.bid_sol: {}", bid.bid_sol);
+        //msg!("bid.bid_fee: {}", bid.bid_fee);
 
         // Calculate refund amount with overflow/underflow protection
         let product = bid.bid_qty
@@ -67,7 +67,7 @@ impl<'info> CancelBid<'info> {
         let refund_amount = product
             .checked_sub(bid.bid_fee)
             .ok_or(CustomError::CalculationError)?;
-        msg!("refund_amount: {}", refund_amount);
+        //msg!("refund_amount: {}", refund_amount);
 
         // Transfer the refund back to the caller
         sol_transfer_with_signer(
@@ -84,7 +84,6 @@ impl<'info> CancelBid<'info> {
 
         // Remove the specific bid
         auction.bids.remove(bid_index);
-        msg!("Bid removed for caller: {}", caller);
 
         // Emit the cancellation event
         emit!(BidCancelled {

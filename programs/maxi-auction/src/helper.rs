@@ -1,4 +1,4 @@
-use anchor_lang::prelude::*;
+//use anchor_lang::prelude::*;
 use crate::account::Auction;
 use crate::states::AuctionStatus;
 //use crate::errors::CustomError;
@@ -49,6 +49,8 @@ pub(crate) fn get_status_and_clearing_price(
     current_time: i64,
     min_total_sol: u64,
 ) -> (AuctionStatus, Option<u64>) {
+    
+    // get total allocated (bid) tokens and sol
     let allocated_qty_opt: Option<u64> = auction.bids.iter().try_fold(0u64, |acc, b| acc.checked_add(b.bid_qty)); // = auction.bids.iter().map(|b| b.bid_qty).sum();
     let total_sol_opt: Option<u64> = auction.bids.iter().try_fold(0u64, |acc, b| { // = auction.bids.iter().map(|b| (b.bid_qty * b.bid_sol - b.bid_fee)).sum();
         b.bid_qty
@@ -59,16 +61,12 @@ pub(crate) fn get_status_and_clearing_price(
     let allocated_qty = allocated_qty_opt.unwrap_or(0);
     let total_sol = total_sol_opt.unwrap_or(0);
 
-    // TODO 1: check this value looks reasonable - look at logs
-
-    // TODO 3 - test case - status FAIL if MIN_SOL not reached... (status SUCCESS on all current cases)
-
     // Determine the auction status
     let supply_qty = auction.token_supply.saturating_div(10u64.pow(auction.token_decimals as u32));
-    msg!("get_status_and_clearing_price - allocated_qty: {}", allocated_qty);
+    /*msg!("get_status_and_clearing_price - allocated_qty: {}", allocated_qty);
     msg!("get_status_and_clearing_price - supply_qty: {}", supply_qty);
     msg!("get_status_and_clearing_price - total_sol: {}", total_sol); 
-    msg!("get_status_and_clearing_price - min_total_sol: {}", min_total_sol); 
+    msg!("get_status_and_clearing_price - min_total_sol: {}", min_total_sol);*/
     let status = if allocated_qty >= supply_qty && total_sol >= min_total_sol { // fully allocated, and min total sol reached
         AuctionStatus::Succeeded
     } else if allocated_qty >= supply_qty && total_sol < min_total_sol { // fully allocated, but min total sol not reached

@@ -79,13 +79,12 @@ impl<'info> PlaceBid<'info> {
         let final_fee = fee.max(rent); // Use the higher of fee or rent        
         let auction_amount = total_cost - final_fee;
 
-        msg!("bid_quantity: {}", bid_quantity);
-        msg!("current_price: {}", current_price);
-        msg!("remaining_tokens: {}", remaining_tokens);
-
-        msg!("total_cost: {}", total_cost);
-        msg!("auction_amount: {}", auction_amount);
-        msg!("final_fee: {}", final_fee);
+        //msg!("bid_quantity: {}", bid_quantity);
+        //msg!("current_price: {}", current_price);
+        //msg!("remaining_tokens: {}", remaining_tokens);
+        //msg!("total_cost: {}", total_cost);
+        //msg!("auction_amount: {}", auction_amount);
+        //msg!("final_fee: {}", final_fee);
 
         // auction amount to auction_sol_account
         sol_transfer_user(

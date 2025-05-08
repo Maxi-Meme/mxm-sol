@@ -115,7 +115,7 @@ impl<'info> CreateAuction<'info> {
     ) -> Result<()> {
         msg!("Calling create_auction...");
 
-        require!(lock_percent >= 10 && lock_percent <= 1000, CustomError::InvalidLockPercent);
+        require!(lock_percent >= 10 && lock_percent <= 500, CustomError::InvalidLockPercent); // 1% - 50% lock
 
         let global_info = &mut self.global_info;
         let creator = &mut self.creator;

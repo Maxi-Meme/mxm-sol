@@ -69,17 +69,20 @@ impl<'info> Claim<'info> {
         let auction = &mut self.auction_data_account;
         let auction_id = auction.id;
         let auction_bump = auction.bump;
+        let lock_percent = auction.lock_percent;
         let min_total_sol = self.global_info.config.min_total_sol;
+
+        // Get clearing price & status for this auction
+        let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(auction, Clock::get().unwrap().unix_timestamp, min_total_sol);
+        let clearing_price = clearing_price_wrapped.unwrap_or(0);
+
+        // update auction finished flag - the flag can remain unset by bid() if the status is FailedNotFullyAllocated
+        if Clock::get().unwrap().unix_timestamp >= auction.end_timestamp {
+            auction.is_finished = true;
+        }
 
         // Abort if the auction has not finished
         require!(auction.is_finished, CustomError::AuctionNotFinished);
-
-        // Get clearing price & status for this auction
-        //let clearing_price_sol = get_auction_clearing_price(auction);
-        //let auction_status = get_auction_status(auction, Clock::get().unwrap().unix_timestamp);
-        let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(auction, Clock::get().unwrap().unix_timestamp, min_total_sol);
-        if clearing_price_wrapped.is_none() { return err!(CustomError::InvalidClearingPrice); }
-        let clearing_price = clearing_price_wrapped.unwrap();
 
         // Find the bid for the caller - only let him claim once!
         let bid_opt = auction
@@ -96,16 +99,16 @@ impl<'info> Claim<'info> {
 
         let claim_token_qty;
         if auction_status == AuctionStatus::Succeeded {
+            if clearing_price == 0 { return err!(CustomError::InvalidClearingPrice); }
 
             // return sol change
             if bid.bid_sol > clearing_price {
                 let paid = bid.bid_qty * bid.bid_sol - bid.bid_fee;
                 let exact = bid.bid_qty * clearing_price;
                 let owed = paid.saturating_sub(exact);
-
-                // TODO: test these refunds...!!
-                // Returns the excess amount of SOL sent by the user
-                msg!("sending excess sol to {}", bid.bidder);
+                msg!("owed: {}", owed);
+                msg!("paid: {}", paid);
+                msg!("exact: {}", exact);
                 sol_transfer_with_signer(
                     self.auction_sol_account.to_account_info(),
                     self.caller.to_account_info(),
@@ -118,8 +121,12 @@ impl<'info> Claim<'info> {
                     owed,
                 )?;
             }
-            // return bidder's SPL tokens
-            claim_token_qty = bid.bid_qty;// * 10u64.pow(self.token_mint.decimals as u32); // DM
+
+            // calculate claimable tokens: apply inverse of lock_percent
+            require!(lock_percent <= 1000, CustomError::InvalidLockPercent);
+            claim_token_qty = (bid.bid_qty as u128 * (1000 - lock_percent as u128) / 1000) as u64;
+
+            // return tokens
             let cpi_accounts = SplTransfer {
                 from: self.auction_token_account.to_account_info(),
                 to: self.caller_token_account.to_account_info(),
@@ -137,8 +144,6 @@ impl<'info> Claim<'info> {
                 ),
                 claim_token_qty,
             )?;
-
-            msg!("Succesfully sent splToken");
         }
         else {
             // return all sol paid, net of bid fees
@@ -165,6 +170,12 @@ impl<'info> Claim<'info> {
             bidder: self.caller.key(),
             claim_qty: claim_token_qty,
         });
+
+        // Update status & clearing price
+        //let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(auction, Clock::get().unwrap().unix_timestamp, self.global_info.config.min_total_sol);
+        msg!("updated auction_status: {:?}", auction_status);
+        auction.last_status = auction_status;
+        auction.clearing_price = clearing_price_wrapped.unwrap_or(0);
 
         Ok(())
     }
