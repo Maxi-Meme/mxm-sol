@@ -83,4 +83,6 @@ pub enum CustomError {
     #[msg("Tokens already withdrawn.")]
     TokensAlreadyWithdrawn,
     
+    #[msg("Min total sol not reached.")]
+    MinNotReached,
 }

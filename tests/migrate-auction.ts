@@ -46,8 +46,16 @@ const DB_CONFIG: sql.config = {
 // https://github.com/raydium-io/raydium-sdk-V2-demo/tree/master/src/amm
 export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: boolean, auctionId: number, adminKp: Keypair, connection: Connection) => {
 
-  // raydium has a min asset ratio threshold; we must meet it
-  // need to make sure config.TEST_MINTOTAL_SOL > this, so bidders can claim back their tokens
+  // abort if min sol is not reached - user's will claim back their sol in full
+  const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(AUCTION_DATA_SEED), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+  const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(AUCTION_SOL_SEED), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+  const auctionDataFetched = await program.account.auction.fetch(auctionData);
+  if (auctionDataFetched.lastStatus?.failedMinNotReached) {
+    throw new Error('failedMinNotReached');
+  }
+  //console.log(`auctionDataFetched`, auctionDataFetched); // how to get status?
+
+  // need to make sure config.TEST_MIN_TOTAL_SOL > FIXED_MIN_SOL_LIQ, so that test above will fail and bidders cant then claim back their tokens
   const FIXED_MIN_SOL_LIQ = isMainnet
     ? new BN(10.00 * LAMPORTS_PER_SOL)  // TODO: test/tune thereshold for prod, e.g. (1b + 6 decimals)
     : new BN(0.001 * LAMPORTS_PER_SOL); // assumes avg. 50 base tokens supplied with 3 decimals, i.e. test case setup
@@ -71,10 +79,10 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
   const mintAccount = await getMint(connection, tokenMint);
   console.log(`migrateAuction => Withdrawn ${solWithdrawn.toString()} lamports and ${tokensWithdrawn.toString()} tokens`);
   console.log(`solWithdrawn`, solWithdrawn.toString());
-  if (new BN(solWithdrawn.toString()) < FIXED_MIN_SOL_LIQ) {    // to satsify raydium fixed product 
+  if (new BN(solWithdrawn.toString()).lt(new BN(FIXED_MIN_SOL_LIQ.toString()))) {    // to satsify raydium fixed product 
     throw new Error('solWithdrawn is too low: MIN_SOL_LIQ');
   }
-  if (new BN(solWithdrawn.toString()) < CONFIG_MIN_TOTAL_SOL) { // to cover our costs 
+  if (new BN(solWithdrawn.toString()).lt(new BN(CONFIG_MIN_TOTAL_SOL.toString()))) { // to cover our costs 
     throw new Error('solWithdrawn is too low: CONFIG_MIN_TOTAL_SOL #### SHOULD NOT HAPPEN! auction state should be failed, and admin withdraw not allowed #####');
   }
 

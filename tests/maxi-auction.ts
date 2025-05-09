@@ -40,7 +40,7 @@ import {
   TEST_TOKEN_SUPPLY,
   TEST_TOKEN_SYMBOL,
   TEST_TOKEN_URI,
-  TEST_MINTOTAL_SOL,
+  TEST_MIN_TOTAL_SOL,
 } from "./config";
 //import { createMarket } from "./create-market";
 
@@ -157,16 +157,20 @@ describe("maxi-auction", () => {
       //logObject("auctionDataAccount", auctionDataAccount);
 
       // Process migration and resolve the promise
-      await migrateAuction(program, isMainnet, auctionId, adminKp, connection).then(() => {
-        const resolve = auctionFilledPromises.get(auctionId);
-        if (resolve) {
-          resolve(); // Signal that migration is complete
-          auctionFilledPromises.delete(auctionId); // Clean up the Map
-        }
-      }).catch((err) => {
-        console.error(`migrateAuction -> error`, err);
-        throw err;
-      });
+      migrateAuction(program, isMainnet, auctionId, adminKp, connection)
+        .catch((err) => {
+          console.log(`auction ${auctionId} migration complete - catch`);
+          console.error(`migrateAuction -> error`, err);
+        })
+        .finally(() => {
+          const resolve = auctionFilledPromises.get(auctionId.toString());
+          console.log(`auction ${auctionId} migration complete - looking for resolver`);
+          if (resolve) {
+            console.log(`auction ${auctionId} migration complete - resolving promise`);
+            resolve();
+            auctionFilledPromises.delete(auctionId);
+          }
+        });
     }
   });
 
@@ -381,7 +385,7 @@ describe("maxi-auction", () => {
   });
 
 
-  it("claims - failed auction: min total sol not reached", async () => {
+  it("claims - min total sol not reached", async () => {
     await test_init(10000); // 10k SOL minimum needed to move liquidity - will cause this auction to finished failed
 
     await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
@@ -447,7 +451,7 @@ describe("maxi-auction", () => {
     assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction");
   });
 
-  it("claims - failed auction: full supply not bid", async () => {
+  it("claims - full supply not bid", async () => {
     await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction(0.5, USER_KPs[0]);
     const bidResult2 = await test_bid_auction(0.3, USER_KPs[1]);
@@ -471,7 +475,7 @@ describe("maxi-auction", () => {
     assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction");
   });
 
-  it("claims - failed auction: same user claims multiple bids", async () => {
+  it("claims - one user claims two multiple bids", async () => {
     await test_init(10000); // 10k SOL minimum needed to move liquidity - will cause this auction to finished failed
     await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction(0.5, USER_KPs[1]);
@@ -1209,7 +1213,7 @@ describe("maxi-auction", () => {
       defaultTokenDecimals: TEST_TOKEN_DECIMALS,
       defaultStartPriceLamports: new BN(TEST_STARTPRICE_SOL * LAMPORTS_PER_SOL),
       feeAccount: TEST_FEE_ACCOUNT.publicKey,  //Keypair.generate().publicKey, 
-      minTotalSol: new BN((mintotal_sol || TEST_MINTOTAL_SOL) * LAMPORTS_PER_SOL)
+      minTotalSol: new BN((mintotal_sol || TEST_MIN_TOTAL_SOL) * LAMPORTS_PER_SOL)
     };
     //logObject("newConfig", newConfig);
 
@@ -1426,7 +1430,7 @@ describe("maxi-auction", () => {
       else {
         console.log("Final bid detected, waiting for auction migration...");
         const auctionFilledPromise = new Promise((resolve) => { // Create a promise and store its resolve function in the Map
-          auctionFilledPromises.set(auctionId, resolve);
+          auctionFilledPromises.set(auctionId.toString(), resolve);
         });
         await auctionFilledPromise; // Wait for the event listener to resolve the promise
         console.log("Auction migration completed for auction ID:", auctionId);

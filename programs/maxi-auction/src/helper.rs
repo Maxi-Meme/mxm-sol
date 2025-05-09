@@ -50,11 +50,10 @@ pub(crate) fn get_status_and_clearing_price(
     current_time: i64,
     min_total_sol: u64,
 ) -> (AuctionStatus, Option<u64>) {
-
-    // get total allocated (bid) tokens and sol
-    let allocated_qty_opt: Option<u64> = auction.bids.iter().try_fold(0u64, |acc, b| acc.checked_add(b.bid_qty)); // = auction.bids.iter().map(|b| b.bid_qty).sum();
-    let total_sol_after_fees_opt: Option<u64> = auction.bids.iter().try_fold(0u64, |acc, b| { // = auction.bids.iter().map(|b| (b.bid_qty * b.bid_sol - b.bid_fee)).sum();
-        b.bid_qty // net amount of sol raised after fees
+    // Calculate total allocated (bid) tokens and sol
+    let allocated_qty_opt: Option<u64> = auction.bids.iter().try_fold(0u64, |acc, b| acc.checked_add(b.bid_qty));
+    let total_sol_after_fees_opt: Option<u64> = auction.bids.iter().try_fold(0u64, |acc, b| {
+        b.bid_qty
             .checked_mul(b.bid_sol)
             .and_then(|product| product.checked_sub(b.bid_fee))
             .and_then(|net| acc.checked_add(net))
@@ -73,35 +72,44 @@ pub(crate) fn get_status_and_clearing_price(
     for bid in auction.bids.iter() {
         if !bid.is_claimed {
             let paid = bid.bid_qty * bid.bid_sol - bid.bid_fee;
-            let exact;
-            if clearing_price_tmp == 0 { 
-                exact = bid.bid_qty * bid.bid_sol;
+            let exact = if clearing_price_tmp == 0 {
+                bid.bid_qty * bid.bid_sol
             } else {
-                exact = bid.bid_qty * clearing_price_tmp;
-            }
+                bid.bid_qty * clearing_price_tmp
+            };
             let owed = paid.saturating_sub(exact);
             total_unclaimed_refunds += owed;
         }
-    }    
-    let net_sol_raised = total_sol_after_fees.saturating_sub(total_unclaimed_refunds);
+    }
+
+    // Calculate net_sol_raised before rent exemption
+    let net_sol_raised_before_rent = total_sol_after_fees.saturating_sub(total_unclaimed_refunds);
+
+    // Derive rent exemption for a 0-byte account
+    let rent = Rent::get().unwrap(); // Fetch current rent rules
+    let rent_exempt_minimum = rent.minimum_balance(0); // 0 bytes for auction_sol_account
+
+    // Subtract rent exemption to get final net_sol_raised
+    let net_sol_raised = net_sol_raised_before_rent.saturating_sub(rent_exempt_minimum);
 
     // Determine the auction status
     let supply_qty = auction.token_supply.saturating_div(10u64.pow(auction.token_decimals as u32));
+
     msg!("get_status_and_clearing_price - allocated_qty: {}", allocated_qty);
     msg!("get_status_and_clearing_price - supply_qty: {}", supply_qty);
-    msg!("get_status_and_clearing_price - total_sol_after_fees: {}", total_sol_after_fees); 
+    msg!("get_status_and_clearing_price - total_sol_after_fees: {}", total_sol_after_fees);
     msg!("get_status_and_clearing_price - clearing_price_tmp: {}", clearing_price_tmp);
     msg!("get_status_and_clearing_price - total_unclaimed_refunds: {}", total_unclaimed_refunds);
+    msg!("get_status_and_clearing_price - rent_exempt_minimum: {}", rent_exempt_minimum);
     msg!("get_status_and_clearing_price - net_sol_raised: {}", net_sol_raised);
     msg!("get_status_and_clearing_price - min_total_sol: {}", min_total_sol);
 
-    // assign status
-    let status = if allocated_qty >= supply_qty && net_sol_raised >= min_total_sol { // fully allocated, and min total sol reached
+    // Assign status
+    let status = if allocated_qty >= supply_qty && net_sol_raised >= min_total_sol {
         AuctionStatus::Succeeded
-    } else if allocated_qty >= supply_qty && net_sol_raised < min_total_sol { // fully allocated, but min total sol not reached
+    } else if allocated_qty >= supply_qty && net_sol_raised < min_total_sol {
         AuctionStatus::FailedMinNotReached
-    }
-    else if current_time < auction.start_timestamp {
+    } else if current_time < auction.start_timestamp {
         AuctionStatus::Pending
     } else if current_time < auction.end_timestamp {
         AuctionStatus::Live
@@ -109,28 +117,20 @@ pub(crate) fn get_status_and_clearing_price(
         AuctionStatus::FailedNotFullyAllocated
     };
 
-    // assign the clearing price based on the status
+    // Assign the clearing price based on the status
     let clearing_price = match status {
-        AuctionStatus::Pending => {
-            None // Auction hasn't started, no clearing price
-        }
+        AuctionStatus::Pending => None,
         AuctionStatus::Live => {
             if auction.bids.is_empty() {
-                None // No bids yet, no clearing price
-            } else { // ...
+                None
+            } else {
                 let last_bid = auction.bids.last().unwrap();
                 Some(last_bid.bid_sol)
             }
         }
-        AuctionStatus::Succeeded => {
-            get_clearing_price(auction)
-        }
-        AuctionStatus::FailedMinNotReached => {
-            None 
-        }
-        AuctionStatus::FailedNotFullyAllocated => {
-            None 
-        }
+        AuctionStatus::Succeeded => get_clearing_price(auction),
+        AuctionStatus::FailedMinNotReached => None,
+        AuctionStatus::FailedNotFullyAllocated => None,
     };
 
     (status, clearing_price)

@@ -67,6 +67,8 @@ impl<'info> WithdrawSol<'info> {
         }
         require!(auction.is_finished, CustomError::AuctionNotFinished);
         require!(!auction.is_sol_withdrawn, CustomError::SolAlreadyWithdrawn);
+        
+        require!(auction_status != AuctionStatus::FailedMinNotReached, CustomError::AuctionFailedMinNotReached);
         require!(auction_status == AuctionStatus::Succeeded, CustomError::InvalidState);
         auction.last_status = auction_status;
         auction.clearing_price = clearing_price;
