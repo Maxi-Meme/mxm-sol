@@ -1,6 +1,7 @@
 //use anchor_lang::prelude::*;
 use crate::account::Auction;
 use crate::states::AuctionStatus;
+use anchor_lang::{prelude::*};
 //use crate::errors::CustomError;
 
 pub(crate) fn get_remaining_tokens(auction: &Auction) -> u64 { // integer token units (not lamports
@@ -49,27 +50,55 @@ pub(crate) fn get_status_and_clearing_price(
     current_time: i64,
     min_total_sol: u64,
 ) -> (AuctionStatus, Option<u64>) {
-    
+
     // get total allocated (bid) tokens and sol
     let allocated_qty_opt: Option<u64> = auction.bids.iter().try_fold(0u64, |acc, b| acc.checked_add(b.bid_qty)); // = auction.bids.iter().map(|b| b.bid_qty).sum();
-    let total_sol_opt: Option<u64> = auction.bids.iter().try_fold(0u64, |acc, b| { // = auction.bids.iter().map(|b| (b.bid_qty * b.bid_sol - b.bid_fee)).sum();
-        b.bid_qty
+    let total_sol_after_fees_opt: Option<u64> = auction.bids.iter().try_fold(0u64, |acc, b| { // = auction.bids.iter().map(|b| (b.bid_qty * b.bid_sol - b.bid_fee)).sum();
+        b.bid_qty // net amount of sol raised after fees
             .checked_mul(b.bid_sol)
             .and_then(|product| product.checked_sub(b.bid_fee))
             .and_then(|net| acc.checked_add(net))
     });
     let allocated_qty = allocated_qty_opt.unwrap_or(0);
-    let total_sol = total_sol_opt.unwrap_or(0);
+    let total_sol_after_fees = total_sol_after_fees_opt.unwrap_or(0);
+
+    // Calculate total unclaimed refunds
+    let mut total_unclaimed_refunds = 0u64;
+    let clearing_price_tmp; // our best guess at the clearing price
+    if auction.bids.is_empty() {
+        clearing_price_tmp = 0; // no bids yet, no clearing price
+    } else {
+        clearing_price_tmp = auction.bids.last().unwrap().bid_sol; // use the last bid as the price
+    }
+    for bid in auction.bids.iter() {
+        if !bid.is_claimed {
+            let paid = bid.bid_qty * bid.bid_sol - bid.bid_fee;
+            let exact;
+            if clearing_price_tmp == 0 { 
+                exact = bid.bid_qty * bid.bid_sol;
+            } else {
+                exact = bid.bid_qty * clearing_price_tmp;
+            }
+            let owed = paid.saturating_sub(exact);
+            total_unclaimed_refunds += owed;
+        }
+    }    
+    let net_sol_raised = total_sol_after_fees.saturating_sub(total_unclaimed_refunds);
 
     // Determine the auction status
     let supply_qty = auction.token_supply.saturating_div(10u64.pow(auction.token_decimals as u32));
-    /*msg!("get_status_and_clearing_price - allocated_qty: {}", allocated_qty);
+    msg!("get_status_and_clearing_price - allocated_qty: {}", allocated_qty);
     msg!("get_status_and_clearing_price - supply_qty: {}", supply_qty);
-    msg!("get_status_and_clearing_price - total_sol: {}", total_sol); 
-    msg!("get_status_and_clearing_price - min_total_sol: {}", min_total_sol);*/
-    let status = if allocated_qty >= supply_qty && total_sol >= min_total_sol { // fully allocated, and min total sol reached
+    msg!("get_status_and_clearing_price - total_sol_after_fees: {}", total_sol_after_fees); 
+    msg!("get_status_and_clearing_price - clearing_price_tmp: {}", clearing_price_tmp);
+    msg!("get_status_and_clearing_price - total_unclaimed_refunds: {}", total_unclaimed_refunds);
+    msg!("get_status_and_clearing_price - net_sol_raised: {}", net_sol_raised);
+    msg!("get_status_and_clearing_price - min_total_sol: {}", min_total_sol);
+
+    // assign status
+    let status = if allocated_qty >= supply_qty && net_sol_raised >= min_total_sol { // fully allocated, and min total sol reached
         AuctionStatus::Succeeded
-    } else if allocated_qty >= supply_qty && total_sol < min_total_sol { // fully allocated, but min total sol not reached
+    } else if allocated_qty >= supply_qty && net_sol_raised < min_total_sol { // fully allocated, but min total sol not reached
         AuctionStatus::FailedMinNotReached
     }
     else if current_time < auction.start_timestamp {
@@ -80,7 +109,7 @@ pub(crate) fn get_status_and_clearing_price(
         AuctionStatus::FailedNotFullyAllocated
     };
 
-    // Calculate the clearing price based on the status
+    // assign the clearing price based on the status
     let clearing_price = match status {
         AuctionStatus::Pending => {
             None // Auction hasn't started, no clearing price
@@ -94,18 +123,7 @@ pub(crate) fn get_status_and_clearing_price(
             }
         }
         AuctionStatus::Succeeded => {
-            let mut cumulative_qty = 0u64;
-            for bid in &auction.bids {
-                cumulative_qty += bid.bid_qty.saturating_mul(10u64.pow(auction.token_decimals as u32));
-                if cumulative_qty == auction.token_supply { // Happy path: bids are exact match for token supply
-                    
-                    return (status, Some(bid.bid_sol)); 
-                }
-                if cumulative_qty > auction.token_supply {
-                    return (status, None); // Shouldn't happen if bids are managed correctly, indicate error
-                }
-            }
-            None // No exact match found
+            get_clearing_price(auction)
         }
         AuctionStatus::FailedMinNotReached => {
             None 
@@ -116,6 +134,20 @@ pub(crate) fn get_status_and_clearing_price(
     };
 
     (status, clearing_price)
+}
+
+fn get_clearing_price(auction: &Auction) -> Option<u64> {
+    let mut cumulative_qty = 0u64;
+    for bid in &auction.bids {
+        cumulative_qty += bid.bid_qty.saturating_mul(10u64.pow(auction.token_decimals as u32));
+        if cumulative_qty == auction.token_supply { // Happy path: bids are exact match for token supply
+            return Some(bid.bid_sol);
+        }
+        if cumulative_qty > auction.token_supply {
+            return None; // Shouldn't happen if bids are managed correctly, indicates error
+        }
+    }
+    return None;
 }
 
 /*pub(crate) fn get_auction_status(auction: &Auction, current_time: i64) -> AuctionStatus {

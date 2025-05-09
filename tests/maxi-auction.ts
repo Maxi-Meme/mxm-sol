@@ -511,7 +511,7 @@ describe("maxi-auction", () => {
     }
   });
 
-  it("claims - successful auction - auction creator bids & claims", async () => {
+  it("claims - auction creator bids & claims", async () => {
     await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction(0.5, USER_KPs[0]);
     const bidResult2 = await test_bid_auction(0.5, USER_KPs[1]);
@@ -1623,70 +1623,6 @@ describe("maxi-auction", () => {
 
     return { auctionDataAfter, balanceAfter, balanceBefore, totalRefund, networkFee, auctionSol };
   }
-
-  // it("User2 is claiming tokens from the auction", async () => {
-  //   logger.color("magenta").log("User2 is claiming tokens from the auction...");
-  //   const signer = USER_KPs[1];
-  //   const token = tokenKp1;
-
-  //   const [globalInfo] = PublicKey.findProgramAddressSync(
-  //     [Buffer.from(globalInfoSeed)],
-  //     program.programId
-  //   );
-  //   const globalInfoAccount = await program.account.globalInfo.fetch(
-  //     globalInfo
-  //   );
-
-  //   const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
-
-  //   const [auctionSol] = PublicKey.findProgramAddressSync(
-  //     [
-  //       Buffer.from(auctionSolSeed),
-  //       new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8),
-  //     ],
-  //     program.programId
-  //   );
-
-  //   const [auctionData] = PublicKey.findProgramAddressSync(
-  //     [
-  //       Buffer.from(auctionDataSeed),
-  //       new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8),
-  //     ],
-  //     program.programId
-  //   );
-
-  //   const auctionTokenAccount = getAssociatedTokenAddressSync(
-  //     token.publicKey,
-  //     auctionSol,
-  //     true
-  //   );
-
-  //   const tx = new Transaction();
-  //   tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }));
-  //   tx.add(
-  //     ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_200_000 })
-  //   );
-  //   tx.add(
-  //     await program.methods
-  //       .claim()
-  //       .accounts({
-  //         caller: signer.publicKey,
-  //         tokenMint: token.publicKey,
-  //         auctionSolAccount: auctionSol,
-  //         auctionDataAccount: auctionData,
-  //         auctionTokenAccount,
-  //       })
-  //       .signers([signer])
-  //       .transaction()
-  //   );
-
-  //   tx.feePayer = signer.publicKey;
-  //   tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-  //   // logge.color('connection').logr(await connection.simulateTransaction(tx));
-
-  //   const sig = await sendAndConfirmTransaction(connection, tx, [signer]);
-  //   logger.color("green").log("Your transaction signature", sig);
-  // });
 
 });
 

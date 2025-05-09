@@ -1,5 +1,5 @@
 // Maximum number of bids per auction:
-pub const MAX_BIDS: usize = 30; // DM - unit test: how high can be go?
+pub const MAX_BIDS: usize = 88;
 
 pub const AUCTION_DATA_SEED: &'static [u8] = b"auction_data_seed";
 pub const AUCTION_SOL_SEED: &'static [u8] = b"auction_sol_seed";
