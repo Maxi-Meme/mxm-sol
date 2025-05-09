@@ -85,8 +85,8 @@ var isLocal = false;
 var isDevnet = false;
 var isMainnet = false;
 
-// 12MhCcaTUtiG86K5ahiAmYSZ4Z9VCsxUKSTcAQjimaxi
-const TEST_FEE_ACCOUNT = Keypair.fromSecretKey(bs58.decode("4hbfT4t6HZtcBVUq983nHXnXs7KdQXxrNUdkCVPaNYT82qSd3hH7eVJkgVicHX9MtatidQuEi3E5nXJ5UbE9ExHp"));
+const TEST_FEE_ACCOUNT = Keypair.fromSecretKey(bs58.decode("4hbfT4t6HZtcBVUq983nHXnXs7KdQXxrNUdkCVPaNYT82qSd3hH7eVJkgVicHX9MtatidQuEi3E5nXJ5UbE9ExHp")); // 12MhCcaTUtiG86K5ahiAmYSZ4Z9VCsxUKSTcAQjimaxi
+var CONTRACT_CONFIG: any;
 
 const auctionFilledPromises = new Map();
 
@@ -271,10 +271,21 @@ describe("maxi-auction", () => {
     await test_bid_auction(0.1);
   });
 
-  it("cancels a bid", async () => {
+  it("cancels bids", async () => {
     await test_create_auction();
-    await test_bid_auction(0.5); // Bids for 50% of token supply 
-    await test_cancel_bid();
+
+    console.log("admin", adminKp.publicKey.toBase58());
+    console.log("bid 1", user2Kp.publicKey.toBase58());
+    console.log("bid 2", user3Kp.publicKey.toBase58());
+
+    const bidResult1 = await test_bid_auction(0.5, user2Kp);
+    const bidResult2 = await test_bid_auction(0.3, user3Kp);
+
+    await test_cancel_bid(user2Kp);
+    let { auctionSol, } = await test_cancel_bid(user3Kp);
+
+    const auctionSolBalance = await connection.getBalance(auctionSol);
+    assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction");
   });  
 
   it("same user places two bids", async () => {
@@ -486,15 +497,9 @@ describe("maxi-auction", () => {
 
     console.log(`auctionSolBalance`, auctionSolBalance.toString() / LAMPORTS_PER_SOL);
     assert.equal(auctionSolBalance.toString(), expectedSolInAuction.toString(), "should be correct amount of sol left in the auction");
-
-    // TODO: test with true variable fees (higher start price, or rent min only on needed...)
-
-    // TODO:
-    //  test on devnet, with liqmove...
-    //    check total # of tokens remaining in auction == lock amount OR zero if we did the liqmove on devnet...
   });
 
-  it("lets bidders to claim in full & admin to setup v2 pool", async () => {
+  it("admin withdraws & movesliq before claims", async () => {
     // TODO... multiple bids, + claim + pool setup -- expect zero left in contract....
 
     // TODO: pool token fees - 0.1% tokens before pool setup...
@@ -1096,27 +1101,26 @@ describe("maxi-auction", () => {
     //
   }
 
-  async function test_init(mintotal_sol: number = undefined) {
+  async function test_init(mintotal_sol: number = undefined) {  
     //logger.color("magenta").log("*** Initializing the auction system...");
     const signer = adminKp;
 
     //console.log("Program ID in test:", program.programId.toBase58());
     //console.log("signer.publicKey:", signer.publicKey.toBase58());
     //console.log("connection.rpcEndpoint", connection.rpcEndpoint);
-
-    const newConfig = {
+    CONTRACT_CONFIG = {
       admin: adminKp.publicKey,
       defaultTokenSupply: new BN(TEST_TOKEN_SUPPLY),
       defaultTokenDecimals: TEST_TOKEN_DECIMALS,
       defaultStartPriceLamports: new BN(TEST_STARTPRICE_SOL * LAMPORTS_PER_SOL),
-      feeAccount: TEST_FEE_ACCOUNT.publicKey,
+      feeAccount: TEST_FEE_ACCOUNT.publicKey,  //Keypair.generate().publicKey, 
       minTotalSol: new BN((mintotal_sol || TEST_MINTOTAL_SOL) * LAMPORTS_PER_SOL)
     };
     //logObject("newConfig", newConfig);
 
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const tx = await program.methods
-      .initialize(newConfig)
+      .initialize(CONTRACT_CONFIG)
       .accounts({
         signer: signer.publicKey,
       })
@@ -1126,23 +1130,18 @@ describe("maxi-auction", () => {
     tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
 
     try {
-      const simulationResult = await connection.simulateTransaction(tx);
-      //logObject("simulationResult", simulationResult);
-      if (simulationResult.value.err) {
-        //logObject("simulationResult.value.err", simulationResult.value.err);
-        throw new Error(`Simulation failed`);
-      }
       var sig;
       try {
         sig = await sendAndConfirmTransaction(connection, tx, [signer]);
+        logSuccessTx(connection, sig, "initialize");    
       } catch (err) {
-        //logger.color("red").log("sendAndConfirmTransaction failed:", err.getLogs());
+        logger.color("red").log("sendAndConfirmTransaction failed:", err.getLogs());
         throw err;
       }
-      //logger.color("green").log("Your transaction signature", sig);
-      const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo); 
+      //const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo); 
       //logger.color("green").log("globalInfoAccount", globalInfoAccount);
-      const { deployer, config, auctionsNum } = globalInfoAccount;
+      //const { deployer, config, auctionsNum } = globalInfoAccount;
+      //logObject("globalInfoAccount", globalInfoAccount);
 
       //console.log("deployer", deployer.toString());
       //console.log("signer.publicKey", signer.publicKey.toString());
@@ -1151,6 +1150,9 @@ describe("maxi-auction", () => {
       //console.log("config.defaultStartPriceLamports", config.defaultStartPriceLamports.toNumber());
       //console.log("newConfig.feeAccount", config.feeAccount.toBase58());
       //console.log("newConfig.minTotalSol", config.minTotalSol.toNumber());
+
+      await setupFeeAccount(connection, adminKp, CONTRACT_CONFIG.feeAccount);
+
     } catch (e) {
       console.error("Transaction error:", e);
       if (e.logs) {
@@ -1278,7 +1280,7 @@ describe("maxi-auction", () => {
     // Get initial balances
     const bidderBalanceBefore = await connection.getBalance(signer.publicKey);
     const auctionSolBalanceBefore = await connection.getBalance(auctionSol);
-    const feeAccountBalanceBefore = await connection.getBalance(TEST_FEE_ACCOUNT.publicKey); // Initial fee account balance
+    const feeAccountBalanceBefore = await connection.getBalance(CONTRACT_CONFIG.feeAccount); // Initial fee account balance
     console.log(`Balances before bid: Bidder (${signer.publicKey.toBase58()}): ${(bidderBalanceBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL, Auction (${auctionSol.toBase58()}): ${(auctionSolBalanceBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL, Fee Account: ${(feeAccountBalanceBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
 
     // Check if bid fills auction
@@ -1305,7 +1307,7 @@ describe("maxi-auction", () => {
         bidder: signer.publicKey,
         auctionDataAccount: auctionData,
         auctionSolAccount: auctionSol,
-        feeAccount: TEST_FEE_ACCOUNT.publicKey
+        feeAccount: CONTRACT_CONFIG.feeAccount
       })
       .transaction();
     tx.feePayer = signer.publicKey;
@@ -1338,7 +1340,7 @@ describe("maxi-auction", () => {
     // Fetch post-bid data
     const bidderBalanceAfter = await connection.getBalance(signer.publicKey);
     const auctionSolBalanceAfter = await connection.getBalance(auctionSol);
-    const feeAccountBalanceAfter = await connection.getBalance(TEST_FEE_ACCOUNT.publicKey); // Final fee account balance
+    const feeAccountBalanceAfter = await connection.getBalance(CONTRACT_CONFIG.feeAccount); // Final fee account balance
     const auctionPost = await program.account.auction.fetch(auctionData);
     const txDetails = await getTransactionDetailsWithRetry(connection, sig);
     const networkFee = txDetails.meta.fee; // Network transaction fee
@@ -1422,8 +1424,8 @@ describe("maxi-auction", () => {
     return { auctionPost, bidAmountBN, actualBidFeeBN, feeIncreaseBN, bidQty }
   }
 
-  async function test_cancel_bid() {
-    console.log("Testing cancel_bid function...");
+  async function test_cancel_bid(bidderKp: Keypair = user2Kp) { // TODO: pass in keypair?! test >1 cancel...
+    logger.color("magenta").log(`${bidderKp.publicKey} is canceling...`);
 
     // Derive PDAs
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
@@ -1443,8 +1445,8 @@ describe("maxi-auction", () => {
     const auctionDataBefore = await program.account.auction.fetch(auctionData);
     logObject("auctionDataBefore", auctionDataBefore);
 
-    console.log("user2Kp.publicKey", user2Kp.publicKey.toBase58());
-    const bid = auctionDataBefore.bids.find(b => b.bidder.equals(user2Kp.publicKey));
+    console.log("bidderKp.publicKey", bidderKp.publicKey.toBase58());
+    const bid = auctionDataBefore.bids.find(b => b.bidder.equals(bidderKp.publicKey));
     console.log("bid", bid);
     assert.strictEqual(bid != undefined, true, "Bid should exist before cancellation");
 
@@ -1458,23 +1460,23 @@ describe("maxi-auction", () => {
     console.log("refundAmount:", bidAmount - auctionFee);
 
     // Capture the bidder's balance before cancellation
-    const balanceBefore = await connection.getBalance(user2Kp.publicKey);
+    const balanceBefore = await connection.getBalance(bidderKp.publicKey);
 
     // Cancel the bid
     const cancelTx = await program.methods
       .cancelBid()
       .accounts({
-        caller: user2Kp.publicKey,
+        caller: bidderKp.publicKey,
         auctionSolAccount: auctionSol,
         auctionDataAccount: auctionData,
       })
       .transaction();
-    cancelTx.feePayer = user2Kp.publicKey;
+    cancelTx.feePayer = bidderKp.publicKey;
     cancelTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
 
     let cancelSig;
     try {
-      cancelSig = await sendAndConfirmTransaction(connection, cancelTx, [user2Kp]);
+      cancelSig = await sendAndConfirmTransaction(connection, cancelTx, [bidderKp]);
       await logSuccessTx(connection, cancelSig, "cancelBid");
     } catch (err) {
       console.error("logs:", await err.getLogs());
@@ -1492,7 +1494,7 @@ describe("maxi-auction", () => {
     logObject("auctionDataAfter", auctionDataAfter);
 
     // Capture the bidder's balance after cancellation
-    const balanceAfter = await connection.getBalance(user2Kp.publicKey);
+    const balanceAfter = await connection.getBalance(bidderKp.publicKey);
 
     // Calculate the refund amount: bidAmount - auctionFee
     const refundAmount = bidAmount - auctionFee;
@@ -1501,16 +1503,10 @@ describe("maxi-auction", () => {
     const expectedBalance = balanceBefore + refundAmount - networkFee;
     console.log(`Expected balance: ${expectedBalance} lamports`);
     console.log(`Actual balance: ${balanceAfter} lamports`);
+    assert.strictEqual(balanceAfter, expectedBalance, `Balance after cancellation should be exactly balanceBefore + (bidAmount - auctionFee) - networkFee: expected ${expectedBalance}, got ${balanceAfter}`);
+    assert.equal(auctionDataAfter.bids.length == auctionDataBefore.bids.length - 1, true, "Bid should be removed");
 
-    // Assert exact equality
-    assert.strictEqual(
-      balanceAfter,
-      expectedBalance,
-      `Balance after cancellation should be exactly balanceBefore + (bidAmount - auctionFee) - networkFee: expected ${expectedBalance}, got ${balanceAfter}`
-    );
-
-    // Confirm the bid is removed
-    assert.equal(auctionDataAfter.bids.length, 0, "Bid list should be empty after cancellation");
+    return { auctionDataAfter, balanceAfter, balanceBefore, refundAmount, networkFee, auctionSol };
   }
 
   // it("User2 is claiming tokens from the auction", async () => {
@@ -1698,3 +1694,27 @@ const VALID_PROGRAM_ID = new Set([
   DEVNET_PROGRAM_ID.AmmStable.toBase58(),
 ]);
 const isValidAmm = (id: string) => VALID_PROGRAM_ID.has(id);
+
+async function setupFeeAccount(connection: Connection, adminKp: Keypair, feeAccountPubkey: PublicKey) {
+  const feeBalance = await connection.getBalance(feeAccountPubkey);
+  const minBalance = await connection.getMinimumBalanceForRentExemption(0); // 0 bytes for a basic system account
+  if (feeBalance < minBalance) {
+    console.log("Funding fee account...");
+    const lamportsToFund = minBalance - feeBalance;
+
+    const transferIx = SystemProgram.transfer({
+      fromPubkey: adminKp.publicKey,
+      toPubkey: feeAccountPubkey,
+      lamports: lamportsToFund
+    });
+
+    const tx = new Transaction().add(transferIx);
+    tx.feePayer = adminKp.publicKey;
+    tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+
+    const sig = await sendAndConfirmTransaction(connection, tx, [adminKp]);
+    await logSuccessTx(connection, sig, "Funding fee account");
+  } else {
+    console.log(`Fee account already has sufficient balance for rent exemption.`);
+  }
+}

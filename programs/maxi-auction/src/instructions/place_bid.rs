@@ -75,8 +75,6 @@ impl<'info> PlaceBid<'info> {
 
         // Calculate 1% fee and amount for auction account
         let fee = total_cost / 100; // 1% fee, integer division rounds down
-        //let rent = Rent::get()?.minimum_balance(165); // For an ATA
-        //let final_fee = fee.max(rent); // Use the higher of fee or rent        
         let final_fee = fee;
         let auction_amount = total_cost - final_fee;
 
