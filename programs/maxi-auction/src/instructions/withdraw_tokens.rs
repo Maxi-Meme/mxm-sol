@@ -2,6 +2,8 @@ use crate::{
     account::Auction, constants::AUCTION_SOL_SEED, errors::CustomError,
     account::GlobalInfo, constants::GLOBAL_INFO_SEED, 
     //states::Config,
+    states::AuctionStatus,
+    helper::get_status_and_clearing_price,
 };
 use anchor_spl::token::{self, Token, TokenAccount};
 //use anchor_lang::{system_program, prelude::*};
@@ -50,12 +52,9 @@ pub struct WithdrawTokens<'info> {
     pub token_program: Program<'info, Token>,
 }
 
-//
-// TODO: only withdraw locked tokens!!
-//
 impl<'info> WithdrawTokens<'info> {
     pub fn process(&mut self) -> Result<()> {
-        let auction = &self.auction_data_account;
+        let auction = &mut self.auction_data_account;
         let auction_id = auction.id;
         let bump = auction.bump;
 
@@ -66,16 +65,27 @@ impl<'info> WithdrawTokens<'info> {
         );
         require_keys_eq!(expected_pda, self.auction_sol_account.key(), CustomError::InvalidPDA);
 
-        // Get the token balance
-        let token_balance = self.auction_token_account.amount;
+        // Update auction finished flag (consistent with Claim)
+        if Clock::get().unwrap().unix_timestamp >= auction.end_timestamp {
+            auction.is_finished = true;
+        }
+        require!(auction.is_finished, CustomError::AuctionNotFinished);
 
-        // Ensure lock_percent is valid (0 to 1000)
-        require!(auction.lock_percent <= 1000, CustomError::InvalidLockPercent);
-        
+        // only allow one admin withdraw
+        require!(!auction.is_tokens_withdrawn, CustomError::TokensAlreadyWithdrawn);
+
+        // only proceed if auction is successful
+        let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(auction, Clock::get().unwrap().unix_timestamp, self.global_info.config.min_total_sol);
+        require!(auction_status == AuctionStatus::Succeeded, CustomError::InvalidState);
+        auction.last_status = auction_status;
+        auction.clearing_price = clearing_price_wrapped.unwrap_or(0);
+        msg!("updated auction_status: {:?}", auction.last_status);
+
         // Calculate amount to transfer: (token_balance * lock_percent) / 1000
-        let amount_to_transfer = ((token_balance as u128) * (auction.lock_percent as u128) / 1000) as u64;
-
-        // Transfer all tokens to admin's token account
+        let token_balance = self.auction_token_account.amount;
+        require!(auction.lock_percent <= 1000, CustomError::InvalidLockPercent);
+        let withdrawable = ((token_balance as u128) * (auction.lock_percent as u128) / 1000) as u64;
+        msg!("withdrawable {}", withdrawable);
         token::transfer(
             CpiContext::new_with_signer(
                 self.token_program.to_account_info(),
@@ -90,9 +100,11 @@ impl<'info> WithdrawTokens<'info> {
                     &[bump],
                 ]],
             ),
-            amount_to_transfer,
+            withdrawable,
         )?;
-
+        msg!("Withdrawal successful. Transferred {} tokens to admin.", withdrawable);
+        
+        auction.is_tokens_withdrawn = true;
         Ok(())
     }
 }

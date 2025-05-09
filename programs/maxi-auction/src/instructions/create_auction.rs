@@ -3,6 +3,7 @@ use crate::{
     constants::{AUCTION_DATA_SEED, AUCTION_SOL_SEED, GLOBAL_INFO_SEED, MAX_BIDS, METADATA_SEED},
     events::AuctionCreated,
     states::Bid,
+    states::AuctionStatus,
 };
 use anchor_lang::{prelude::*, system_program};
 use anchor_spl::{
@@ -215,6 +216,13 @@ impl<'info> CreateAuction<'info> {
         auction_data_account.bump = auction_bump;
         auction_data_account.delay_in_seconds = delay_in_seconds;
         auction_data_account.start_price = global_info.config.default_start_price_lamports;
+        if delay_in_seconds > 0 {
+            auction_data_account.last_status = AuctionStatus::Pending;
+        } else {
+            auction_data_account.last_status = AuctionStatus::Live;
+        }
+        auction_data_account.is_sol_withdrawn = false;
+        auction_data_account.is_tokens_withdrawn = false;
 
         global_info.auctions_num = auction_id + 1;
 

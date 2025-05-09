@@ -1,6 +1,6 @@
 [package]
 name = "maxi-auction"
-version = "0.1.2"
+version = "0.2.0"
 description = "Maxi Meme Yo!"
 edition = "2021"
 

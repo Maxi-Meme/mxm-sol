@@ -46,9 +46,23 @@ const DB_CONFIG: sql.config = {
 // https://github.com/raydium-io/raydium-sdk-V2-demo/tree/master/src/amm
 export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: boolean, auctionId: number, adminKp: Keypair, connection: Connection) => {
 
+  // TODO: this test thereshold for prod, i.e. 1b + 6 decimals
+  //       need to make sure config.TEST_MINTOTAL_SOL > this, so bidders can claim back their tokens
+  const MIN_SOL_LIQ = 0.001 * LAMPORTS_PER_SOL; // assumes avg. 50 base tokens supplied with 3 decimals, i.e. test case setup
+
   // Withdraw tokens (some) & sol (all) to admin
   const { solAmount: solWithdrawn, tokenAmount: tokensWithdrawn, tokenMint, adminTokenAccount } = await withdrawFunds(program, isMainnet, auctionId, adminKp, connection);
+  const mintAccount = await getMint(connection, tokenMint);
   console.log(`migrateAuction => Withdrawn ${solWithdrawn.toString()} lamports and ${tokensWithdrawn.toString()} tokens`);
+
+  console.log(`solWithdrawn`, solWithdrawn.toString());
+  console.log(`MIN_SOL_LIQ`, MIN_SOL_LIQ);
+  console.log(`tokensWithdrawn (tokens)`, (tokensWithdrawn / BigInt(10 ** mintAccount.decimals)).toString());
+  if (solWithdrawn < MIN_SOL_LIQ) { // to satsify min raydium fixed product 
+
+
+    throw new Error('solWithdrawn is too low');
+  }
 
   // Wrap all admin's SOL 
   const adminWsolAccount = await getOrCreateAssociatedTokenAccount(connection, adminKp, new PublicKey(TOKEN_WSOL.address), adminKp.publicKey);
@@ -60,6 +74,7 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
     }),
     createSyncNativeInstruction(adminWsolAccount.address)
   );
+
   wrapTx.feePayer = adminKp.publicKey;
   wrapTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
   const wrapSig = await sendAndConfirmTransaction(connection, wrapTx, [adminKp]);
@@ -104,7 +119,9 @@ async function withdrawFunds(program: Program<MaxiAuction>, isMainnet: boolean, 
     })
     .signers([adminKp])
     .rpc();
+  await logSuccessTx(connection, withdrawSolSig, `withdrawSol TX`);
   console.log(`withdrawFunds -> ${withdrawSolSig} migrateAuction (${auctionId}) => Withdrawn SOL`);
+
   const solAfter = BigInt(await connection.getBalance(auctionSol));
   const solWithdrawn = solBefore - solAfter;
 
@@ -121,6 +138,7 @@ async function withdrawFunds(program: Program<MaxiAuction>, isMainnet: boolean, 
     })
     .signers([adminKp])
     .rpc();
+  await logSuccessTx(connection, withdrawTokenSig, `withdrawTokens TX`);
   console.log(`withdrawFunds -> ${withdrawTokenSig} migrateAuction (${auctionId}) => Withdrawn tokens`);
   const tokenAfter = BigInt((await connection.getTokenAccountBalance(auctionTokenAccount)).value.amount);
   const tokenWithdrawn = tokenBefore - tokenAfter;
@@ -160,15 +178,14 @@ async function createAndFundPool(program: Program<MaxiAuction>, isMainnet: boole
   const { baseMint, quoteMint } = MARKET_STATE_LAYOUT_V3.decode(marketBufferInfo.data);
   const baseMintInfo = await raydium.token.getTokenInfo(baseMint);
   const quoteMintInfo = await raydium.token.getTokenInfo(quoteMint);
-  if (baseMintInfo.programId !== TOKEN_PROGRAM_ID.toBase58() ||
-    quoteMintInfo.programId !== TOKEN_PROGRAM_ID.toBase58()) {
-    throw new Error('Base or quote mint is not a supported token type');
+  if (baseMintInfo.programId !== TOKEN_PROGRAM_ID.toBase58() || quoteMintInfo.programId !== TOKEN_PROGRAM_ID.toBase58()) {
+    throw new Error('base or quote mint is not a supported token type');
   }
   const baseAmount = new BN(tokenAmount.toString());
   const quoteAmount = new BN(solAmount.toString());
-  console.log(`createAndFundPool -> baseAmount`, baseAmount.toString());
-  console.log(`createAndFundPool -> quoteAmount`, quoteAmount.toString());
-  if (baseAmount.mul(quoteAmount).lte(new BN(1).mul(new BN(10 ** baseMintInfo.decimals)).pow(new BN(2)))) {
+  console.log(`createAndFundPool -> baseAmount (tokens)`, baseAmount.toString());
+  console.log(`createAndFundPool -> quoteAmount (sol)`, quoteAmount.div(new BN(LAMPORTS_PER_SOL)).toString());
+  if (baseAmount.mul(quoteAmount).lte(new BN(1).mul(new BN(10 ** baseMintInfo.decimals)).pow(new BN(2)))) { // need 1 sol for 1b tokens at 10^9 decimals
     throw new Error('initial liquidity too low');
   }
   const { execute: execCP, extInfo: extInfoCP } = await raydium.liquidity.createPoolV4({
@@ -237,3 +254,56 @@ export const updateKeyPairPoolInfo = async (tokenMint, marketInfo, poolKeys, mar
   }
 };
 
+async function logSuccessTx(connection, sig, label) {
+  const txDetails = await getTransactionDetailsWithRetry(connection, sig);
+  logObject("txDetails", txDetails);
+  console.log("txDetails", txDetails);
+  if (txDetails && txDetails.meta && txDetails.meta.logMessages) {
+    console.log("Transaction logs:", txDetails.meta.logMessages);
+  } else {
+    console.log("No logs available for this transaction.");
+  }
+}
+
+async function getTransactionDetailsWithRetry(connection, signature, maxAttempts = 5, retryDelay = 1000) {
+  let txDetails = null;
+  let attempts = 0;
+
+  while (txDetails === null && attempts < maxAttempts) {
+    txDetails = await connection.getTransaction(signature, { commitment: 'confirmed' });
+    if (txDetails === null) {
+      console.log(`Transaction details not yet available for signature ${signature}, retrying in ${retryDelay / 1000} second(s)...`);
+      await sleep(retryDelay / 1000);
+    }
+    attempts++;
+  }
+
+  if (txDetails === null) {
+    throw new Error(`Failed to fetch transaction details for signature ${signature} after ${maxAttempts} attempts`);
+  }
+
+  return txDetails;
+}
+
+const sleep = async (secs) => {
+  await new Promise(resolve => setTimeout(resolve, secs * 1000));
+}
+
+function convertValue(value) {
+  if (value instanceof BN) {
+    return value.toString(10);
+  } else if (value instanceof PublicKey) {
+    return value.toBase58();
+  } else if (Array.isArray(value)) {
+    return value.map(convertValue);
+  } else if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, val]) => [key, convertValue(val)])
+    );
+  }
+  return value;
+}
+function logObject(label, obj) {
+  const convertedObj = convertValue(obj);
+  console.log(label, convertedObj);
+}

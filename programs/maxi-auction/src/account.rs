@@ -29,4 +29,6 @@ pub struct Auction {
     pub start_price: u64,     // 8
     pub clearing_price: u64,  // 8
     pub last_status: AuctionStatus, // 1
+    pub is_sol_withdrawn: bool, // 1
+    pub is_tokens_withdrawn: bool, // 1
 }

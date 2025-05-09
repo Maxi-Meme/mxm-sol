@@ -2,7 +2,7 @@
   "address": "8LtRuJTqwS24783ptqy3m5HqRKaVqXPnrdRcHwdFHfiW",
   "metadata": {
     "name": "maxi_auction",
-    "version": "0.1.2",
+    "version": "0.2.0",
     "spec": "0.1.0",
     "description": "Maxi Meme Yo!"
   },
@@ -1164,6 +1164,21 @@
       "code": 6022,
       "name": "InternalError",
       "msg": "Iternal Error."
+    },
+    {
+      "code": 6023,
+      "name": "InvalidState",
+      "msg": "Invalid State."
+    },
+    {
+      "code": 6024,
+      "name": "SolAlreadyWithdrawn",
+      "msg": "SOL already withdrawn."
+    },
+    {
+      "code": 6025,
+      "name": "TokensAlreadyWithdrawn",
+      "msg": "Tokens already withdrawn."
     }
   ],
   "types": [
@@ -1249,6 +1264,14 @@
                 "name": "AuctionStatus"
               }
             }
+          },
+          {
+            "name": "is_sol_withdrawn",
+            "type": "bool"
+          },
+          {
+            "name": "is_tokens_withdrawn",
+            "type": "bool"
           }
         ]
       }

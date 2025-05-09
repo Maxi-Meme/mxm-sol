@@ -31,45 +31,57 @@ pub struct CancelBid<'info> {
     pub system_program: Program<'info, System>,
 }
 
-//
-// for ongoing auctions:
-// returns the bidder's SOL - only available during the auction timespan
-//
-impl<'info> CancelBid<'info> { 
+impl<'info> CancelBid<'info> {
     pub fn process(&mut self) -> Result<()> {
-        //msg!("Calling cancel_bid for auction {}", self.auction_data_account.id);
         let auction = &mut self.auction_data_account;
         let caller = self.caller.key();
 
-        // Abort if the auction has finished (any state)
+        // Update and log auction finished status
+        if Clock::get()?.unix_timestamp >= auction.end_timestamp {
+            auction.is_finished = true;
+            msg!("Auction marked as finished");
+        }
+        
+        // Abort if the auction has finished
         require!(!auction.is_finished, CustomError::AuctionEnded);
 
         // Abort if liquidity has already been moved
-        require!(!(auction.bids.len() > 0 && self.auction_sol_account.lamports() == 0), CustomError::AuctionLiquidityMoved);
+        require!(
+            !(auction.bids.len() > 0 && self.auction_sol_account.lamports() == 0),
+            CustomError::AuctionLiquidityMoved
+        );
 
-        // Find the index of the caller's bid
-        let bid_index = auction.bids.iter().position(|b| b.bidder == caller);
-        if bid_index.is_none() {
+        let mut total_refund: u64 = 0;
+        let mut bids_cancelled = 0;
+        let mut i = 0;
+
+        // Iterate through the bids and remove all bids from the caller
+        while i < auction.bids.len() {
+            if auction.bids[i].bidder == caller {
+                let bid = auction.bids.remove(i);
+                // Calculate refund: (quantity * price) - fee
+                let product = bid.bid_qty
+                    .checked_mul(bid.bid_sol)
+                    .ok_or(CustomError::CalculationError)?;
+                let refund_amount = product
+                    .checked_sub(bid.bid_fee)
+                    .ok_or(CustomError::CalculationError)?;
+                total_refund = total_refund
+                    .checked_add(refund_amount)
+                    .ok_or(CustomError::CalculationError)?;
+                bids_cancelled += 1;
+                // Do not increment i since the next element shifts into the current position
+            } else {
+                i += 1;
+            }
+        }
+
+        // If no bids were found for the caller, return an error
+        if bids_cancelled == 0 {
             return err!(CustomError::NoBidFoundForCaller);
         }
-        let bid_index = bid_index.unwrap();
-        let bid = &auction.bids[bid_index];
 
-        //msg!("Sending SOL to bidder: {}", bid.bidder);
-        //msg!("bid.bid_qty: {}", bid.bid_qty);
-        //msg!("bid.bid_sol: {}", bid.bid_sol);
-        //msg!("bid.bid_fee: {}", bid.bid_fee);
-
-        // Calculate refund amount with overflow/underflow protection
-        let product = bid.bid_qty
-            .checked_mul(bid.bid_sol)
-            .ok_or(CustomError::CalculationError)?;
-        let refund_amount = product
-            .checked_sub(bid.bid_fee)
-            .ok_or(CustomError::CalculationError)?;
-        //msg!("refund_amount: {}", refund_amount);
-
-        // Transfer the refund back to the caller
+        // Transfer the total refund to the caller in one transaction
         sol_transfer_with_signer(
             self.auction_sol_account.clone().to_account_info(),
             self.caller.to_account_info(),
@@ -79,21 +91,21 @@ impl<'info> CancelBid<'info> {
                 auction.id.to_le_bytes().as_ref(),
                 &[auction.bump],
             ]],
-            refund_amount,
+            total_refund,
         )?;
 
-        // Remove the specific bid
-        auction.bids.remove(bid_index);
-
-        // Emit the cancellation event
+        // Emit a single event indicating the caller's bids were cancelled
         emit!(BidCancelled {
             auction_id: auction.id,
             bidder: caller,
         });
 
-        // Update status & clearing price
-        let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(auction, Clock::get().unwrap().unix_timestamp, self.global_info.config.min_total_sol);
-        msg!("updated auction_status: {:?}", auction_status);
+        // Update auction status and clearing price based on remaining bids
+        let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(
+            auction,
+            Clock::get().unwrap().unix_timestamp,
+            self.global_info.config.min_total_sol,
+        );
         auction.last_status = auction_status;
         auction.clearing_price = clearing_price_wrapped.unwrap_or(0);
 

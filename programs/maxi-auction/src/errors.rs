@@ -73,4 +73,14 @@ pub enum CustomError {
 
     #[msg("Iternal Error.")]
     InternalError,
+
+    #[msg("Invalid State.")]
+    InvalidState,
+
+    #[msg("SOL already withdrawn.")]
+    SolAlreadyWithdrawn,
+
+    #[msg("Tokens already withdrawn.")]
+    TokensAlreadyWithdrawn,
+    
 }
