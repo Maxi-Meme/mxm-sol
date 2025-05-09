@@ -75,16 +75,17 @@ impl<'info> PlaceBid<'info> {
 
         // Calculate 1% fee and amount for auction account
         let fee = total_cost / 100; // 1% fee, integer division rounds down
-        let rent = Rent::get()?.minimum_balance(165); // For an ATA
-        let final_fee = fee.max(rent); // Use the higher of fee or rent        
+        //let rent = Rent::get()?.minimum_balance(165); // For an ATA
+        //let final_fee = fee.max(rent); // Use the higher of fee or rent        
+        let final_fee = fee;
         let auction_amount = total_cost - final_fee;
 
-        //msg!("bid_quantity: {}", bid_quantity);
-        //msg!("current_price: {}", current_price);
-        //msg!("remaining_tokens: {}", remaining_tokens);
-        //msg!("total_cost: {}", total_cost);
-        //msg!("auction_amount: {}", auction_amount);
-        //msg!("final_fee: {}", final_fee);
+        /*msg!("bid_quantity: {}", bid_quantity);
+        msg!("current_price: {}", current_price);
+        msg!("remaining_tokens: {}", remaining_tokens);
+        msg!("total_cost: {}", total_cost);
+        msg!("auction_amount: {}", auction_amount);
+        msg!("final_fee: {}", final_fee);*/
 
         // auction amount to auction_sol_account
         sol_transfer_user(

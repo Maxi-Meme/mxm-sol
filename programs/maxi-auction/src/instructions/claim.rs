@@ -29,7 +29,7 @@ pub struct Claim<'info> {
     pub token_mint: Account<'info, Mint>,
 
     #[account(
-        init,
+        init_if_needed,
         payer = caller,
         associated_token::mint = token_mint,
         associated_token::authority = caller
