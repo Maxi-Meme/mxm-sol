@@ -83,7 +83,7 @@ impl<'info> WithdrawSol<'info> {
         let rent_exempt_minimum = rent.minimum_balance(0); // 0 data size for auction_sol_account
         let balance = self.auction_sol_account.lamports();
         let base_withdrawable = balance.saturating_sub(total_unclaimed_refunds);
-        let amount_to_transfer = base_withdrawable.saturating_sub(rent_exempt_minimum);
+        let amount_to_transfer = base_withdrawable.saturating_sub(/*rent_exempt_minimum*/0); // empty is cleaner
         msg!("auction_sol_account balance: {}", balance);
         msg!("Total unclaimed refunds: {}", total_unclaimed_refunds);
         msg!("Rent exempt minimum: {}", rent_exempt_minimum);

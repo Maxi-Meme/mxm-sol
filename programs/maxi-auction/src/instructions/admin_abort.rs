@@ -93,7 +93,7 @@ impl<'info> AdminAbort<'info> {
         let sol_balance = self.auction_sol_account.lamports();
         let rent = Rent::get()?;
         let rent_exempt_minimum = rent.minimum_balance(0); // no data
-        let withdrawable = sol_balance.saturating_sub(rent_exempt_minimum);
+        let withdrawable = sol_balance.saturating_sub(/*rent_exempt_minimum*/0); // can we do this?
         if withdrawable > 0 {
             let transfer_instruction = solana_program::system_instruction::transfer(
                 &self.auction_sol_account.key,

@@ -62,6 +62,7 @@ import { migrateAuction } from "./migrate-auction"
 import { bs58 } from "@coral-xyz/anchor/dist/cjs/utils/bytes";
 import "dotenv/config";
 import * as sql from "mssql";
+//import { program } from "@coral-xyz/anchor/dist/cjs/native/system";
 
 const DB_CONFIG: sql.config = {
   user: process.env.DB_USERNAME,
@@ -97,8 +98,13 @@ var CONTRACT_CONFIG: any;
 const auctionFilledPromises = new Map();
 var MOVELIQ_PAUSE = false;
 
+// admin & test keypairs
+var program: Program<MaxiAuction>;
+var adminKp: Keypair;
+var USER_KPs: Keypair[];
+
 describe("maxi-auction", () => {
-  // setup provider
+  // setup provider & program
   var providerEnv = anchor.AnchorProvider.env();
   anchor.setProvider(providerEnv);
   console.log("rpcEndpoint URL:", providerEnv.connection.rpcEndpoint);
@@ -108,12 +114,10 @@ describe("maxi-auction", () => {
   console.log("isLocal", isLocal);
   console.log("isDevnet", isDevnet);
   console.log("isMainnet", isMainnet);
-
   connection = providerEnv.connection;
-  //console.log("connection", connection);
-  const program = anchor.workspace.MaxiAuction as Program<MaxiAuction>;
+  program = anchor.workspace.MaxiAuction as Program<MaxiAuction>;
 
-  // Listen for logs from your program
+  // add log listener
   const seenLogs = new Map();
   connection.onLogs(program.programId, (logs) => {
     logs.logs.forEach((log) => {
@@ -125,24 +129,15 @@ describe("maxi-auction", () => {
         }
       }
     });
-  }, 'finalized'
-  );
+  }, 'finalized');
 
-  // add listeners
+  // add eventlisteners
   console.log("Setting up listeners...");
-
-  program.addEventListener("auctionCreated", (event) => {
-    logObject(">>> auctionCreated", event);
-  });
-
-  program.addEventListener("newBid", (event) => {
-    logObject(">>> newBid", event);
-  });
-
-  program.addEventListener("bidCancelled", (event) => {
-    logObject(">>> bidCancelled", event);
-  });
-
+  program.addEventListener("auctionCreated", (event) => { logObject(">>> auctionCreated", event); });
+  program.addEventListener("newBid", (event) => { logObject(">>> newBid", event) });
+  program.addEventListener("bidCancelled", (event) => { logObject(">>> bidCancelled", event) });
+  program.addEventListener("claimed", (event) => { logObject(">>> claimed", event); });
+  program.addEventListener("auctionMigrated", (event) => { logObject(">>> auctionMigrated", event); });
   program.addEventListener("auctionFilled", async (event) => {
     logObject(">>> auctionFilled", event);
 
@@ -195,21 +190,12 @@ describe("maxi-auction", () => {
       }
       console.error(`Timeout waiting for resolver for auctionId: ${auctionId}`);
       return null; // Return null if resolver isn't found within timeout
-    }    
-  });
-
-  program.addEventListener("claimed", (event) => {
-    logObject(">>> claimed", event);
-  });
-
-  program.addEventListener("auctionMigrated", (event) => {
-    logObject(">>> auctionMigrated", event);
-  });
+    }
+  });  
 
   // setup fixed admin keypair, and new random user keypairs
-  const adminKp = Keypair.fromSecretKey(Uint8Array.from(keypair));
-  const USER_KPs = [];
-
+  adminKp = Keypair.fromSecretKey(Uint8Array.from(keypair));
+  USER_KPs = [];
   for (var i = 0; i < 3; i++) {
     USER_KPs[i] = isLocal
       ? Keypair.generate()
@@ -422,10 +408,12 @@ describe("maxi-auction", () => {
     const successfulResults = results.filter(result => result !== null);
 
     // KILL EM ALL
-    successfulResults.forEach(result => {
-      console.log(`Auction ID: ${result.auctionId}, Status: ${JSON.stringify(result.status)}, SOL: ${result.solBalance}, Tokens: ${result.tokenBalance}`);
+    successfulResults.forEach(async (result) => {
+      console.log(`Auction ID: ${result.auctionId.toString().padEnd(3)}, ${(result.isAdminAborted ? "isAdminAborted=1" : "").padEnd(15)} Status: ${result.status.padEnd(20)}, SOL: ${result.solBalance}, Tokens: ${result.tokenBalance}`);
       //...
     });
+
+    await abortAuction(0);
   });
 
   it("claims - min total sol not reached", async () => {
@@ -668,7 +656,9 @@ describe("maxi-auction", () => {
     else {
       // liqmove happened and claims happened...
       console.log(`auctionSolBalance`, auctionSolBalance.toString() / LAMPORTS_PER_SOL);
-      assert.equal(BigInt(auctionSolBalance) < BigInt(0.001 * LAMPORTS_PER_SOL), true, "should be (nearly) no sol left in the auction"); // life is suffering
+
+      assert.equal(//BigInt(auctionSolBalance) < BigInt(0.001 * LAMPORTS_PER_SOL),  // life is suffering
+        auctionSolBalance.toString() == "0", "should be no sol left in the auction");
     }
   }
 
@@ -1878,10 +1868,69 @@ async function getAuctionDetails(auctionId, connection, program, auctionDataSeed
       solBalance: solInSol,
       tokenBalance: tokenAmount,
       status,
+      isAdminAborted: auction.isAdminAborted,
     };
     return details;
   } catch (error) {
     console.error(`Error fetching details for auction ID ${auctionId}:`, error);
     return null; // Return null for failed queries to filter later
   }
+}
+
+async function abortAuction(auctionId) {
+  const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+  const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+  const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+  const auction = await program.account.auction.fetch(auctionData);
+  const tokenMint = auction.tokenMint;
+  const auctionTokenAccount = await getAssociatedTokenAddress(tokenMint, auctionSol, true); // Allow off-curve for PDA
+  const adminTokenAccount = await getAssociatedTokenAddress(tokenMint, adminKp.publicKey);
+  const feeAccount = TEST_FEE_ACCOUNT;
+
+  // Log initial state for debugging
+  logger.color("magenta").log(`Admin is aborting auction ${auctionId}...`);
+  const auctionSolBalanceBefore = await connection.getBalance(auctionSol);
+  const auctionTokenBalanceBefore = await connection.getTokenAccountBalance(auctionTokenAccount);
+  console.log(`Before abort - Auction SOL: ${(auctionSolBalanceBefore / LAMPORTS_PER_SOL).toFixed(6)} SOL, Tokens: ${auctionTokenBalanceBefore.value.uiAmount}`);
+
+  // ensure admin token account exists
+  await getOrCreateAssociatedTokenAccount(connection, adminKp, tokenMint, adminKp.publicKey);
+
+  // Construct and send the transaction
+  const tx = await program.methods
+    .adminAbort()
+    .accounts({
+      admin: adminKp.publicKey,
+      feeAccount: feeAccount.publicKey,
+      auctionDataAccount: auctionData,
+      auctionSolAccount: auctionSol,
+      auctionTokenAccount: auctionTokenAccount,
+      adminTokenAccount: adminTokenAccount,
+    })
+    .signers([adminKp, feeAccount]) // dual sig
+    .transaction();
+  tx.feePayer = adminKp.publicKey;
+  tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+  const sig = await sendAndConfirmTransaction(connection, tx, [adminKp, feeAccount]);
+  await logSuccessTx(connection, sig, "adminAbort");
+
+  // Log post-abort state for verification
+  const auctionSolBalanceAfter = await connection.getBalance(auctionSol);
+  let auctionTokenBalanceAfter;
+  try {
+    auctionTokenBalanceAfter = await connection.getTokenAccountBalance(auctionTokenAccount);
+  } catch (error) {
+    if (error.message.includes("could not find account")) {
+      auctionTokenBalanceAfter = { value: { uiAmount: 0 } }; // Account closed
+    } else {
+      throw error;
+    }
+  }
+  console.log(`After abort - Auction SOL: ${(auctionSolBalanceAfter / LAMPORTS_PER_SOL).toFixed(6)} SOL, Tokens: ${auctionTokenBalanceAfter.value.uiAmount}`);
+
+  // Basic validation
+  assert.ok(auctionSolBalanceAfter < auctionSolBalanceBefore, "Auction SOL balance should decrease after abort");
+  assert.equal(auctionTokenBalanceAfter.value.uiAmount, 0, "Auction token balance should be zero after abort");
+
+  console.log(`Auction ${auctionId} aborted successfully.`);
 }
