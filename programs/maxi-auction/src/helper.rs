@@ -62,7 +62,7 @@ pub(crate) fn get_status_and_clearing_price(
     let total_sol_after_fees = total_sol_after_fees_opt.unwrap_or(0);
 
     // Calculate total unclaimed refunds
-    let mut total_unclaimed_refunds = 0u64;
+    let mut total_change = 0u64;
     let clearing_price_tmp; // our best guess at the clearing price
     if auction.bids.is_empty() {
         clearing_price_tmp = 0; // no bids yet, no clearing price
@@ -70,7 +70,7 @@ pub(crate) fn get_status_and_clearing_price(
         clearing_price_tmp = auction.bids.last().unwrap().bid_sol; // use the last bid as the price
     }
     for bid in auction.bids.iter() {
-        if !bid.is_claimed {
+        //if !bid.is_claimed {
             let paid = bid.bid_qty * bid.bid_sol - bid.bid_fee;
             let exact = if clearing_price_tmp == 0 {
                 bid.bid_qty * bid.bid_sol
@@ -78,12 +78,12 @@ pub(crate) fn get_status_and_clearing_price(
                 bid.bid_qty * clearing_price_tmp
             };
             let owed = paid.saturating_sub(exact);
-            total_unclaimed_refunds += owed;
-        }
+            total_change += owed;
+        //}
     }
 
     // Calculate net_sol_raised before rent exemption
-    let net_sol_raised_before_rent = total_sol_after_fees.saturating_sub(total_unclaimed_refunds);
+    let net_sol_raised_before_rent = total_sol_after_fees.saturating_sub(total_change);
 
     // Derive rent exemption for a 0-byte account
     let rent = Rent::get().unwrap(); // Fetch current rent rules
@@ -99,10 +99,10 @@ pub(crate) fn get_status_and_clearing_price(
     msg!("get_status_and_clearing_price -              supply_qty: {}", supply_qty);
     msg!("get_status_and_clearing_price -    total_sol_after_fees: {}", total_sol_after_fees);
     msg!("get_status_and_clearing_price -      clearing_price_tmp: {}", clearing_price_tmp);
-    msg!("get_status_and_clearing_price - total_unclaimed_refunds: {}", total_unclaimed_refunds);
+    msg!("get_status_and_clearing_price -            total_change: {}", total_change);
     msg!("get_status_and_clearing_price -     rent_exempt_minimum: {}", rent_exempt_minimum);
-    msg!("get_status_and_clearing_price -          net_sol_raised: {}", net_sol_raised);
-    msg!("get_status_and_clearing_price -           MIN_TOTAL_SOL: {}", min_total_sol);
+    msg!("get_status_and_clearing_price -          net_sol_raised: {}", net_sol_raised); // this must be >
+    msg!("get_status_and_clearing_price -           MIN_TOTAL_SOL: {}", min_total_sol);  // than this
 
     // Assign status
     let status = if allocated_qty >= supply_qty && net_sol_raised >= min_total_sol {
