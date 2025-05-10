@@ -395,7 +395,10 @@ describe("maxi-auction", () => {
     await test_admin_withdraws({ n_bids: 2, withdraw_tokens: true, withdraw_sol: false, fill_auction: true });
   });
 
-  it("admin - list auctions", async () => {
+  //
+  // todo - refactor these to get all pool infos in one call (it's supported: [] if inputs) // "You have exceeded the rate limit of 30 requests per minute."
+  //
+  it("admin - list auctions & pools", async () => {
     // get all auctions
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
@@ -412,26 +415,6 @@ describe("maxi-auction", () => {
       await logAuctionDetails(x);
     });
   })
-
-  async function logAuctionDetails(x) {
-    const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: false, blockhashCommitment: 'finalized', });
-    const poolDbInfo = await getMarketAndPoolInfo(x.tokenMintPublicKey);
-    var poolPpcInfo = undefined;
-    if (poolDbInfo.pool_id) {
-      const rpcResult = await raydium.liquidity.getRpcPoolInfos([poolDbInfo.pool_id]);
-      poolPpcInfo = Object.values(rpcResult)[0];
-    }
-    const poolPrice = Number(poolPpcInfo?.poolPrice);
-    const baseReserve = new BN(poolPpcInfo?.baseReserve, 16);
-    const quoteReserve = new BN(poolPpcInfo?.quoteReserve, 16);
-    console.log(`ID: ${x.auctionId.toString().padEnd(3)}, [${x.status.padEnd(20)}], SOL: ${x.solBalance}, Tokens: ${x.tokenBalance}, Mint: ${x.tokenMintPublicKey}` +
-      (poolPpcInfo
-        ? ` > ${poolDbInfo.pool_id} price: ${poolPrice.toFixed(6)} >> LIQ: [${baseReserve.toString()} T-lamports, ${Number(quoteReserve.toString()) / LAMPORTS_PER_SOL} WSOL]`
-        : '')
-    );
-    return { poolDbInfo, poolPpcInfo };
-  };
-
   it("admin - remove liquidity from pools ### ACHTUNG ###", async () => {
     // get all auctions
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
@@ -536,8 +519,6 @@ describe("maxi-auction", () => {
 
             console.log("AFTER:")
             await logAuctionDetails(x);
-
-            // admin before sol: 216.09917...
           }
         }
         catch (err) {
@@ -546,6 +527,24 @@ describe("maxi-auction", () => {
       }
     });
   });
+  async function logAuctionDetails(x) {
+    const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: false, blockhashCommitment: 'finalized', });
+    const poolDbInfo = await getMarketAndPoolInfo(x.tokenMintPublicKey);
+    var poolPpcInfo = undefined;
+    if (poolDbInfo.pool_id) {
+      const rpcResult = await raydium.liquidity.getRpcPoolInfos([poolDbInfo.pool_id]);
+      poolPpcInfo = Object.values(rpcResult)[0];
+    }
+    const poolPrice = Number(poolPpcInfo?.poolPrice);
+    const baseReserve = new BN(poolPpcInfo?.baseReserve, 16);
+    const quoteReserve = new BN(poolPpcInfo?.quoteReserve, 16);
+    console.log(`ID: ${x.auctionId.toString().padEnd(3)}, [${x.status.padEnd(20)}], SOL: ${x.solBalance}, Tokens: ${x.tokenBalance}, Mint: ${x.tokenMintPublicKey}` +
+      (poolPpcInfo
+        ? ` > ${poolDbInfo.pool_id} price: ${poolPrice.toFixed(6)} >> LIQ: [${baseReserve.toString()} T-lamports, ${Number(quoteReserve.toString()) / LAMPORTS_PER_SOL} WSOL]`
+        : '')
+    );
+    return { poolDbInfo, poolPpcInfo };
+  };  
 
   it("admin - abort all auctions ### ACHTUNG ###", async () => {
     // get all auctions

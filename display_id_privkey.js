@@ -1,5 +1,5 @@
 const fs = require('fs').promises; // Use promises for async file reading
-const bs58 = require('bs58').default; // Base58 encoding library
+const bs58 = require('bs58'); // Base58 encoding library
 
 async function convertKeypairToBase58(filePath = './id.json') {
   try {
