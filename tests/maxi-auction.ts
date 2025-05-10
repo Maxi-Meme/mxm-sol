@@ -93,7 +93,9 @@ const DEVNET_USER_KEYPAIRS = [
 ]
 var CONTRACT_CONFIG: any;
 
+// moveliq callback 
 const auctionFilledPromises = new Map();
+var MOVELIQ_PAUSE = false;
 
 describe("maxi-auction", () => {
   // setup provider
@@ -154,7 +156,12 @@ describe("maxi-auction", () => {
       const [auctionData] = PublicKey.findProgramAddressSync(
         [Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
       const auctionDataAccount = await program.account.auction.fetch(auctionData);
-      //logObject("auctionDataAccount", auctionDataAccount);
+
+      // pause if caller requested (to change order of moveliq in the flow)
+      while (MOVELIQ_PAUSE == true) {
+        console.log("waiting for MOVELIQ_PAUSE semaphore to be cleared...");
+        await sleep(1000);
+      }
 
       // Process migration and resolve the promise
       migrateAuction(program, isMainnet, auctionId, adminKp, connection)
@@ -280,16 +287,16 @@ describe("maxi-auction", () => {
 
   it("base - places a bid", async () => {
     await test_create_auction_KP0();
-    await test_bid_auction(0.1);
+    await test_bid_auction({ fill_percent: 0.1 });
   });
 
   it("cancels - only during auction period", async () => {
     await test_create_auction_KP0(0.05, 1); // 36s
 
-    const bidResult1 = await test_bid_auction(0.1, USER_KPs[1]);
+    const bidResult1 = await test_bid_auction({ fill_percent: 0.1, bidderKp: USER_KPs[1] });
     await test_cancel_bid(USER_KPs[1]); // cancel the first bid within the auction period (should succeed)
 
-    const bidResult2 = await test_bid_auction(0.1, USER_KPs[2]);
+    const bidResult2 = await test_bid_auction({ fill_percent: 0.1, bidderKp: USER_KPs[2] });
     logger.color("magenta").log("sleeping 36s...");
     await sleep(36);
 
@@ -316,8 +323,8 @@ describe("maxi-auction", () => {
   it("cancels - bids from different users", async () => {
     await test_create_auction_KP0();
 
-    const bidResult1 = await test_bid_auction(0.5, USER_KPs[1]);
-    const bidResult2 = await test_bid_auction(0.3, USER_KPs[2]);
+    const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
+    const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[2] });
 
     await test_cancel_bid(USER_KPs[1]);
     let { auctionSol, } = await test_cancel_bid(USER_KPs[2]);
@@ -330,16 +337,16 @@ describe("maxi-auction", () => {
   it("cancels - bids from same user", async () => {
     await test_create_auction_KP0();
 
-    await test_bid_auction(0.5, USER_KPs[1]);
-    await test_bid_auction(0.3, USER_KPs[1]);
+    await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
+    await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
 
     let { auctionSol: auctionSol1, } = await test_cancel_bid(USER_KPs[1]);
     const auctionSolBalance1 = await connection.getBalance(auctionSol1);
     assert.equal(auctionSolBalance1 == 0, true, "should be no sol left in the auction");
 
-    await test_bid_auction(0.5, USER_KPs[1]);
-    await test_bid_auction(0.3, USER_KPs[1]);
-    await test_bid_auction(0.1, USER_KPs[2]);
+    await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
+    await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
+    await test_bid_auction({ fill_percent: 0.1, bidderKp: USER_KPs[2] });
 
     let { auctionSol: auctionSol2, } = await test_cancel_bid(USER_KPs[2]);
     const auctionSolBalance2 = await connection.getBalance(auctionSol2);
@@ -352,22 +359,22 @@ describe("maxi-auction", () => {
 
   it("base - user can bid twice", async () => {
     await test_create_auction_KP0();
-    await test_bid_auction(0.1);
-    await test_bid_auction(0.1);
+    await test_bid_auction({ fill_percent: 0.1 });
+    await test_bid_auction({ fill_percent: 0.1 });
   });  
 
   it("fills - auction fully filled", async () => {
     await test_create_auction_KP0();
-    await test_bid_auction(1.0); // fill
+    await test_bid_auction({ fill_percent: 1.0 }); // fill
   });
 
   it("fills - no bids after filled", async () => {
     //if (isLocal) {
     await test_create_auction_KP0();
-      await test_bid_auction(0.5);
-      await test_bid_auction(0.5); // fill auction
+    await test_bid_auction({ fill_percent: 0.5 });
+    await test_bid_auction({ fill_percent: 0.5 }); // fill auction
       try {
-        await test_bid_auction(0.1); // must fail
+        await test_bid_auction({ fill_percent: 0.1 }); // must fail
       }
       catch (err) {
         console.log("Expected Error: ", err);
@@ -402,7 +409,6 @@ describe("maxi-auction", () => {
     await test_admin_withdraws({ n_bids: 2, withdraw_tokens: true, withdraw_sol: false, fill_auction: true });
   });
 
-
   it("claims - min total sol not reached", async () => {
     await test_init(10000); // 10k SOL minimum needed to move liquidity - will cause this auction to finished failed
 
@@ -424,8 +430,8 @@ describe("maxi-auction", () => {
     console.log("Initial token balance:", initialTokens.toString());
 
     // Place bids and capture results for both users
-    const bidResult1 = await test_bid_auction(0.5, USER_KPs[0]);
-    const bidResult2 = await test_bid_auction(0.5, USER_KPs[1]); // Full fill
+    const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
+    const bidResult2 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] }); // Full fill
 
     // Calculate total bids and total fees using returned values
     const totalBids = bidResult1.bidAmountBN.add(bidResult2.bidAmountBN);
@@ -471,8 +477,8 @@ describe("maxi-auction", () => {
 
   it("claims - full supply not bid", async () => {
     await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
-    const bidResult1 = await test_bid_auction(0.5, USER_KPs[0]);
-    const bidResult2 = await test_bid_auction(0.3, USER_KPs[1]);
+    const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
+    const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
     logger.color("magenta").log("sleeping 36s...");
     await sleep(36);
 
@@ -496,9 +502,9 @@ describe("maxi-auction", () => {
   it("claims - one user claims two multiple bids", async () => {
     await test_init(10000); // 10k SOL minimum needed to move liquidity - will cause this auction to finished failed
     await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
-    const bidResult1 = await test_bid_auction(0.5, USER_KPs[1]);
-    const bidResult2 = await test_bid_auction(0.3, USER_KPs[1]);
-    const bidResult3 = await test_bid_auction(0.2, USER_KPs[2]);
+    const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
+    const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
+    const bidResult3 = await test_bid_auction({ fill_percent: 0.2, bidderKp: USER_KPs[2] });
 
     // claim 1 - for 2 bids
     const user1mergedBidResults = {
@@ -521,8 +527,8 @@ describe("maxi-auction", () => {
 
   it("claims - only after auction is finished", async () => {
     await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
-    const bidResult1 = await test_bid_auction(0.5, USER_KPs[1]);
-    const bidResult2 = await test_bid_auction(0.3, USER_KPs[1]);
+    const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
+    const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
 
     try {
       await test_claim_auction(USER_KPs[1], false);
@@ -533,14 +539,6 @@ describe("maxi-auction", () => {
     }
   });
 
-  it("claims - auction creator bids & claims", async () => {
-    await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
-    const bidResult1 = await test_bid_auction(0.5, USER_KPs[0]);
-    const bidResult2 = await test_bid_auction(0.5, USER_KPs[1]);
-
-    await test_claim_auction(USER_KPs[0], true, bidResult1); // creator claims
-  });
-
   it("claims - successful auction", async () => {
     await test_e2e_auction_success();
   });
@@ -549,7 +547,21 @@ describe("maxi-auction", () => {
     await test_e2e_auction_success({ lowClearingPrice: true });
   });
 
-  async function test_e2e_auction_success({ lowClearingPrice = false } = {}) {
+  it("claims - auction creator bids & claims", async () => {
+    await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
+    const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
+    const bidResult2 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
+    await test_claim_auction(USER_KPs[0], true, bidResult1); // creator claims
+  });
+
+  it("admin - withdraws & movesliq after claims", async () => {
+    await test_e2e_auction_success({ migrateAfterClaims: true });
+  });
+
+  async function test_e2e_auction_success({
+    lowClearingPrice = false,
+    migrateAfterClaims = false // default/mainpath is to migrate *before* claims
+  } = {}) {
     await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
 
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
@@ -559,13 +571,19 @@ describe("maxi-auction", () => {
     const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
 
     // bids
-    const bidResult1 = await test_bid_auction(0.5, USER_KPs[0]);
+    const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
+
     await sleep(3);
-    const bidResult2 = await test_bid_auction(0.3, USER_KPs[1]);
+    const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
+
     await sleep(lowClearingPrice ? 20 : 3); // bid at end of auction for low clearing price
-    const bidResult3 = await test_bid_auction(0.2, USER_KPs[2]); // will moveliq on devnet...
+    if (migrateAfterClaims) { // pause moveliq migration if requested
+      MOVELIQ_PAUSE = true;
+    }
+    const bidResult3 = await test_bid_auction({ fill_percent: 0.2, bidderKp: USER_KPs[2], skipMigrationWait: true }); // final bid - will moveliq on devnet...
     assert.deepEqual(bidResult3.auctionPost.lastStatus, { succeeded: {} }, "expected succeeded, got " + JSON.stringify((bidResult3.auctionPost.lastStatus))); // expect this on LAST FILLING BID
 
+    // log state
     var auctionPost = await program.account.auction.fetch(auctionData);
     var auctionSolBalance = await connection.getBalance(auctionSol);
     auctionPost.bids.forEach((bid) => {
@@ -576,6 +594,13 @@ describe("maxi-auction", () => {
     const { solTransferred: solTransferred1, tokensTransferred: tokensTransferred1 } = await test_claim_auction(USER_KPs[0], true, bidResult1);
     const { solTransferred: solTransferred2, tokensTransferred: tokensTransferred2 } = await test_claim_auction(USER_KPs[1], true, bidResult2);
     const { solTransferred: solTransferred3, tokensTransferred: tokensTransferred3 } = await test_claim_auction(USER_KPs[2], true, bidResult3);
+
+    // release moveliq migration if requested
+    if (migrateAfterClaims) {
+      console.log("migrateAfterClaims - releasing moveliq...");
+      MOVELIQ_PAUSE = false;
+      await waitForMigration(auctionId); // with no await earlier for "mixed mode": claims & migration happening at the same time.!
+    }
 
     // first bidder should get change, & tokens
     assert.equal(solTransferred1 > 0, true, "first bidder should get change");
@@ -767,10 +792,10 @@ describe("maxi-auction", () => {
     await test_create_auction_KP0();
     for (var i = 0; i < n_bids; i++) {
       const kp = USER_KPs[i % USER_KPs.length];
-      await test_bid_auction(0.5 / n_bids, kp); // bid up to half supply
+      await test_bid_auction({ fill_percent: 0.5 / n_bids, bidderKp: kp }); // bid up to half supply
     }
     if (fill_auction) {
-      await test_bid_auction(0.5, USER_KPs[0]); // fill auction if requested
+      await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] }); // fill auction if requested
     }
 
     // Step 2: Derive necessary accounts
@@ -1375,7 +1400,12 @@ describe("maxi-auction", () => {
     assert.equal(auctionDataFetched.tokenMint, token.publicKey.toBase58(), "tokenMint comparison");
   }
 
-  async function test_bid_auction(fill_percent = 1.0, bidderKp = USER_KPs[1], useAuctionId = undefined) { // Bid all supply by default, lock 10% for AMM
+  async function test_bid_auction({
+    fill_percent = 1.0, // 0-1
+    bidderKp = USER_KPs[1],
+    useAuctionId = undefined,
+    skipMigrationWait = false
+  }) {
     logger.color("magenta").log(`${bidderKp.publicKey} is bidding...`);
 
     // Derive PDAs
@@ -1413,14 +1443,11 @@ describe("maxi-auction", () => {
     //console.log('bidQtyLamports:', bidQtyLamports.toString());
     console.log('isFinalBid:', isFinalBid);
 
-    // **Step 1: Add event listener for NewBid event**
-    let actualBidFeeBN;
-    const listener = program.addEventListener("newBid", (event) => {
-      actualBidFeeBN = new BN(event.bidFee);
-      //console.log("Captured bid fee from event:", actualBidFeeBN.toString());
-    });
-
     // Place bid transaction
+    let actualBidFeeBN;
+    const newBidListener = program.addEventListener("newBid", (event) => {
+      actualBidFeeBN = new BN(event.bidFee);
+    });
     const tx = await program.methods.placeBid(bidQty, new BN(42))
       .accounts({
         bidder: signer.publicKey,
@@ -1436,22 +1463,20 @@ describe("maxi-auction", () => {
       throw err;
     });
     await logSuccessTx(connection, sig, "placeBid");
-
-    // **Step 2: Remove listener after capturing the event**
-    await program.removeEventListener(listener);
+    await program.removeEventListener(newBidListener);
 
     // Handle final bid with a promise-based semaphore
     if (isFinalBid) {
-      if (isLocal) {
-        console.log("Final bid detected on local network: NOP, no raydium here...");
+      if (!isLocal) {
+        if (!skipMigrationWait) {
+          await waitForMigration(auctionId);
+        }
+        else {
+          console.log("Final Bid - skipping migration wait as requested...");
+        }
       }
       else {
-        console.log("Final bid detected, waiting for auction migration...");
-        const auctionFilledPromise = new Promise((resolve) => {
-          auctionFilledPromises.set(auctionId.toString(), resolve);
-        });
-        await auctionFilledPromise; // Wait for the event listener to resolve the promise
-        console.log("Auction migration completed for auction ID:", auctionId);
+        console.log("Final Bid - local - NOP: no raydium here...");
       }
     }
 
@@ -1788,5 +1813,19 @@ async function setupFeeAccount(connection: Connection, adminKp: Keypair, feeAcco
     await logSuccessTx(connection, sig, "Funding fee account");
   } else {
     console.log(`Fee account already has sufficient balance for rent exemption.`);
+  }
+}
+
+async function waitForMigration(auctionId: number) {
+  if (isLocal) {
+    console.log("waitForMigration - local: NOP, no raydium here...");
+  }
+  else {
+    console.log("waitForMigration - waiting for auction migration...");
+    const auctionFilledPromise = new Promise((resolve) => {
+      auctionFilledPromises.set(auctionId.toString(), resolve);
+    });
+    await auctionFilledPromise; // Wait for the event listener to resolve the promise
+    console.log("waitForMigration -  migration completed for auction ID:", auctionId);
   }
 }
