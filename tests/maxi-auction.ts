@@ -64,6 +64,7 @@ import "dotenv/config";
 import * as sql from "mssql";
 //import { program } from "@coral-xyz/anchor/dist/cjs/native/system";
 
+
 const DB_CONFIG: sql.config = {
   user: process.env.DB_USERNAME,
   password: process.env.DB_PASSWORD,
@@ -191,7 +192,7 @@ describe("maxi-auction", () => {
       console.error(`Timeout waiting for resolver for auctionId: ${auctionId}`);
       return null; // Return null if resolver isn't found within timeout
     }
-  });  
+  });
 
   // setup fixed admin keypair, and new random user keypairs
   adminKp = Keypair.fromSecretKey(Uint8Array.from(keypair));
@@ -346,7 +347,7 @@ describe("maxi-auction", () => {
     await test_create_auction_KP0();
     await test_bid_auction({ fill_percent: 0.1 });
     await test_bid_auction({ fill_percent: 0.1 });
-  });  
+  });
 
   it("fills - auction fully filled", async () => {
     await test_create_auction_KP0();
@@ -358,13 +359,13 @@ describe("maxi-auction", () => {
     await test_create_auction_KP0();
     await test_bid_auction({ fill_percent: 0.5 });
     await test_bid_auction({ fill_percent: 0.5 }); // fill auction
-      try {
-        await test_bid_auction({ fill_percent: 0.1 }); // must fail
-      }
-      catch (err) {
-        console.log("Expected Error: ", err);
-        assert.equal(err.toString().includes("AuctionEnded"), true, "Contract error was expected.");
-      }
+    try {
+      await test_bid_auction({ fill_percent: 0.1 }); // must fail
+    }
+    catch (err) {
+      console.log("Expected Error: ", err);
+      assert.equal(err.toString().includes("AuctionEnded"), true, "Contract error was expected.");
+    }
     //}
     //else {
     //const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
@@ -394,6 +395,158 @@ describe("maxi-auction", () => {
     await test_admin_withdraws({ n_bids: 2, withdraw_tokens: true, withdraw_sol: false, fill_auction: true });
   });
 
+  it("admin - list auctions", async () => {
+    // get all auctions
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const totalAuctions = Number(globalInfoAccount.auctionsNum);
+    console.log(`Total auctions: ${totalAuctions}`);
+    const auctionIds = Array.from({ length: totalAuctions }, (_, i) => i);
+    const promises = auctionIds.map(auctionId =>
+      getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed)
+    );
+    const results = await Promise.all(promises);
+    const successfulResults = results.filter(result => result !== null);
+
+    successfulResults.forEach(async (x) => {
+      await logAuctionDetails(x);
+    });
+  })
+
+  async function logAuctionDetails(x) {
+    const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: false, blockhashCommitment: 'finalized', });
+    const poolDbInfo = await getMarketAndPoolInfo(x.tokenMintPublicKey);
+    var poolPpcInfo = undefined;
+    if (poolDbInfo.pool_id) {
+      const rpcResult = await raydium.liquidity.getRpcPoolInfos([poolDbInfo.pool_id]);
+      poolPpcInfo = Object.values(rpcResult)[0];
+    }
+    const poolPrice = Number(poolPpcInfo?.poolPrice);
+    const baseReserve = new BN(poolPpcInfo?.baseReserve, 16);
+    const quoteReserve = new BN(poolPpcInfo?.quoteReserve, 16);
+    console.log(`ID: ${x.auctionId.toString().padEnd(3)}, [${x.status.padEnd(20)}], SOL: ${x.solBalance}, Tokens: ${x.tokenBalance}, Mint: ${x.tokenMintPublicKey}` +
+      (poolPpcInfo
+        ? ` > ${poolDbInfo.pool_id} price: ${poolPrice.toFixed(6)} >> LIQ: [${baseReserve.toString()} T-lamports, ${Number(quoteReserve.toString()) / LAMPORTS_PER_SOL} WSOL]`
+        : '')
+    );
+    return { poolDbInfo, poolPpcInfo };
+  };
+
+  it("admin - remove liquidity from pools ### ACHTUNG ###", async () => {
+    // get all auctions
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const totalAuctions = Number(globalInfoAccount.auctionsNum);
+    console.log(`Total auctions: ${totalAuctions}`);
+    // ######################
+    const auctionIds = [37]; //Array.from({ length: totalAuctions }, (_, i) => i);
+    // ######################
+    const promises = auctionIds.map(auctionId =>
+      getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed)
+    );
+    const results = await Promise.all(promises);
+    const successfulResults = results.filter(result => result !== null);
+
+    const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: true, blockhashCommitment: 'confirmed', });
+    successfulResults.forEach(async (x) => {
+      const poolDb = await getMarketAndPoolInfo(x.tokenMintPublicKey);
+      var poolPpcInfo = undefined;
+      if (poolDb.pool_id) {
+        const rpcResult = await raydium.liquidity.getRpcPoolInfos([poolDb.pool_id]);
+        poolPpcInfo = Object.values(rpcResult)[0];
+      }
+      if (poolPpcInfo) {
+        try {
+          const poolId = poolDb.pool_id;
+          var lpAta, lpBalance;
+          lpAta = await getAssociatedTokenAddress(new PublicKey(poolPpcInfo.lpMint), adminKp.publicKey, true);
+          lpBalance = await connection.getTokenAccountBalance(lpAta);
+
+          if (lpBalance.value.amount > 0) {
+            console.log("BEFORE:")
+            await logAuctionDetails(x);
+
+            // https://github.com/raydium-io/raydium-sdk-V2-demo/blob/master/src/amm/withdrawLiquidity.ts
+            let poolKeys: AmmV4Keys | undefined
+            let poolInfo: ApiV3PoolInfoStandardItem
+            const withdrawLpAmount = new BN(lpBalance.value.amount);
+            const isMainnet = false;
+            if (isMainnet) {
+              console.log(`raydium.api.fetchPoolById: `, poolInfo);
+              // note: api doesn't support get devnet pool info, so in devnet else we go rpc method
+              // if you wish to get pool info from rpc, also can modify logic to go rpc method directly
+              const data = await raydium.api.fetchPoolById({ ids: poolId })
+              poolInfo = data[0] as ApiV3PoolInfoStandardItem
+            } else {
+              // note: getPoolInfoFromRpc method only return required pool data for computing not all detail pool info
+              console.log(`raydium.liquidity.getPoolInfoFromRpc: `, poolInfo);
+              const data = await raydium.liquidity.getPoolInfoFromRpc({ poolId })
+              poolInfo = data.poolInfo
+              poolKeys = data.poolKeys
+            }
+            if (!poolInfo) {
+              console.log(`poolInfo is undefined for auction ID ${x.auctionId}`);
+              throw new Error('poolInfo is undefined for auction ID ${x.auctionId}');
+            }
+
+            if (!isValidAmm(poolInfo.programId)) {
+              console.log(`target pool is not AMM pool`);
+              throw new Error('target pool is not AMM pool')
+            }
+            const [baseRatio, quoteRatio] = [
+              new Decimal(poolInfo.mintAmountA).div(poolInfo.lpAmount || 1),
+              new Decimal(poolInfo.mintAmountB).div(poolInfo.lpAmount || 1),
+            ]
+
+            const withdrawAmountDe = new Decimal(withdrawLpAmount.toString()).div(10 ** poolInfo.lpMint.decimals)
+            const [withdrawAmountA, withdrawAmountB] = [
+              withdrawAmountDe.mul(baseRatio).mul(10 ** (poolInfo?.mintA.decimals || 0)),
+              withdrawAmountDe.mul(quoteRatio).mul(10 ** (poolInfo?.mintB.decimals || 0)),
+            ]
+
+            const lpSlippage = 0.1 // means 1%
+
+            console.log(`lpMint: `, poolInfo.lpMint);
+            console.log(`lpMint.decimals: `, poolInfo.lpMint.decimals);
+            console.log(`withdrawLpAmount: `, withdrawLpAmount.toString());
+            console.log(`withdrawAmountDe: `, withdrawAmountDe.toString());
+            console.log(`withdrawAmountA: `, withdrawAmountA.toString());
+            console.log(`withdrawAmountB: `, withdrawAmountB.toString());
+            const { execute: execRL } = await raydium.liquidity.removeLiquidity({
+              poolInfo,
+              poolKeys,
+              lpAmount: withdrawLpAmount,
+              baseAmountMin: new BN(withdrawAmountA.mul(1 - lpSlippage).toFixed(0)),
+              quoteAmountMin: new BN(withdrawAmountB.mul(1 - lpSlippage).toFixed(0)),
+              txVersion: TxVersion.LEGACY,
+              // optional: set up priority fee here
+              // computeBudgetConfig: {
+              //   units: 600000,
+              //   microLamports: 46591500,
+              // },
+              // optional: add transfer sol to tip account instruction. e.g sent tip to jito
+              // txTipConfig: {
+              //   address: new PublicKey('96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5'),
+              //   amount: new BN(10000000), // 0.01 sol
+              // },
+            })
+            console.log(`removeLiquidity -> ${x.auctionId}) => execRL...`);
+            const rlSig = await execRL({ sendAndConfirm: true });
+            console.log(`removeLiquidity -> ${rlSig.txId} for auction ID ${x.auctionId}) => execRL OK`);
+
+            console.log("AFTER:")
+            await logAuctionDetails(x);
+
+            // admin before sol: 216.09917...
+          }
+        }
+        catch (err) {
+          console.log("error: ", err);
+        }
+      }
+    });
+  });
+
   it("admin - abort all auctions ### ACHTUNG ###", async () => {
     // get all auctions
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
@@ -417,6 +570,7 @@ describe("maxi-auction", () => {
       }
     });
   });
+
 
   it("claims - min total sol not reached", async () => {
     await test_init(10000); // 10k SOL minimum needed to move liquidity - will cause this auction to finished failed
@@ -660,8 +814,9 @@ describe("maxi-auction", () => {
       // liqmove happened and claims happened...
       console.log(`auctionSolBalance`, auctionSolBalance.toString() / LAMPORTS_PER_SOL);
 
+
       assert.equal(//BigInt(auctionSolBalance) < BigInt(0.001 * LAMPORTS_PER_SOL),  // life is suffering
-        auctionSolBalance.toString() == "0", "should be no sol left in the auction");
+        auctionSolBalance == 0, true, "should be no sol left in the auction");
     }
   }
 
@@ -1866,6 +2021,7 @@ async function getAuctionDetails(auctionId, connection, program, auctionDataSeed
       tokenBalance: tokenAmount,
       status,
       isAdminAborted: auction.isAdminAborted,
+      tokenMintPublicKey: tokenMint.toBase58()
     };
     return details;
   } catch (error) {
@@ -1935,4 +2091,42 @@ async function abortAuction(auctionId) {
   assert.equal(auctionTokenBalanceAfter.value.uiAmount, 0, "Auction token balance should be zero after abort");
 
   console.log(`Auction ${auctionId} aborted successfully.`);
+}
+
+async function getMarketAndPoolInfo(tokenMintPublicKey: string): Promise<{
+  market_info: string | null;
+  pool_keys: string | null;
+  market_id: string | null;
+  pool_id: string | null;
+} | null> {
+  const pool = new sql.ConnectionPool(DB_CONFIG);
+  try {
+    await pool.connect();
+    const query = `
+      SELECT market_info, pool_keys, market_id, pool_id
+      FROM [dbo].[KeyPair]
+      WHERE PublicKey = @publicKey
+    `;
+
+    const request = pool.request();
+    request.input("publicKey", sql.VarChar(255), tokenMintPublicKey);
+    const result = await request.query(query);
+    if (result.recordset.length === 0) {
+      console.warn(`No record found for PublicKey: ${tokenMintPublicKey}`);
+      return null;
+    }
+    const record = result.recordset[0];
+
+    return {
+      market_info: record.market_info,
+      pool_keys: record.pool_keys,
+      market_id: record.market_id,
+      pool_id: record.pool_id,
+    };
+  } catch (error) {
+    console.error(`Error fetching market and pool info for ${tokenMintPublicKey}:`, error);
+    throw error;
+  } finally {
+    await pool.close();
+  }
 }
