@@ -95,14 +95,14 @@ pub(crate) fn get_status_and_clearing_price(
     // Determine the auction status
     let supply_qty = auction.token_supply.saturating_div(10u64.pow(auction.token_decimals as u32));
 
-    msg!("get_status_and_clearing_price - allocated_qty: {}", allocated_qty);
-    msg!("get_status_and_clearing_price - supply_qty: {}", supply_qty);
-    msg!("get_status_and_clearing_price - total_sol_after_fees: {}", total_sol_after_fees);
-    msg!("get_status_and_clearing_price - clearing_price_tmp: {}", clearing_price_tmp);
+    msg!("get_status_and_clearing_price -           allocated_qty: {}", allocated_qty);
+    msg!("get_status_and_clearing_price -              supply_qty: {}", supply_qty);
+    msg!("get_status_and_clearing_price -    total_sol_after_fees: {}", total_sol_after_fees);
+    msg!("get_status_and_clearing_price -      clearing_price_tmp: {}", clearing_price_tmp);
     msg!("get_status_and_clearing_price - total_unclaimed_refunds: {}", total_unclaimed_refunds);
-    msg!("get_status_and_clearing_price - rent_exempt_minimum: {}", rent_exempt_minimum);
-    msg!("get_status_and_clearing_price - net_sol_raised: {}", net_sol_raised);
-    msg!("get_status_and_clearing_price - min_total_sol: {}", min_total_sol);
+    msg!("get_status_and_clearing_price -     rent_exempt_minimum: {}", rent_exempt_minimum);
+    msg!("get_status_and_clearing_price -          net_sol_raised: {}", net_sol_raised);
+    msg!("get_status_and_clearing_price -           MIN_TOTAL_SOL: {}", min_total_sol);
 
     // Assign status
     let status = if allocated_qty >= supply_qty && net_sol_raised >= min_total_sol {

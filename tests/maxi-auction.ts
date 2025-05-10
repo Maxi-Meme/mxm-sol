@@ -162,16 +162,34 @@ describe("maxi-auction", () => {
           console.log(`auction ${auctionId} migration complete - catch`);
           console.error(`migrateAuction -> error`, err);
         })
-        .finally(() => {
-          const resolve = auctionFilledPromises.get(auctionId.toString());
+        .finally(async () => {
+          console.log(`auction ${auctionId} migration complete - finally`);
+          const resolve = await waitForResolver(auctionId.toString(), auctionFilledPromises, 10000, 500); // Poll for the resolver with a timeout
           console.log(`auction ${auctionId} migration complete - looking for resolver`);
           if (resolve) {
             console.log(`auction ${auctionId} migration complete - resolving promise`);
             resolve();
-            auctionFilledPromises.delete(auctionId);
+            auctionFilledPromises.delete(auctionId.toString()); // Use toString() for consistency
+          } else {
+            console.error(`No resolver found for auctionId: ${auctionId} after timeout`);
           }
         });
     }
+
+    async function waitForResolver(auctionId, promisesMap, timeoutMs = 10000, pollIntervalMs = 500) { // Helper function to poll for the resolver
+      const startTime = Date.now();
+      while (Date.now() - startTime < timeoutMs) {
+        const resolve = promisesMap.get(auctionId);
+        if (resolve) {
+          console.log(`Resolver found for auctionId: ${auctionId}`);
+          return resolve;
+        }
+        console.log(`Waiting for resolver for auctionId: ${auctionId}...`);
+        await new Promise((r) => setTimeout(r, pollIntervalMs));
+      }
+      console.error(`Timeout waiting for resolver for auctionId: ${auctionId}`);
+      return null; // Return null if resolver isn't found within timeout
+    }    
   });
 
   program.addEventListener("claimed", (event) => {
@@ -527,11 +545,11 @@ describe("maxi-auction", () => {
     await test_e2e_auction_success();
   });
 
-  it("admin - withdraws & movesliq before claims", async () => {
-    await test_e2e_auction_success();
+  it("claims - low clearing price auction", async () => {
+    await test_e2e_auction_success({ lowClearingPrice: true });
   });
 
-  async function test_e2e_auction_success() {
+  async function test_e2e_auction_success({ lowClearingPrice = false } = {}) {
     await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
 
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
@@ -544,9 +562,9 @@ describe("maxi-auction", () => {
     const bidResult1 = await test_bid_auction(0.5, USER_KPs[0]);
     await sleep(3);
     const bidResult2 = await test_bid_auction(0.3, USER_KPs[1]);
-    await sleep(3);
+    await sleep(lowClearingPrice ? 20 : 3); // bid at end of auction for low clearing price
     const bidResult3 = await test_bid_auction(0.2, USER_KPs[2]); // will moveliq on devnet...
-    assert.deepEqual(bidResult3.auctionPost.lastStatus, { succeeded: {} }, "expected succeeded"); // expect this on LAST FILLING BID
+    assert.deepEqual(bidResult3.auctionPost.lastStatus, { succeeded: {} }, "expected succeeded, got " + JSON.stringify((bidResult3.auctionPost.lastStatus))); // expect this on LAST FILLING BID
 
     var auctionPost = await program.account.auction.fetch(auctionData);
     var auctionSolBalance = await connection.getBalance(auctionSol);
@@ -1429,7 +1447,7 @@ describe("maxi-auction", () => {
       }
       else {
         console.log("Final bid detected, waiting for auction migration...");
-        const auctionFilledPromise = new Promise((resolve) => { // Create a promise and store its resolve function in the Map
+        const auctionFilledPromise = new Promise((resolve) => {
           auctionFilledPromises.set(auctionId.toString(), resolve);
         });
         await auctionFilledPromise; // Wait for the event listener to resolve the promise
@@ -1692,6 +1710,7 @@ async function getTransactionDetailsWithRetry(connection, signature, maxAttempts
 }
 
 const sleep = async (secs) => {
+  logger.color("yellow").log(`sleeping ${secs}...`);
   await new Promise(resolve => setTimeout(resolve, secs * 1000));
 }
 

@@ -1179,6 +1179,11 @@
       "code": 6025,
       "name": "TokensAlreadyWithdrawn",
       "msg": "Tokens already withdrawn."
+    },
+    {
+      "code": 6026,
+      "name": "MinNotReached",
+      "msg": "Min total sol not reached."
     }
   ],
   "types": [
