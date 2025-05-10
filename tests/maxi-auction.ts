@@ -408,6 +408,26 @@ describe("maxi-auction", () => {
     await test_admin_withdraws({ n_bids: 2, withdraw_tokens: true, withdraw_sol: false, fill_auction: true });
   });
 
+  it("admin - abort all auctions", async () => {
+    // get all auctions
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const totalAuctions = Number(globalInfoAccount.auctionsNum);
+    console.log(`Total auctions: ${totalAuctions}`);
+    const auctionIds = Array.from({ length: totalAuctions }, (_, i) => i);
+    const promises = auctionIds.map(auctionId =>
+      getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed)
+    );
+    const results = await Promise.all(promises);
+    const successfulResults = results.filter(result => result !== null);
+
+    // KILL EM ALL
+    successfulResults.forEach(result => {
+      console.log(`Auction ID: ${result.auctionId}, Status: ${JSON.stringify(result.status)}, SOL: ${result.solBalance}, Tokens: ${result.tokenBalance}`);
+      //...
+    });
+  });
+
   it("claims - min total sol not reached", async () => {
     await test_init(10000); // 10k SOL minimum needed to move liquidity - will cause this auction to finished failed
 
@@ -1829,5 +1849,39 @@ async function waitForMigration(auctionId: number) {
     });
     await auctionFilledPromise; // Wait for the event listener to resolve the promise
     console.log("waitForMigration -  migration completed for auction ID:", auctionId);
+  }
+}
+
+async function getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed) {
+  try {
+    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const auction = await program.account.auction.fetch(auctionData);
+    const tokenMint = auction.tokenMint;
+    const auctionTokenAccount = await getAssociatedTokenAddress(tokenMint, auctionSol, true);
+    const solBalance = await connection.getBalance(auctionSol);
+    const solInSol = (solBalance / LAMPORTS_PER_SOL).toFixed(9);
+    let tokenAmount = "0";
+    try {
+      const tokenBalance = await connection.getTokenAccountBalance(auctionTokenAccount);
+      tokenAmount = tokenBalance.value.uiAmountString;
+    } catch (error) {
+      if (error.message.includes("could not find account")) {
+        tokenAmount = "0";
+      } else {
+        throw error;
+      }
+    }
+    const status = Object.keys(auction.lastStatus)[0]; // e.g., "live", "succeeded"
+    const details = {
+      auctionId,
+      solBalance: solInSol,
+      tokenBalance: tokenAmount,
+      status,
+    };
+    return details;
+  } catch (error) {
+    console.error(`Error fetching details for auction ID ${auctionId}:`, error);
+    return null; // Return null for failed queries to filter later
   }
 }

@@ -35,6 +35,7 @@ impl<'info> CancelBid<'info> {
     pub fn process(&mut self) -> Result<()> {
         let auction = &mut self.auction_data_account;
         let caller = self.caller.key();
+        require!(!auction.is_admin_aborted, CustomError::AuctionAdminAborted);
 
         // Update and log auction finished status
         if Clock::get()?.unix_timestamp >= auction.end_timestamp {

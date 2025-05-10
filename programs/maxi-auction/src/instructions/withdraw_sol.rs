@@ -35,13 +35,6 @@ pub struct WithdrawSol<'info> {
     pub system_program: Program<'info, System>,
 }
 
-// ## TODO: test remove-liq (prove our LPs are good): tail tests with it, to reclaim devnet sol ##
-
-// ## TODO: put in some admin overrides: to be able to take out ALL sol & ALL tokens at anytime -- make it dual-admin sig (admin2 key) ##
-// >> can use/test in tail of tests to reclaim liquidity, useful on devnet <<
-
-// ## TEST: only withdraw the amount of SOL that is not claimable ##
-
 impl<'info> WithdrawSol<'info> {
     pub fn process(&mut self) -> Result<()> {
         let auction = &mut self.auction_data_account;

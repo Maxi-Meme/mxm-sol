@@ -64,16 +64,15 @@ pub mod maxi_auction {
         ctx.accounts.process()
     }
 
-    /// Initiazlize a swap pool
-    // pub fn raydium_migrate(ctx: Context<RaydiumMigrate>, nonce: u8, open_time: u64) -> Result<()> {
-    //     ctx.accounts.process(nonce, open_time)
-    // }
-
     pub fn withdraw_sol(ctx: Context<WithdrawSol>) -> Result<()> {
         ctx.accounts.process()
     }
 
     pub fn withdraw_tokens(ctx: Context<WithdrawTokens>) -> Result<()> {
+        ctx.accounts.process()
+    }
+
+    pub fn admin_abort(ctx: Context<AdminAbort>) -> Result<()> {
         ctx.accounts.process()
     }
 }

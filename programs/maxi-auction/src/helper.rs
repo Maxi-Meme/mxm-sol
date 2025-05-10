@@ -131,6 +131,7 @@ pub(crate) fn get_status_and_clearing_price(
         AuctionStatus::Succeeded => get_clearing_price(auction),
         AuctionStatus::FailedMinNotReached => None,
         AuctionStatus::FailedNotFullyAllocated => None,
+        AuctionStatus::AdminAborted => None,
     };
 
     (status, clearing_price)

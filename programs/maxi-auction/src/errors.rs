@@ -85,4 +85,7 @@ pub enum CustomError {
     
     #[msg("Min total sol not reached.")]
     MinNotReached,
+
+    #[msg("Auction admin aborted.")]
+    AuctionAdminAborted,
 }

@@ -51,7 +51,8 @@ impl<'info> PlaceBid<'info> {
     pub fn process(&mut self, bid_quantity: u64, x_id: u64) -> Result<()> {
         let auction = &mut self.auction_data_account;
         let default_start_price = self.global_info.config.default_start_price_lamports;
-
+        require!(!auction.is_admin_aborted, CustomError::AuctionAdminAborted);
+        
         // Validate bid and auction state
         require!(auction.bids.len() < MAX_BIDS, CustomError::MaxBidsReached);
         require!(bid_quantity > 0, CustomError::InvalidBidQuantity);
