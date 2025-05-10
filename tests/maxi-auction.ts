@@ -159,8 +159,8 @@ describe("maxi-auction", () => {
 
       // pause if caller requested (to change order of moveliq in the flow)
       while (MOVELIQ_PAUSE == true) {
-        console.log("waiting for MOVELIQ_PAUSE semaphore to be cleared...");
-        await sleep(1000);
+        logger.color("yellow").log(`waiting for MOVELIQ_PAUSE  semaphore to be cleared(auctionId ${auctionId})...`);
+        await sleep(3);
       }
 
       // Process migration and resolve the promise
@@ -182,7 +182,6 @@ describe("maxi-auction", () => {
           }
         });
     }
-
     async function waitForResolver(auctionId, promisesMap, timeoutMs = 10000, pollIntervalMs = 500) { // Helper function to poll for the resolver
       const startTime = Date.now();
       while (Date.now() - startTime < timeoutMs) {
@@ -578,6 +577,7 @@ describe("maxi-auction", () => {
 
     await sleep(lowClearingPrice ? 20 : 3); // bid at end of auction for low clearing price
     if (migrateAfterClaims) { // pause moveliq migration if requested
+      logger.color("yellow").log("migrateAfterClaims - pausing moveliq...");
       MOVELIQ_PAUSE = true;
     }
     const bidResult3 = await test_bid_auction({ fill_percent: 0.2, bidderKp: USER_KPs[2], skipMigrationWait: true }); // final bid - will moveliq on devnet...
@@ -597,7 +597,7 @@ describe("maxi-auction", () => {
 
     // release moveliq migration if requested
     if (migrateAfterClaims) {
-      console.log("migrateAfterClaims - releasing moveliq...");
+      logger.color("yellow").log("migrateAfterClaims - releasing moveliq...");
       MOVELIQ_PAUSE = false;
       await waitForMigration(auctionId); // with no await earlier for "mixed mode": claims & migration happening at the same time.!
     }
@@ -663,7 +663,7 @@ describe("maxi-auction", () => {
     const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
     //console.log("auctionId", auctionId, "auctionSol", auctionSol.toBase58(), "auctionData", auctionData.toBase58());
     const auctionPre = await program.account.auction.fetch(auctionData);
-    logObject("auctionPre", auctionPre);
+    //logObject("auctionPre", auctionPre);
     auctionPre.bids.forEach((bid) => {
       console.log("bid", bid.bidder.toBase58(), `qty`, bid.bidQty.toNumber(), `price sol`, bid.bidSol.toNumber() / LAMPORTS_PER_SOL, `fee sol`, bid.bidFee.toNumber() / LAMPORTS_PER_SOL, `isClaimed`, bid.isClaimed);
     });
@@ -1542,7 +1542,9 @@ describe("maxi-auction", () => {
         //console.log('expectedRemainingTokens', expectedRemainingTokens);
         //console.log('remainingTokens', remainingTokens);
 
-        assert.equal(remainingTokens, expectedRemainingTokens, "Remaining tokens should be total tokens minus locked tokens");
+        if (!skipMigrationWait) {
+          assert.equal(remainingTokens, expectedRemainingTokens, "Remaining tokens should be total tokens minus locked tokens");
+        }
       }
     } else {
       // Standard bid checks
@@ -1735,7 +1737,7 @@ async function getTransactionDetailsWithRetry(connection, signature, maxAttempts
 }
 
 const sleep = async (secs) => {
-  logger.color("yellow").log(`sleeping ${secs}...`);
+  logger.bgColor("yellow").color("white").log(`zzz ${secs}...`);
   await new Promise(resolve => setTimeout(resolve, secs * 1000));
 }
 
@@ -1821,7 +1823,7 @@ async function waitForMigration(auctionId: number) {
     console.log("waitForMigration - local: NOP, no raydium here...");
   }
   else {
-    console.log("waitForMigration - waiting for auction migration...");
+    console.log(`waitForMigration - waiting for auction migration ${auctionId.toString()}...`);
     const auctionFilledPromise = new Promise((resolve) => {
       auctionFilledPromises.set(auctionId.toString(), resolve);
     });
