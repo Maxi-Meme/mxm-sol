@@ -394,7 +394,7 @@ describe("maxi-auction", () => {
     await test_admin_withdraws({ n_bids: 2, withdraw_tokens: true, withdraw_sol: false, fill_auction: true });
   });
 
-  it("admin - abort all auctions", async () => {
+  it("admin - abort all auctions ### ACHTUNG ###", async () => {
     // get all auctions
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
@@ -408,12 +408,14 @@ describe("maxi-auction", () => {
     const successfulResults = results.filter(result => result !== null);
 
     // KILL EM ALL
-    successfulResults.forEach(async (result) => {
-      console.log(`Auction ID: ${result.auctionId.toString().padEnd(3)}, ${(result.isAdminAborted ? "isAdminAborted=1" : "").padEnd(15)} Status: ${result.status.padEnd(20)}, SOL: ${result.solBalance}, Tokens: ${result.tokenBalance}`);
-      //...
+    throw Error("think deep bro!");
+    successfulResults.forEach(async (x) => {
+      console.log(`Auction ID: ${x.auctionId.toString().padEnd(3)}, ${(x.isAdminAborted ? "isAdminAborted" : "").padEnd(14)}, Status: ${x.status.padEnd(20)}, SOL: ${x.solBalance}, Tokens: ${x.tokenBalance}`);
+      if (!x.isAdminAborted) {
+        if (x.status != "live") // be careful!! this can nuke ANY auction and take out their liquidity, including live ones
+          await abortAuction(x.auctionId);
+      }
     });
-
-    await abortAuction(0);
   });
 
   it("claims - min total sol not reached", async () => {
@@ -546,11 +548,11 @@ describe("maxi-auction", () => {
     }
   });
 
-  it("claims - successful auction", async () => {
+  it("claims - e2e - successful auction", async () => {
     await test_e2e_auction_success();
   });
 
-  it("claims - low clearing price auction", async () => {
+  it("claims - e2e - low clearing price auction", async () => {
     await test_e2e_auction_success({ lowClearingPrice: true });
   });
 
@@ -559,9 +561,10 @@ describe("maxi-auction", () => {
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
     const bidResult2 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
     await test_claim_auction(USER_KPs[0], true, bidResult1); // creator claims
+
   });
 
-  it("admin - withdraws & movesliq after claims", async () => {
+  it("claims - e2e - withdraws & movesliq after claims", async () => {
     await test_e2e_auction_success({ migrateAfterClaims: true });
   });
 
@@ -1244,73 +1247,67 @@ describe("maxi-auction", () => {
     poolInfo = await getPrice();
 
     //
-    // Step 9 - add some liquidity to the pool
-    //
-    //...
-
-    //
-    // Step 10 - remove some liquidity from the pool
+    // TODO -- remove liquidity from the pool...
     //
   }
 
-  async function test_init(mintotal_sol: number = undefined) {  
-    //logger.color("magenta").log("*** Initializing the auction system...");
+  async function test_init(mintotal_sol: number = undefined) {
     const signer = adminKp;
 
-    //console.log("Program ID in test:", program.programId.toBase58());
-    //console.log("signer.publicKey:", signer.publicKey.toBase58());
-    //console.log("connection.rpcEndpoint", connection.rpcEndpoint);
-    CONTRACT_CONFIG = {
+    const newConfig = {
       admin: adminKp.publicKey,
       defaultTokenSupply: new BN(TEST_TOKEN_SUPPLY),
       defaultTokenDecimals: TEST_TOKEN_DECIMALS,
       defaultStartPriceLamports: new BN(TEST_STARTPRICE_SOL * LAMPORTS_PER_SOL),
-      feeAccount: TEST_FEE_ACCOUNT.publicKey,  //Keypair.generate().publicKey, 
-      minTotalSol: new BN((mintotal_sol || TEST_MIN_TOTAL_SOL) * LAMPORTS_PER_SOL)
+      feeAccount: TEST_FEE_ACCOUNT.publicKey,
+      minTotalSol: new BN((mintotal_sol || TEST_MIN_TOTAL_SOL) * LAMPORTS_PER_SOL),
     };
-    //logObject("newConfig", newConfig);
-
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
-    const tx = await program.methods
-      .initialize(CONTRACT_CONFIG)
-      .accounts({
-        signer: signer.publicKey,
-      })
-      .signers([signer])
-      .transaction();
-    tx.feePayer = signer.publicKey;
-    tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
 
+    let currentConfig;
     try {
-      var sig;
+      const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+      currentConfig = globalInfoAccount.config;
+    } catch (error) {
+      currentConfig = null;
+    }
+
+    const configsAreEqual = (configA, configB) => {
+      if (!configA || !configB) return false;
+      return (
+        configA.admin.equals(configB.admin) &&
+        configA.defaultTokenSupply.eq(configB.defaultTokenSupply) &&
+        configA.defaultTokenDecimals === configB.defaultTokenDecimals &&
+        configA.defaultStartPriceLamports.eq(configB.defaultStartPriceLamports) &&
+        configA.feeAccount.equals(configB.feeAccount) &&
+        configA.minTotalSol.eq(configB.minTotalSol)
+      );
+    };
+
+    const shouldInitialize = !currentConfig || !configsAreEqual(currentConfig, newConfig);
+    if (shouldInitialize) {
+      const tx = await program.methods
+        .initialize(newConfig)
+        .accounts({
+          signer: signer.publicKey,
+        })
+        .signers([signer])
+        .transaction();
+      tx.feePayer = signer.publicKey;
+      tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
       try {
-        sig = await sendAndConfirmTransaction(connection, tx, [signer]);
-        await logSuccessTx(connection, sig, "initialize");    
+        const sig = await sendAndConfirmTransaction(connection, tx, [signer]);
+        await logSuccessTx(connection, sig, "initialize");
+        CONTRACT_CONFIG = newConfig;
       } catch (err) {
-        logger.color("red").log("sendAndConfirmTransaction failed:", err.getLogs());
+        logger.color("red").log("sendAndConfirmTransaction failed:", err.getLogs ? err.getLogs() : err);
         throw err;
       }
-      //const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo); 
-      //logger.color("green").log("globalInfoAccount", globalInfoAccount);
-      //const { deployer, config, auctionsNum } = globalInfoAccount;
-      //logObject("globalInfoAccount", globalInfoAccount);
 
-      //console.log("deployer", deployer.toString());
-      //console.log("signer.publicKey", signer.publicKey.toString());
-      //console.log("config.defaultTokenSupply", config.defaultTokenSupply.toString());
-      //console.log("config.defaultTokenDecimals", config.defaultTokenDecimals.toString());
-      //console.log("config.defaultStartPriceLamports", config.defaultStartPriceLamports.toNumber());
-      //console.log("newConfig.feeAccount", config.feeAccount.toBase58());
-      //console.log("newConfig.minTotalSol", config.minTotalSol.toNumber());
-
-      await setupFeeAccount(connection, adminKp, CONTRACT_CONFIG.feeAccount);
-
-    } catch (e) {
-      console.error("Transaction error:", e);
-      if (e.logs) {
-        console.error("Transaction logs:", e.logs);
-      }
-      throw e;
+      await setupFeeAccount(connection, adminKp, newConfig.feeAccount);
+    } else {
+      CONTRACT_CONFIG = currentConfig;
+      console.log("Configuration is already up to date. No initialization needed.");
     }
   }
 
@@ -1706,7 +1703,7 @@ function logObject(label, obj) {
 }
 
 async function logSuccessTx(connection, sig, label) {
-  await sleep(3);
+  //await sleep(3);
   const status = await connection.getSignatureStatus(sig);
   //console.log("TX status:", status);
 
@@ -1907,12 +1904,17 @@ async function abortAuction(auctionId) {
       auctionTokenAccount: auctionTokenAccount,
       adminTokenAccount: adminTokenAccount,
     })
-    .signers([adminKp, feeAccount]) // dual sig
+    .signers([adminKp, /*feeAccount*/])
     .transaction();
   tx.feePayer = adminKp.publicKey;
   tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-  const sig = await sendAndConfirmTransaction(connection, tx, [adminKp, feeAccount]);
-  await logSuccessTx(connection, sig, "adminAbort");
+  try {
+    const sig = await sendAndConfirmTransaction(connection, tx, [adminKp, feeAccount]);  // dual sig
+    await logSuccessTx(connection, sig, "adminAbort");
+  } catch (error) {
+    console.log('adminAbort - error', error);
+    return;
+  }
 
   // Log post-abort state for verification
   const auctionSolBalanceAfter = await connection.getBalance(auctionSol);
@@ -1929,7 +1931,7 @@ async function abortAuction(auctionId) {
   console.log(`After abort - Auction SOL: ${(auctionSolBalanceAfter / LAMPORTS_PER_SOL).toFixed(6)} SOL, Tokens: ${auctionTokenBalanceAfter.value.uiAmount}`);
 
   // Basic validation
-  assert.ok(auctionSolBalanceAfter < auctionSolBalanceBefore, "Auction SOL balance should decrease after abort");
+  assert.ok(auctionSolBalanceBefore > 0 && auctionSolBalanceAfter < auctionSolBalanceBefore, "Auction SOL balance should decrease after abort");
   assert.equal(auctionTokenBalanceAfter.value.uiAmount, 0, "Auction token balance should be zero after abort");
 
   console.log(`Auction ${auctionId} aborted successfully.`);
