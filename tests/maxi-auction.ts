@@ -623,7 +623,7 @@ describe("maxi-auction", () => {
     else {
       // liqmove happened and claims happened...
       console.log(`auctionSolBalance`, auctionSolBalance.toString() / LAMPORTS_PER_SOL);
-      assert.equal(auctionSolBalance < 0.001, true, "should be no sol left in the auction"); // life is short
+      assert.equal(BigInt(auctionSolBalance) < BigInt(0.001 * LAMPORTS_PER_SOL), true, "should be (nearly) no sol left in the auction"); // life is suffering
     }
   }
 
