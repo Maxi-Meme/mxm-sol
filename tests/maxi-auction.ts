@@ -271,8 +271,11 @@ describe("maxi-auction", () => {
     await test_create_auction_KP0();
   });
 
-  it("base - creates a short auction", async () => {
+  it("base - creates a 1 min auction", async () => {
     await test_create_auction_KP0(undefined, 1); // 1 unit ~= 36s
+  });
+  it("base - creates a 2 min auction", async () => {
+    await test_create_auction_KP0(undefined, 2);
   });
 
   it("base - places a bid", async () => {
@@ -346,6 +349,13 @@ describe("maxi-auction", () => {
     const auctionSolBalance3 = await connection.getBalance(auctionSol2);
     assert.equal(auctionSolBalance3 == 0, true, "should be no sol left in the auction");
   });
+
+  it("base - places a late bid", async () => {
+    await test_create_auction_KP0(0.05, 1); // ~36 secs
+    await sleep(32);
+    await test_bid_auction({ fill_percent: 0.1 });
+  });
+
 
   it("base - user can bid twice", async () => {
     await test_create_auction_KP0();
@@ -1875,7 +1885,7 @@ async function logSuccessTx(connection, sig, label) {
   // Log the transaction logs if available
   //logObject("txDetails", txDetails);
   if (txDetails && txDetails.meta && txDetails.meta.logMessages) {
-    //console.log("Transaction logs:", txDetails.meta.logMessages);
+    console.log("Transaction logs:", txDetails.meta.logMessages);
   } else {
     console.log("No logs available for this transaction.");
   }
