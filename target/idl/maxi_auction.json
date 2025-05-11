@@ -8,111 +8,6 @@
   },
   "instructions": [
     {
-      "name": "admin_abort",
-      "discriminator": [
-        90,
-        235,
-        203,
-        172,
-        139,
-        195,
-        36,
-        123
-      ],
-      "accounts": [
-        {
-          "name": "global_info",
-          "docs": [
-            "The global info account containing configuration details like admin and fee account addresses."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108,
-                  95,
-                  105,
-                  110,
-                  102,
-                  111,
-                  95,
-                  115,
-                  101,
-                  101,
-                  100
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "admin",
-          "docs": [
-            "The admin account, must be a signer and match the admin address in global_info."
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "fee_account",
-          "docs": [
-            "The fee account, must be a signer and match the fee account address in global_info."
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "auction_data_account",
-          "docs": [
-            "The auction data account, mutable to update its status and flags."
-          ],
-          "writable": true
-        },
-        {
-          "name": "auction_sol_account",
-          "docs": [
-            "The auction SOL account (PDA), manually verified, holds the SOL to be withdrawn."
-          ],
-          "writable": true
-        },
-        {
-          "name": "auction_token_account",
-          "docs": [
-            "The token account holding the auction's tokens, mutable for withdrawal."
-          ],
-          "writable": true
-        },
-        {
-          "name": "admin_token_account",
-          "docs": [
-            "The admin's token account to receive the tokens, mutable for deposit."
-          ],
-          "writable": true
-        },
-        {
-          "name": "token_program",
-          "docs": [
-            "The SPL Token program for token transfers."
-          ],
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "system_program",
-          "docs": [
-            "The System program for SOL transfers."
-          ],
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": []
-    },
-    {
       "name": "cancel_bid",
       "discriminator": [
         40,
@@ -708,6 +603,112 @@
       ]
     },
     {
+      "name": "finalize",
+      "discriminator": [
+        171,
+        61,
+        218,
+        56,
+        127,
+        115,
+        12,
+        217
+      ],
+      "accounts": [
+        {
+          "name": "global_info",
+          "docs": [
+            "The global info account containing configuration details like admin and fee account addresses."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  105,
+                  110,
+                  102,
+                  111,
+                  95,
+                  115,
+                  101,
+                  101,
+                  100
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "docs": [
+            "The admin account, must be a signer and match the admin address in global_info."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "fee_account",
+          "docs": [
+            "The fee account, must be a signer and match the fee account address in global_info."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "auction_data_account",
+          "docs": [
+            "CLOSE DATA ACCOUNT!",
+            "The auction data account, mutable and SET TO CLOSE, transferring lamports to admin."
+          ],
+          "writable": true
+        },
+        {
+          "name": "auction_sol_account",
+          "docs": [
+            "The auction SOL account (PDA), manually verified, holds the SOL to be withdrawn."
+          ],
+          "writable": true
+        },
+        {
+          "name": "auction_token_account",
+          "docs": [
+            "The token account holding the auction's tokens, mutable for withdrawal."
+          ],
+          "writable": true
+        },
+        {
+          "name": "admin_token_account",
+          "docs": [
+            "The admin's token account to receive the tokens, mutable for deposit."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "The SPL Token program for token transfers."
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "docs": [
+            "The System program for SOL transfers."
+          ],
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "initialize",
       "discriminator": [
         175,
@@ -1289,8 +1290,8 @@
     },
     {
       "code": 6027,
-      "name": "AuctionAdminAborted",
-      "msg": "Auction admin aborted."
+      "name": "AuctionAlreadyFinalized",
+      "msg": "Auction already finalized."
     }
   ],
   "types": [
@@ -1386,7 +1387,7 @@
             "type": "bool"
           },
           {
-            "name": "is_admin_aborted",
+            "name": "is_finalized",
             "type": "bool"
           }
         ]
@@ -1465,7 +1466,7 @@
             "name": "FailedNotFullyAllocated"
           },
           {
-            "name": "AdminAborted"
+            "name": "Finalized"
           }
         ]
       }

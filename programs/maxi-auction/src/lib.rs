@@ -72,7 +72,7 @@ pub mod maxi_auction {
         ctx.accounts.process()
     }
 
-    pub fn admin_abort(ctx: Context<AdminAbort>) -> Result<()> {
+    pub fn finalize(ctx: Context<Finalize>) -> Result<()> {
         ctx.accounts.process()
     }
 }

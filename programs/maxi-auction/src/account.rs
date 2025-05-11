@@ -31,5 +31,5 @@ pub struct Auction {
     pub last_status: AuctionStatus, // 1
     pub is_sol_withdrawn: bool, // 1
     pub is_tokens_withdrawn: bool, // 1
-    pub is_admin_aborted: bool, // 1
+    pub is_finalized: bool, // 1
 }

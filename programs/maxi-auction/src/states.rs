@@ -32,5 +32,5 @@ pub enum AuctionStatus {
     Succeeded,
     FailedMinNotReached,
     FailedNotFullyAllocated,
-    AdminAborted,
+    Finalized,
 }

@@ -447,22 +447,50 @@ describe("maxi-auction", () => {
 
     // Log
     const detailPromises = successfulResults.map(async (x, index) => {
-      const poolDbInfo = poolDbInfos[index];
-      const poolPpcInfo = poolDbInfo?.pool_id ? poolPpcInfosMap.get(poolDbInfo.pool_id) : undefined;
-      const poolPrice = Number(poolPpcInfo?.poolPrice);
-      const baseReserve = new BN(poolPpcInfo?.baseReserve, 16);
-      const quoteReserve = new BN(poolPpcInfo?.quoteReserve, 16);
-      console.log(
-        `ID: ${x.auctionId.toString().padEnd(3)}, [${x.status.padEnd(25)}], ` +
-        `AD: ${x.solBalanceAuctionData ?? "-".padEnd(12)} (${x.rentExemptionAuctionData ?? "".padEnd(12)}), ` +
-        `AS: ${(x.solBalanceAuctionSol ?? "-").padEnd(12)} (${(x.rentExemptionAuctionSol ?? "").padEnd(12)}), ` +
-        `AT: ${x.solBalanceAuctionTokenAccount ?? "-".padEnd(12)} (${x.rentExemptionAuctionTokenAccount ?? "".padEnd(12)}), ` +
-        `Tokens: ${x.tokenBalance.padEnd(12)}, ` +
-        `Mint: ${x.tokenMintPublicKey} ` +
-        (poolPpcInfo
-          ? `> PRICE: ${poolPrice.toFixed(6)} LIQ: [${baseReserve.toString()} T-lamports, ${(Number(quoteReserve.toString()) / LAMPORTS_PER_SOL).toFixed(9)} WSOL] `
-          : '')
-      );
+      logAuctionInfo(poolDbInfos, index, poolPpcInfosMap, x);
+    });
+    await Promise.all(detailPromises);
+  });
+
+  it("admin - cleanup finished auctions", async () => {
+    // get all auctions
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const totalAuctions = Number(globalInfoAccount.auctionsNum);
+    console.log(`Total auctions: ${totalAuctions}`);
+    const auctionIds = [2]; //Array.from({ length: totalAuctions }, (_, i) => i);
+    const promises = auctionIds.map(auctionId =>
+      getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed)
+    );
+    const results = await Promise.all(promises);
+    const successfulResults = results.filter(result => result !== null);
+
+    // Collect poolDbInfos and pool IDs from DB
+    const poolDbInfosPromises = successfulResults.map(x => getMarketAndPoolInfoDb(x.tokenMintPublicKey));
+    const poolDbInfos = await Promise.all(poolDbInfosPromises);
+    const poolIds = poolDbInfos.map(info => info?.pool_id).filter(id => id !== undefined && id !== null);
+    const uniquePoolIds = [...new Set(poolIds)];
+
+    // Fetch all pool infos in one RPC 
+    const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: false, blockhashCommitment: 'finalized' });
+    const rpcResult = uniquePoolIds.length > 0 ? await raydium.liquidity.getRpcPoolInfos(uniquePoolIds) : {};
+    const poolPpcInfosMap = new Map(Object.entries(rpcResult));
+
+    // CLEANUP
+    const detailPromises = successfulResults.map(async (x, index) => {
+      if (!x.isFinalized) {
+        if (x.status != "live") {
+          console.log("BEFORE:")
+          logAuctionInfo(poolDbInfos, index, poolPpcInfosMap, x);
+
+          await finalizeAuction(x.auctionId); // KILL EM ALL
+
+          console.log("AFTER:")
+          const refreshed = await getAuctionDetails(x.auctionId, connection, program, auctionDataSeed, auctionSolSeed);
+          x = { ...x, ...refreshed };
+          logAuctionInfo(poolDbInfos, index, poolPpcInfosMap, x);
+        }
+      }
     });
     await Promise.all(detailPromises);
   });
@@ -579,31 +607,6 @@ describe("maxi-auction", () => {
     });
     await Promise.all(removalPromises);
   });
-
-  it("admin - abort all auctions ### ACHTUNG ###", async () => {
-    // get all auctions
-    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
-    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
-    const totalAuctions = Number(globalInfoAccount.auctionsNum);
-    console.log(`Total auctions: ${totalAuctions}`);
-    const auctionIds = Array.from({ length: totalAuctions }, (_, i) => i);
-    const promises = auctionIds.map(auctionId =>
-      getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed)
-    );
-    const results = await Promise.all(promises);
-    const successfulResults = results.filter(result => result !== null);
-
-    // KILL EM ALL
-    throw Error("think deep bro!");
-    successfulResults.forEach(async (x) => {
-      console.log(`Auction ID: ${x.auctionId.toString().padEnd(3)}, ${(x.isAdminAborted ? "isAdminAborted" : "").padEnd(14)}, Status: ${x.status.padEnd(20)}, SOL: ${x.solBalance}, Tokens: ${x.tokenBalance}`);
-      if (!x.isAdminAborted) {
-        if (x.status != "live") // be careful!! this can nuke ANY auction and take out their liquidity, including live ones
-          await abortAuction(x.auctionId);
-      }
-    });
-  });
-
 
   it("claims - min total sol not reached", async () => {
     await test_init(10000); // 10k SOL minimum needed to move liquidity - will cause this auction to finished failed
@@ -1891,6 +1894,25 @@ describe("maxi-auction", () => {
 
 });
 
+function logAuctionInfo(poolDbInfos: { market_info: string | null; pool_keys: string | null; market_id: string | null; pool_id: string | null; }[], index: number, poolPpcInfosMap: Map<string, AmmRpcData>, x: { auctionId: any; solBalanceAuctionData: string; solBalanceAuctionSol: string; solBalanceAuctionTokenAccount: string; rentExemptionAuctionData: string; rentExemptionAuctionSol: string; rentExemptionAuctionTokenAccount: string; tokenBalance: string; status: string; isFinalized: any; tokenMintPublicKey: any; }) {
+  const poolDbInfo = poolDbInfos[index];
+  const poolPpcInfo = poolDbInfo?.pool_id ? poolPpcInfosMap.get(poolDbInfo.pool_id) : undefined;
+  const poolPrice = Number(poolPpcInfo?.poolPrice);
+  const baseReserve = new BN(poolPpcInfo?.baseReserve, 16);
+  const quoteReserve = new BN(poolPpcInfo?.quoteReserve, 16);
+  console.log(
+    `ID: ${x.auctionId.toString().padEnd(3)}, [${(x.status ?? "-").padEnd(25)}], ` +
+    `AD: ${x.solBalanceAuctionData ?? "-".padEnd(12)} (${x.rentExemptionAuctionData ?? "".padEnd(12)}), ` +
+    `AS: ${(x.solBalanceAuctionSol ?? "-").padEnd(12)} (${(x.rentExemptionAuctionSol ?? "").padEnd(12)}), ` +
+    `AT: ${x.solBalanceAuctionTokenAccount ?? "-".padEnd(12)} (${x.rentExemptionAuctionTokenAccount ?? "".padEnd(12)}), ` +
+    `Tokens: ${x.tokenBalance.padEnd(12)}, ` +
+    `Mint: ${x.tokenMintPublicKey} ` +
+    (poolPpcInfo
+      ? `> PRICE: ${poolPrice.toFixed(6)} LIQ: [${baseReserve.toString()} T - lamports, ${(Number(quoteReserve.toString()) / LAMPORTS_PER_SOL).toFixed(9)} WSOL] `
+      : '')
+  );
+}
+
 // Recursively convert BN and PublicKey values
 function convertValue(value) {
   if (value instanceof BN) {
@@ -2052,68 +2074,89 @@ async function getAuctionDetails(auctionId, connection, program, auctionDataSeed
   try {
     // Derive PDAs
     const [auctionData] = PublicKey.findProgramAddressSync(
-      [Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)],
+      [Buffer.from(auctionDataSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)],
       program.programId
     );
     const [auctionSol] = PublicKey.findProgramAddressSync(
-      [Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)],
+      [Buffer.from(auctionSolSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)],
       program.programId
     );
-
-    // Fetch auction state
-    const auction = await program.account.auction.fetch(auctionData);
-    const tokenMint = auction.tokenMint;
-    const auctionTokenAccount = await getAssociatedTokenAddress(tokenMint, auctionSol, true);
 
     // Fetch account info for SOL balances and data lengths
     const auctionDataInfo = await connection.getAccountInfo(auctionData);
     const auctionSolInfo = await connection.getAccountInfo(auctionSol);
-    const auctionTokenAccountInfo = await connection.getAccountInfo(auctionTokenAccount);
 
-    // Handle cases where accounts might not exist (e.g., closed or never initialized)
-    //if (!auctionDataInfo) throw new Error(`Auction data account for ID ${auctionId} not found`);
-    //if (!auctionSolInfo) throw new Error(`Auction SOL account for ID ${auctionId} not found`);
-    //if (!auctionTokenAccountInfo) throw new Error(`Auction token account for ID ${auctionId} not found`);
-
-    // Get SOL balances (in lamports)
-    const solBalanceAuctionData = auctionDataInfo ? auctionDataInfo.lamports : undefined;
-    const solBalanceAuctionSol = auctionSolInfo ? auctionSolInfo.lamports : undefined;
-    const solBalanceAuctionTokenAccount = auctionTokenAccountInfo ? auctionTokenAccountInfo.lamports : undefined;
-
-    // Calculate rent exemptions based on data length
-    const rentExemptionAuctionData = auctionDataInfo ? await connection.getMinimumBalanceForRentExemption(auctionDataInfo.data.length) : undefined;
-    const rentExemptionAuctionSol = auctionSolInfo ? await connection.getMinimumBalanceForRentExemption(auctionSolInfo.data.length) : undefined;
-    const rentExemptionAuctionTokenAccount = auctionTokenAccountInfo ? await connection.getMinimumBalanceForRentExemption(auctionTokenAccountInfo.data.length) : undefined;
-
-    // Fetch token balance
+    // Initialize variables to undefined
+    let auction = undefined;
+    let tokenMint = undefined;
+    let auctionTokenAccount = undefined;
+    let auctionTokenAccountInfo = undefined;
+    let solBalanceAuctionData = undefined;
+    let solBalanceAuctionSol = undefined;
+    let solBalanceAuctionTokenAccount = undefined;
+    let rentExemptionAuctionData = undefined;
+    let rentExemptionAuctionSol = undefined;
+    let rentExemptionAuctionTokenAccount = undefined;
     let tokenAmount = "0";
-    try {
-      const tokenBalance = await connection.getTokenAccountBalance(auctionTokenAccount);
-      tokenAmount = tokenBalance.value.uiAmountString;
-    } catch (error) {
-      if (error.message.includes("could not find account")) {
-        tokenAmount = "0"; // Account might be closed or not initialized
-      } else {
-        throw error;
+    let status = undefined;
+    let isFinalized = undefined;
+    let tokenMintPublicKey = undefined;
+
+    // If auctionData exists, fetch auction details
+    if (auctionDataInfo) {
+      auction = await program.account.auction.fetch(auctionData);
+      tokenMint = auction.tokenMint;
+      tokenMintPublicKey = tokenMint.toBase58();
+      isFinalized = auction.isFinalized;
+      status = Object.keys(auction.lastStatus)[0]; // Assuming lastStatus is an enum-like object
+
+      // Get SOL balance and rent exemption for auctionData
+      solBalanceAuctionData = auctionDataInfo.lamports / LAMPORTS_PER_SOL;
+      rentExemptionAuctionData = await connection.getMinimumBalanceForRentExemption(auctionDataInfo.data.length) / LAMPORTS_PER_SOL;
+
+      // Derive and check auctionTokenAccount only if tokenMint exists
+      if (tokenMint) {
+        auctionTokenAccount = await getAssociatedTokenAddress(tokenMint, auctionSol, true);
+        auctionTokenAccountInfo = await connection.getAccountInfo(auctionTokenAccount);
       }
     }
 
-    // Determine status
-    const status = Object.keys(auction.lastStatus)[0];
+    // If auctionSol exists, get its SOL balance and rent exemption
+    if (auctionSolInfo) {
+      solBalanceAuctionSol = auctionSolInfo.lamports / LAMPORTS_PER_SOL;
+      rentExemptionAuctionSol = await connection.getMinimumBalanceForRentExemption(auctionSolInfo.data.length) / LAMPORTS_PER_SOL;
+    }
 
-    // Return detailed payload
+    // If auctionTokenAccount exists, get its SOL balance, rent exemption, and token balance
+    if (auctionTokenAccountInfo) {
+      solBalanceAuctionTokenAccount = auctionTokenAccountInfo.lamports / LAMPORTS_PER_SOL;
+      rentExemptionAuctionTokenAccount = await connection.getMinimumBalanceForRentExemption(auctionTokenAccountInfo.data.length) / LAMPORTS_PER_SOL;
+
+      try {
+        const tokenBalance = await connection.getTokenAccountBalance(auctionTokenAccount);
+        tokenAmount = tokenBalance.value.uiAmountString;
+      } catch (error) {
+        if (error.message.includes("could not find account")) {
+          tokenAmount = "0"; // Account might be closed or not initialized
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    // Return detailed payload with undefined for missing accounts
     const details = {
       auctionId,
-      solBalanceAuctionData: solBalanceAuctionData ? (solBalanceAuctionData / LAMPORTS_PER_SOL).toFixed(9) : undefined,
-      solBalanceAuctionSol: solBalanceAuctionSol ? (solBalanceAuctionSol / LAMPORTS_PER_SOL).toFixed(9) : undefined,
-      solBalanceAuctionTokenAccount: solBalanceAuctionTokenAccount ? (solBalanceAuctionTokenAccount / LAMPORTS_PER_SOL).toFixed(9) : undefined,
-      rentExemptionAuctionData: rentExemptionAuctionData ? (rentExemptionAuctionData / LAMPORTS_PER_SOL).toFixed(9) : undefined,
-      rentExemptionAuctionSol: rentExemptionAuctionSol ? (rentExemptionAuctionSol / LAMPORTS_PER_SOL).toFixed(9) : undefined,
-      rentExemptionAuctionTokenAccount: rentExemptionAuctionTokenAccount ? (rentExemptionAuctionTokenAccount / LAMPORTS_PER_SOL).toFixed(9) : undefined,
+      solBalanceAuctionData: solBalanceAuctionData !== undefined ? solBalanceAuctionData.toFixed(9) : undefined,
+      solBalanceAuctionSol: solBalanceAuctionSol !== undefined ? solBalanceAuctionSol.toFixed(9) : undefined,
+      solBalanceAuctionTokenAccount: solBalanceAuctionTokenAccount !== undefined ? solBalanceAuctionTokenAccount.toFixed(9) : undefined,
+      rentExemptionAuctionData: rentExemptionAuctionData !== undefined ? rentExemptionAuctionData.toFixed(9) : undefined,
+      rentExemptionAuctionSol: rentExemptionAuctionSol !== undefined ? rentExemptionAuctionSol.toFixed(9) : undefined,
+      rentExemptionAuctionTokenAccount: rentExemptionAuctionTokenAccount !== undefined ? rentExemptionAuctionTokenAccount.toFixed(9) : undefined,
       tokenBalance: tokenAmount,
       status,
-      isAdminAborted: auction.isAdminAborted,
-      tokenMintPublicKey: tokenMint.toBase58(),
+      isFinalized,
+      tokenMintPublicKey,
     };
     return details;
   } catch (error) {
@@ -2122,7 +2165,9 @@ async function getAuctionDetails(auctionId, connection, program, auctionDataSeed
   }
 }
 
-async function abortAuction(auctionId) {
+
+
+async function finalizeAuction(auctionId) {
   const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
   const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
   const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
@@ -2143,7 +2188,7 @@ async function abortAuction(auctionId) {
 
   // Construct and send the transaction
   const tx = await program.methods
-    .adminAbort()
+    .finalize()
     .accounts({
       admin: adminKp.publicKey,
       feeAccount: feeAccount.publicKey,
@@ -2152,15 +2197,15 @@ async function abortAuction(auctionId) {
       auctionTokenAccount: auctionTokenAccount,
       adminTokenAccount: adminTokenAccount,
     })
-    .signers([adminKp, /*feeAccount*/])
+    //.signers([adminKp, /*feeAccount*/])
     .transaction();
   tx.feePayer = adminKp.publicKey;
   tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
   try {
     const sig = await sendAndConfirmTransaction(connection, tx, [adminKp, feeAccount]);  // dual sig
-    await logSuccessTx(connection, sig, "adminAbort");
+    await logSuccessTx(connection, sig, "finalize");
   } catch (error) {
-    console.log('adminAbort - error', error);
+    console.log('finalize - error', error);
     return;
   }
 
@@ -2191,6 +2236,8 @@ async function getMarketAndPoolInfoDb(tokenMintPublicKey: string): Promise<{
   market_id: string | null;
   pool_id: string | null;
 } | null> {
+  if (tokenMintPublicKey == undefined) return null;
+
   const pool = new sql.ConnectionPool(DB_CONFIG);
   try {
     await pool.connect();

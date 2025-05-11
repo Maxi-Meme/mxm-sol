@@ -63,7 +63,7 @@ impl<'info> Claim<'info> {
         let auction_bump = auction.bump;
         let lock_percent = auction.lock_percent;
         let min_total_sol = self.global_info.config.min_total_sol;
-        require!(!auction.is_admin_aborted, CustomError::AuctionAdminAborted);
+        require!(!auction.is_finalized, CustomError::AuctionAlreadyFinalized);
 
         // Log initial claim information
         msg!("claim - Processing claim for auction ID: {}", auction_id);
