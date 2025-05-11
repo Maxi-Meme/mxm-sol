@@ -64,6 +64,7 @@ import "dotenv/config";
 import * as sql from "mssql";
 //import { program } from "@coral-xyz/anchor/dist/cjs/native/system";
 
+const RENT_EXEMPT_MIN = 890880; // devnet 
 
 const DB_CONFIG: sql.config = {
   user: process.env.DB_USERNAME,
@@ -104,11 +105,15 @@ var program: Program<MaxiAuction>;
 var adminKp: Keypair;
 var USER_KPs: Keypair[];
 
+// prevent moveliq from triggering
+var MOVELIQ_DISABLE = false;
+
 describe("maxi-auction", () => {
   // setup provider & program
   var providerEnv = anchor.AnchorProvider.env();
   anchor.setProvider(providerEnv);
   console.log("rpcEndpoint URL:", providerEnv.connection.rpcEndpoint);
+
   isLocal = providerEnv.connection.rpcEndpoint.indexOf("0.0.0.0") > -1;
   isDevnet = providerEnv.connection.rpcEndpoint.indexOf("devnet") > -1;
   isMainnet = isLocal == false && isDevnet == false;
@@ -117,6 +122,7 @@ describe("maxi-auction", () => {
   console.log("isMainnet", isMainnet);
   connection = providerEnv.connection;
   program = anchor.workspace.MaxiAuction as Program<MaxiAuction>;
+  console.log("program.programId:", program.programId.toBase58());
 
   // add log listener
   const seenLogs = new Map();
@@ -142,7 +148,11 @@ describe("maxi-auction", () => {
   program.addEventListener("auctionFilled", async (event) => {
     logObject(">>> auctionFilled", event);
 
-    if (isLocal) {
+    if (MOVELIQ_DISABLE) {
+      console.log("auctionFilled event received on local network: NOP, no raydium here...");
+      return;
+    }
+    else if (isLocal) {
       console.log("auctionFilled event received on local network: NOP, no raydium here...");
     }
     else {
@@ -162,8 +172,8 @@ describe("maxi-auction", () => {
       // Process migration and resolve the promise
       migrateAuction(program, isMainnet, auctionId, adminKp, connection)
         .catch((err) => {
-          console.log(`auction ${auctionId} migration complete - catch`);
-          console.error(`migrateAuction -> error`, err);
+          console.error(`auction ${auctionId} migration complete - catch`, err);
+          throw err;
         })
         .finally(async () => {
           console.log(`auction ${auctionId} migration complete - finally`);
@@ -323,8 +333,8 @@ describe("maxi-auction", () => {
     let { auctionSol, } = await test_cancel_bid(USER_KPs[2]);
 
     const auctionSolBalance = await connection.getBalance(auctionSol);
-    assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction");
-
+    console.log("auctionSolBalance", auctionSolBalance.toString() / LAMPORTS_PER_SOL);
+    assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction"); // cancel bids will reduce sol account to 0
   });
 
   it("cancels - bids from same user", async () => {
@@ -372,7 +382,7 @@ describe("maxi-auction", () => {
     //if (isLocal) {
     await test_create_auction_KP0();
     await test_bid_auction({ fill_percent: 0.5 });
-    await test_bid_auction({ fill_percent: 0.5 }); // fill auction
+    await test_bid_auction({ fill_percent: 0.5, }); // fill auction
     try {
       await test_bid_auction({ fill_percent: 0.1 }); // must fail
     }
@@ -400,18 +410,17 @@ describe("maxi-auction", () => {
   });
 
   it("admin - no withdraws during auction", async () => {
-    await test_admin_withdraws({ n_bids: 1, withdraw_tokens: false, withdraw_sol: true, fill_auction: false });
+    await test_admin_withdraws({ n_bids: 1, withdraw_tokens: false, withdraw_sol: true, fill_auction: false }); // keep auction open - no liqmove
     await test_admin_withdraws({ n_bids: 1, withdraw_tokens: true, withdraw_sol: false, fill_auction: false });
   });
 
   it("admin - withdraws after auction with 2 distinct bids", async () => {
-    await test_admin_withdraws({ n_bids: 2, withdraw_tokens: false, withdraw_sol: true, fill_auction: true });
+    MOVELIQ_DISABLE = true; // STOP MAIN LIQMOVE HANDLER: it conflicts with this, as we will exercise the admin withdraw flow (a subsystem of moveliq)
+
+    await test_admin_withdraws({ n_bids: 2, withdraw_tokens: false, withdraw_sol: true, fill_auction: true }); // fill auction to set conditions for withdraws
     await test_admin_withdraws({ n_bids: 2, withdraw_tokens: true, withdraw_sol: false, fill_auction: true });
   });
 
-  //
-  // todo - refactor these to get all pool infos in one call (it's supported: [] if inputs) // "You have exceeded the rate limit of 30 requests per minute."
-  //
   it("admin - list auctions & pools", async () => {
     // get all auctions
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
@@ -425,10 +434,39 @@ describe("maxi-auction", () => {
     const results = await Promise.all(promises);
     const successfulResults = results.filter(result => result !== null);
 
-    successfulResults.forEach(async (x) => {
-      await logAuctionDetails(x);
+    // Collect poolDbInfos and pool IDs from DB
+    const poolDbInfosPromises = successfulResults.map(x => getMarketAndPoolInfoDb(x.tokenMintPublicKey));
+    const poolDbInfos = await Promise.all(poolDbInfosPromises);
+    const poolIds = poolDbInfos.map(info => info?.pool_id).filter(id => id !== undefined && id !== null);
+    const uniquePoolIds = [...new Set(poolIds)];
+
+    // Fetch all pool infos in one RPC 
+    const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: false, blockhashCommitment: 'finalized' });
+    const rpcResult = uniquePoolIds.length > 0 ? await raydium.liquidity.getRpcPoolInfos(uniquePoolIds) : {};
+    const poolPpcInfosMap = new Map(Object.entries(rpcResult));
+
+    // Log
+    const detailPromises = successfulResults.map(async (x, index) => {
+      const poolDbInfo = poolDbInfos[index];
+      const poolPpcInfo = poolDbInfo?.pool_id ? poolPpcInfosMap.get(poolDbInfo.pool_id) : undefined;
+      const poolPrice = Number(poolPpcInfo?.poolPrice);
+      const baseReserve = new BN(poolPpcInfo?.baseReserve, 16);
+      const quoteReserve = new BN(poolPpcInfo?.quoteReserve, 16);
+      console.log(
+        `ID: ${x.auctionId.toString().padEnd(3)}, [${x.status.padEnd(25)}], ` +
+        `AD: ${x.solBalanceAuctionData ?? "-".padEnd(12)} (${x.rentExemptionAuctionData ?? "".padEnd(12)}), ` +
+        `AS: ${(x.solBalanceAuctionSol ?? "-").padEnd(12)} (${(x.rentExemptionAuctionSol ?? "").padEnd(12)}), ` +
+        `AT: ${x.solBalanceAuctionTokenAccount ?? "-".padEnd(12)} (${x.rentExemptionAuctionTokenAccount ?? "".padEnd(12)}), ` +
+        `Tokens: ${x.tokenBalance.padEnd(12)}, ` +
+        `Mint: ${x.tokenMintPublicKey} ` +
+        (poolPpcInfo
+          ? `> PRICE: ${poolPrice.toFixed(6)} LIQ: [${baseReserve.toString()} T-lamports, ${(Number(quoteReserve.toString()) / LAMPORTS_PER_SOL).toFixed(9)} WSOL] `
+          : '')
+      );
     });
-  })
+    await Promise.all(detailPromises);
+  });
+
   it("admin - remove liquidity from pools ### ACHTUNG ###", async () => {
     // get all auctions
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
@@ -445,13 +483,21 @@ describe("maxi-auction", () => {
     const successfulResults = results.filter(result => result !== null);
 
     const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: true, blockhashCommitment: 'confirmed', });
-    successfulResults.forEach(async (x) => {
-      const poolDb = await getMarketAndPoolInfo(x.tokenMintPublicKey);
-      var poolPpcInfo = undefined;
-      if (poolDb.pool_id) {
-        const rpcResult = await raydium.liquidity.getRpcPoolInfos([poolDb.pool_id]);
-        poolPpcInfo = Object.values(rpcResult)[0];
-      }
+
+    // Collect poolDbInfos and pool IDs
+    const poolDbInfosPromises = successfulResults.map(x => getMarketAndPoolInfoDb(x.tokenMintPublicKey));
+    const poolDbInfos = await Promise.all(poolDbInfosPromises);
+    const poolIds = poolDbInfos.map(info => info?.pool_id).filter(id => id !== undefined && id !== null);
+    const uniquePoolIds = [...new Set(poolIds)];
+
+    // Fetch all pool infos in one call
+    const rpcResult = uniquePoolIds.length > 0 ? await raydium.liquidity.getRpcPoolInfos(uniquePoolIds) : {};
+    const poolPpcInfosMap = new Map(Object.entries(rpcResult));
+
+    // Process each auction with pre-fetched pool info
+    const removalPromises = successfulResults.map(async (x, index) => {
+      const poolDb = poolDbInfos[index];
+      const poolPpcInfo = poolDb?.pool_id ? poolPpcInfosMap.get(poolDb.pool_id) : undefined;
       if (poolPpcInfo) {
         try {
           const poolId = poolDb.pool_id;
@@ -460,48 +506,50 @@ describe("maxi-auction", () => {
           lpBalance = await connection.getTokenAccountBalance(lpAta);
 
           if (lpBalance.value.amount > 0) {
-            console.log("BEFORE:")
-            await logAuctionDetails(x);
+            console.log("BEFORE:");
+            const poolPriceBefore = Number(poolPpcInfo.poolPrice);
+            const baseReserveBefore = new BN(poolPpcInfo.baseReserve, 16);
+            const quoteReserveBefore = new BN(poolPpcInfo.quoteReserve, 16);
+            console.log(`ID: ${x.auctionId.toString().padEnd(3)}, [${x.status.padEnd(20)}], SOL: ${x.solBalance}, Tokens: ${x.tokenBalance}, Mint: ${x.tokenMintPublicKey}` +
+              ` > ${poolId} price: ${poolPriceBefore.toFixed(6)} >> LIQ: [${baseReserveBefore.toString()} T-lamports, ${Number(quoteReserveBefore.toString()) / LAMPORTS_PER_SOL} WSOL]`
+            );
 
             // https://github.com/raydium-io/raydium-sdk-V2-demo/blob/master/src/amm/withdrawLiquidity.ts
-            let poolKeys: AmmV4Keys | undefined
-            let poolInfo: ApiV3PoolInfoStandardItem
+            let poolKeys: AmmV4Keys | undefined;
+            let poolInfo: ApiV3PoolInfoStandardItem;
             const withdrawLpAmount = new BN(lpBalance.value.amount);
             const isMainnet = false;
             if (isMainnet) {
               console.log(`raydium.api.fetchPoolById: `, poolInfo);
-              // note: api doesn't support get devnet pool info, so in devnet else we go rpc method
-              // if you wish to get pool info from rpc, also can modify logic to go rpc method directly
-              const data = await raydium.api.fetchPoolById({ ids: poolId })
-              poolInfo = data[0] as ApiV3PoolInfoStandardItem
+              const data = await raydium.api.fetchPoolById({ ids: poolId });
+              poolInfo = data[0] as ApiV3PoolInfoStandardItem;
             } else {
-              // note: getPoolInfoFromRpc method only return required pool data for computing not all detail pool info
               console.log(`raydium.liquidity.getPoolInfoFromRpc: `, poolInfo);
-              const data = await raydium.liquidity.getPoolInfoFromRpc({ poolId })
-              poolInfo = data.poolInfo
-              poolKeys = data.poolKeys
+              const data = await raydium.liquidity.getPoolInfoFromRpc({ poolId });
+              poolInfo = data.poolInfo;
+              poolKeys = data.poolKeys;
             }
             if (!poolInfo) {
               console.log(`poolInfo is undefined for auction ID ${x.auctionId}`);
-              throw new Error('poolInfo is undefined for auction ID ${x.auctionId}');
+              throw new Error(`poolInfo is undefined for auction ID ${x.auctionId}`);
             }
 
             if (!isValidAmm(poolInfo.programId)) {
               console.log(`target pool is not AMM pool`);
-              throw new Error('target pool is not AMM pool')
+              throw new Error('target pool is not AMM pool');
             }
             const [baseRatio, quoteRatio] = [
               new Decimal(poolInfo.mintAmountA).div(poolInfo.lpAmount || 1),
               new Decimal(poolInfo.mintAmountB).div(poolInfo.lpAmount || 1),
-            ]
+            ];
 
-            const withdrawAmountDe = new Decimal(withdrawLpAmount.toString()).div(10 ** poolInfo.lpMint.decimals)
+            const withdrawAmountDe = new Decimal(withdrawLpAmount.toString()).div(10 ** poolInfo.lpMint.decimals);
             const [withdrawAmountA, withdrawAmountB] = [
               withdrawAmountDe.mul(baseRatio).mul(10 ** (poolInfo?.mintA.decimals || 0)),
               withdrawAmountDe.mul(quoteRatio).mul(10 ** (poolInfo?.mintB.decimals || 0)),
-            ]
+            ];
 
-            const lpSlippage = 0.1 // means 1%
+            const lpSlippage = 0.1; // means 1%
 
             console.log(`lpMint: `, poolInfo.lpMint);
             console.log(`lpMint.decimals: `, poolInfo.lpMint.decimals);
@@ -516,49 +564,21 @@ describe("maxi-auction", () => {
               baseAmountMin: new BN(withdrawAmountA.mul(1 - lpSlippage).toFixed(0)),
               quoteAmountMin: new BN(withdrawAmountB.mul(1 - lpSlippage).toFixed(0)),
               txVersion: TxVersion.LEGACY,
-              // optional: set up priority fee here
-              // computeBudgetConfig: {
-              //   units: 600000,
-              //   microLamports: 46591500,
-              // },
-              // optional: add transfer sol to tip account instruction. e.g sent tip to jito
-              // txTipConfig: {
-              //   address: new PublicKey('96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5'),
-              //   amount: new BN(10000000), // 0.01 sol
-              // },
-            })
+            });
             console.log(`removeLiquidity -> ${x.auctionId}) => execRL...`);
             const rlSig = await execRL({ sendAndConfirm: true });
             console.log(`removeLiquidity -> ${rlSig.txId} for auction ID ${x.auctionId}) => execRL OK`);
 
-            console.log("AFTER:")
-            await logAuctionDetails(x);
+            console.log("AFTER:");
+            //...
           }
-        }
-        catch (err) {
+        } catch (err) {
           console.log("error: ", err);
         }
       }
     });
+    await Promise.all(removalPromises);
   });
-  async function logAuctionDetails(x) {
-    const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: false, blockhashCommitment: 'finalized', });
-    const poolDbInfo = await getMarketAndPoolInfo(x.tokenMintPublicKey);
-    var poolPpcInfo = undefined;
-    if (poolDbInfo.pool_id) {
-      const rpcResult = await raydium.liquidity.getRpcPoolInfos([poolDbInfo.pool_id]);
-      poolPpcInfo = Object.values(rpcResult)[0];
-    }
-    const poolPrice = Number(poolPpcInfo?.poolPrice);
-    const baseReserve = new BN(poolPpcInfo?.baseReserve, 16);
-    const quoteReserve = new BN(poolPpcInfo?.quoteReserve, 16);
-    console.log(`ID: ${x.auctionId.toString().padEnd(3)}, [${x.status.padEnd(20)}], SOL: ${x.solBalance}, Tokens: ${x.tokenBalance}, Mint: ${x.tokenMintPublicKey}` +
-      (poolPpcInfo
-        ? ` > ${poolDbInfo.pool_id} price: ${poolPrice.toFixed(6)} >> LIQ: [${baseReserve.toString()} T-lamports, ${Number(quoteReserve.toString()) / LAMPORTS_PER_SOL} WSOL]`
-        : '')
-    );
-    return { poolDbInfo, poolPpcInfo };
-  };  
 
   it("admin - abort all auctions ### ACHTUNG ###", async () => {
     // get all auctions
@@ -607,7 +627,7 @@ describe("maxi-auction", () => {
 
     // Place bids and capture results for both users
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
-    const bidResult2 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] }); // Full fill
+    const bidResult2 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1], skipLiqMoveAssumption: true }); // Full fill, failed auction - min sol not reached (no migration)
 
     // Calculate total bids and total fees using returned values
     const totalBids = bidResult1.bidAmountBN.add(bidResult2.bidAmountBN);
@@ -648,7 +668,8 @@ describe("maxi-auction", () => {
 
     // check no sol left in the auction - returned in full
     const auctionSolBalance = await connection.getBalance(auctionSol);
-    assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction");
+    console.log("auctionSolBalance", auctionSolBalance.toString() / LAMPORTS_PER_SOL);
+    assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction"); // claim (refund) will reduce sol account to 0
   });
 
   it("claims - full supply not bid", async () => {
@@ -672,7 +693,8 @@ describe("maxi-auction", () => {
     await test_claim_auction(USER_KPs[1], false, bidResult2);
     const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
     const auctionSolBalance = await connection.getBalance(auctionSol);
-    assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction");
+    console.log("auctionSolBalance", auctionSolBalance.toString() / LAMPORTS_PER_SOL);
+    assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction"); // claim (refund) will reduce sol account to 0
   });
 
   it("claims - one user claims two multiple bids", async () => {
@@ -680,7 +702,7 @@ describe("maxi-auction", () => {
     await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
     const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
-    const bidResult3 = await test_bid_auction({ fill_percent: 0.2, bidderKp: USER_KPs[2] });
+    const bidResult3 = await test_bid_auction({ fill_percent: 0.2, bidderKp: USER_KPs[2], skipLiqMoveAssumption: true }); // will finish failed
 
     // claim 1 - for 2 bids
     const user1mergedBidResults = {
@@ -698,7 +720,8 @@ describe("maxi-auction", () => {
     const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
     const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
     const auctionSolBalance = await connection.getBalance(auctionSol);
-    assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction");
+    console.log("auctionSolBalance", auctionSolBalance.toString() / LAMPORTS_PER_SOL);
+    assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction"); // claim (refund) will reduce sol account to 0
   });
 
   it("claims - only after auction is finished", async () => {
@@ -720,7 +743,7 @@ describe("maxi-auction", () => {
   });
 
   it("claims - e2e - low clearing price auction", async () => {
-    await test_e2e_auction_success({ lowClearingPrice: true });
+    await test_e2e_auction_success({ lowClearingPrice: true, });
   });
 
   it("claims - auction creator bids & claims", async () => {
@@ -728,11 +751,10 @@ describe("maxi-auction", () => {
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
     const bidResult2 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
     await test_claim_auction(USER_KPs[0], true, bidResult1); // creator claims
-
   });
 
   it("claims - e2e - withdraws & movesliq after claims", async () => {
-    await test_e2e_auction_success({ migrateAfterClaims: true });
+    await test_e2e_auction_success({ migrateAfterClaims: true }); // claims will happen first: patholigical case, we will trigger liqmove on event listener so it will happen fast
   });
 
   async function test_e2e_auction_success({
@@ -751,15 +773,20 @@ describe("maxi-auction", () => {
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
 
     await sleep(3);
-    const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
+    const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] }); // last filling bid
 
     await sleep(lowClearingPrice ? 20 : 3); // bid at end of auction for low clearing price
-    if (migrateAfterClaims) { // pause moveliq migration if requested
+    if (migrateAfterClaims) { // pause moveliq if requested - to test claims *after* migration (secondary case - main flow is moveliq, then claims)
       logger.color("yellow").log("migrateAfterClaims - pausing moveliq...");
       MOVELIQ_PAUSE = true;
     }
-    const bidResult3 = await test_bid_auction({ fill_percent: 0.2, bidderKp: USER_KPs[2], skipMigrationWait: true }); // final bid - will moveliq on devnet...
-    assert.deepEqual(bidResult3.auctionPost.lastStatus, { succeeded: {} }, "expected succeeded, got " + JSON.stringify((bidResult3.auctionPost.lastStatus))); // expect this on LAST FILLING BID
+    const bidResult3 = await test_bid_auction({ fill_percent: 0.2, bidderKp: USER_KPs[2], skipMigrationWait: true }); // final bid - will moveliq on devnet
+    if (lowClearingPrice) {
+      assert.deepEqual(bidResult3.auctionPost.lastStatus, { failedMinNotReached: {} }, "expected failedMinNotReached, got " + JSON.stringify((bidResult3.auctionPost.lastStatus)));
+    }
+    else {
+      assert.deepEqual(bidResult3.auctionPost.lastStatus, { succeeded: {} }, "expected succeeded, got " + JSON.stringify((bidResult3.auctionPost.lastStatus)));
+    }
 
     // log state
     var auctionPost = await program.account.auction.fetch(auctionData);
@@ -769,28 +796,35 @@ describe("maxi-auction", () => {
     });
 
     // claims
-    const { solTransferred: solTransferred1, tokensTransferred: tokensTransferred1 } = await test_claim_auction(USER_KPs[0], true, bidResult1);
-    const { solTransferred: solTransferred2, tokensTransferred: tokensTransferred2 } = await test_claim_auction(USER_KPs[1], true, bidResult2);
-    const { solTransferred: solTransferred3, tokensTransferred: tokensTransferred3 } = await test_claim_auction(USER_KPs[2], true, bidResult3);
+    const assumeSuccessAuction = !lowClearingPrice;
+    const { solTransferred: solTransferred1, tokensTransferred: tokensTransferred1 } = await test_claim_auction(USER_KPs[0], assumeSuccessAuction, bidResult1);
+    const { solTransferred: solTransferred2, tokensTransferred: tokensTransferred2 } = await test_claim_auction(USER_KPs[1], assumeSuccessAuction, bidResult2);
+    const { solTransferred: solTransferred3, tokensTransferred: tokensTransferred3 } = await test_claim_auction(USER_KPs[2], assumeSuccessAuction, bidResult3);
 
-    // release moveliq migration if requested
+    // proceed with moveliq migration, if prior pause was requested
     if (migrateAfterClaims) {
       logger.color("yellow").log("migrateAfterClaims - releasing moveliq...");
       MOVELIQ_PAUSE = false;
-      await waitForMigration(auctionId); // with no await earlier for "mixed mode": claims & migration happening at the same time.!
+      await waitForMigration(auctionId);
     }
 
-    // first bidder should get change, & tokens
-    assert.equal(solTransferred1 > 0, true, "first bidder should get change");
-    assert.equal(tokensTransferred1 > 0, true, "first bidder should get tokens");
 
-    // same for second bidder
-    assert.equal(solTransferred2 > 0, true, "second bidder should get change");
-    assert.equal(tokensTransferred2 > 0, true, "second bidder should get tokens");
-
-    // last bidder gets no change, but gets tokens
-    assert.equal(solTransferred3 == 0, true, "last bidder should get no change");
-    assert.equal(tokensTransferred3 > 0, true, "last bidder should get tokens");
+    if (assumeSuccessAuction) {
+      assert.equal(solTransferred1 > 0, true, "first bidder should get change"); // first bidder should get change, & tokens
+      assert.equal(tokensTransferred1 > 0, true, "first bidder should get tokens");
+      assert.equal(solTransferred2 > 0, true, "second bidder should get change"); // same for second bidder
+      assert.equal(tokensTransferred2 > 0, true, "second bidder should get tokens");
+      assert.equal(solTransferred3 == 0, true, "last bidder should get no change"); // last bidder gets no change, but gets tokens
+      assert.equal(tokensTransferred3 > 0, true, "last bidder should get tokens");
+    }
+    else {
+      assert.equal(solTransferred1 > 0, true, "first bidder should get refund"); // all get a refund and no tokens
+      assert.equal(tokensTransferred1 == 0, true, "first bidder should get no tokens");
+      assert.equal(solTransferred2 > 0, true, "second bidder should get refund");
+      assert.equal(tokensTransferred2 == 0, true, "second bidder should get no tokens");
+      assert.equal(solTransferred3 > 0, true, "last bidder should get refund");
+      assert.equal(tokensTransferred3 == 0, true, "last bidder should get no tokens");
+    }
 
     // check correct amount of sol is left in the auction...
     auctionPost = await program.account.auction.fetch(auctionData);
@@ -824,27 +858,30 @@ describe("maxi-auction", () => {
       assert.equal(auctionSolBalance.toString(), expectedSolInAuction.toString(), "should be correct amount of sol left in the auction");
     }
     else {
-      // liqmove happened and claims happened...
-      console.log(`auctionSolBalance`, auctionSolBalance.toString() / LAMPORTS_PER_SOL);
+      if (assumeSuccessAuction) {
+        // liqmove happened *and* claims happened...
+        console.log(`auctionSolBalance`, auctionSolBalance.toString() / LAMPORTS_PER_SOL);
 
-
-      assert.equal(//BigInt(auctionSolBalance) < BigInt(0.001 * LAMPORTS_PER_SOL),  // life is suffering
-        auctionSolBalance == 0, true, "should be no sol left in the auction");
+        assert.equal(//BigInt(auctionSolBalance) < BigInt(0.001 * LAMPORTS_PER_SOL),  // life is suffering
+          auctionSolBalance == RENT_EXEMPT_MIN, true, "should be RENT_EXEMPT_MIN left in the auction after liqmove and claims"); // withdraw_sol will hold back RENT_EXEMPT_MIN
+      }
+      else {
+        // no liqmove happened, but claims did happen...
+        console.log(`auctionSolBalance`, auctionSolBalance.toString() / LAMPORTS_PER_SOL);
+        assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction after claims"); // claims should have returned all sol
+      }
     }
   }
 
   async function test_claim_auction(bidderKp: Keypair, assumeSuccessAuction: boolean = true, bidResult: any = undefined): Promise<{ solTransferred: number, tokensTransferred: number }> {
     logger.color("magenta").log(`${bidderKp.publicKey} is claiming...`);
 
-    // **Derive PDAs**
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
     const auctionId = Number(globalInfoAccount.auctionsNum) - 1; // Claim against the last auction
     const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
     const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
-    //console.log("auctionId", auctionId, "auctionSol", auctionSol.toBase58(), "auctionData", auctionData.toBase58());
     const auctionPre = await program.account.auction.fetch(auctionData);
-    //logObject("auctionPre", auctionPre);
     auctionPre.bids.forEach((bid) => {
       console.log("bid", bid.bidder.toBase58(), `qty`, bid.bidQty.toNumber(), `price sol`, bid.bidSol.toNumber() / LAMPORTS_PER_SOL, `fee sol`, bid.bidFee.toNumber() / LAMPORTS_PER_SOL, `isClaimed`, bid.isClaimed);
     });
@@ -969,14 +1006,15 @@ describe("maxi-auction", () => {
   }
 
   async function test_admin_withdraws({ n_bids = 1, withdraw_tokens = false, withdraw_sol = false, fill_auction = false }) {
+
     // Step 1: Create an auction and place bid(s) to populate the auction with SOL and tokens
     await test_create_auction_KP0();
     for (var i = 0; i < n_bids; i++) {
-      const kp = USER_KPs[i % USER_KPs.length];
+      const kp = USER_KPs[i % USER_KPs.length]; ``
       await test_bid_auction({ fill_percent: 0.5 / n_bids, bidderKp: kp }); // bid up to half supply
     }
     if (fill_auction) {
-      await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] }); // fill auction if requested
+      await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0], skipMigrationWait: true }); // fill auction if requested
     }
 
     // Step 2: Derive necessary accounts
@@ -1057,49 +1095,49 @@ describe("maxi-auction", () => {
         console.error("logs:", await err.getLogs());
         throw err;
       }
-  
-      if (fill_auction) {
-        // Step 6: Fetch balances after withdrawal
-        const adminSolAfter = await connection.getBalance(adminKp.publicKey);
-        const auctionSolAfter = await connection.getBalance(auctionSol);
-
-        const auctionTokenBalanceAfter = await connection.getTokenAccountBalance(auctionTokenAccount);
-        const auctionTokenAfter = BigInt(auctionTokenBalanceAfter.value.amount);
-
-        const adminTokenBalanceAfter = await connection.getTokenAccountBalance(adminTokenAccount.address);
-        const adminTokenAfter = BigInt(adminTokenBalanceAfter.value.amount);
-
-        // Step 7: Log balances for debugging
-        console.log("Balances before withdrawal:");
-        console.log(`Admin SOL: ${(adminSolBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-        console.log(`Auction SOL: ${(auctionSolBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-        console.log(`Auction Tokens: ${auctionTokenBefore.toString()} tokens`);
-        console.log(`Admin Tokens: ${adminTokenBefore.toString()} tokens`);
-
-        console.log("Balances after withdrawal:");
-        console.log(`Admin SOL: ${(adminSolAfter / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-        console.log(`Auction SOL: ${(auctionSolAfter / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-        console.log(`Auction Tokens: ${auctionTokenAfter.toString()} tokens`);
-        console.log(`Admin Tokens: ${adminTokenAfter.toString()} tokens`);
-
-        // Step 8: Assertions
-        // SOL assertions remain unchanged
-        assert.ok(auctionSolAfter >= 890880, "Auction SOL account should retain at least rent-exempt minimum");
-        assert.equal(adminSolAfter > adminSolBefore, true, "Admin SOL should increase after withdrawal");
-
-        // Token assertions updated for partial withdrawal
-        assert.equal(
-          auctionTokenAfter.toString(),
-          expectedAuctionTokenAfter.toString(),
-          "Auction token account should have the remaining tokens after withdrawal"
-        );
-        assert.equal(
-          adminTokenAfter.toString(),
-          expectedAdminTokenAfter.toString(),
-          "Admin token balance should increase by the withdrawn amount"
-        );
-      }
     }
+
+    if (fill_auction) {
+      // Step 6: Fetch balances after withdrawal
+      const adminSolAfter = await connection.getBalance(adminKp.publicKey);
+      const auctionSolAfter = await connection.getBalance(auctionSol);
+
+      const auctionTokenBalanceAfter = await connection.getTokenAccountBalance(auctionTokenAccount);
+      const auctionTokenAfter = BigInt(auctionTokenBalanceAfter.value.amount);
+
+      const adminTokenBalanceAfter = await connection.getTokenAccountBalance(adminTokenAccount.address);
+      const adminTokenAfter = BigInt(adminTokenBalanceAfter.value.amount);
+
+      // Step 7: Log balances for debugging
+      console.log("Balances before withdrawal:");
+      console.log(`Admin SOL: ${(adminSolBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+      console.log(`Auction SOL: ${(auctionSolBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+      console.log(`Auction Tokens: ${auctionTokenBefore.toString()} tokens`);
+      console.log(`Admin Tokens: ${adminTokenBefore.toString()} tokens`);
+
+      console.log("Balances after withdrawal:");
+      console.log(`Admin SOL: ${(adminSolAfter / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+      console.log(`Auction SOL: ${(auctionSolAfter / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+      console.log(`Auction Tokens: ${auctionTokenAfter.toString()} tokens`);
+      console.log(`Admin Tokens: ${adminTokenAfter.toString()} tokens`);
+
+      // Step 8: Assertions
+      // SOL assertions remain unchanged
+      assert.ok(auctionSolAfter >= 890880, "Auction SOL account should retain at least rent-exempt minimum");
+      assert.equal(adminSolAfter > adminSolBefore, true, "Admin SOL should increase after withdrawal");
+
+      // Token assertions updated for partial withdrawal
+      assert.equal(
+        auctionTokenAfter.toString(),
+        expectedAuctionTokenAfter.toString(),
+        "Auction token account should have the remaining tokens after withdrawal"
+      );
+      assert.equal(
+        adminTokenAfter.toString(),
+        expectedAdminTokenAfter.toString(),
+        "Admin token balance should increase by the withdrawn amount"
+      );
+    }    
   }
 
   async function test_create_pool_and_trade() { // https://github.com/raydium-io/raydium-sdk-V2-demo/tree/master/src/amm
@@ -1413,10 +1451,6 @@ describe("maxi-auction", () => {
     poolInfo = await getPrice();
     await swap(false);
     poolInfo = await getPrice();
-
-    //
-    // TODO -- remove liquidity from the pool...
-    //
   }
 
   async function test_init(mintotal_sol: number = undefined) {
@@ -1579,7 +1613,8 @@ describe("maxi-auction", () => {
     fill_percent = 1.0, // 0-1
     bidderKp = USER_KPs[1],
     useAuctionId = undefined,
-    skipMigrationWait = false
+    skipMigrationWait = false,
+    skipLiqMoveAssumption = false
   }) {
     logger.color("magenta").log(`${bidderKp.publicKey} is bidding...`);
 
@@ -1697,28 +1732,34 @@ describe("maxi-auction", () => {
       if (isLocal) {
         ;
       }
-      else { // Check Raydium liquidity move worked ok
+      else {
+        if (!skipLiqMoveAssumption) {
+        // Check Raydium liquidity move worked ok
         //assert.equal(auctionSolBalanceAfter, 0, "All SOL should be withdrawn"); // Check all SOL withdrawn - NOT TRUE, if claims haven't happened yet...
 
-        const lockPercent = auctionPost.lockPercent.toNumber(); // Calculate locked and expected remaining tokens
-        const lockedTokensPercent = lockPercent / 10;
-        const totalTokens = auctionPost.tokenSupply.toNumber();
-        const lockedTokens = Math.floor((totalTokens * lockedTokensPercent) / 100);
-        const expectedRemainingTokens = totalTokens - lockedTokens;
+          const lockPercent = auctionPost.lockPercent.toNumber(); // Calculate locked and expected remaining tokens
+          const lockedTokensPercent = lockPercent / 10;
+          const totalTokens = auctionPost.tokenSupply.toNumber();
+          const lockedTokens = Math.floor((totalTokens * lockedTokensPercent) / 100);
+          const expectedRemainingTokens = totalTokens - lockedTokens;
 
-        const auctionTokenAccount = await getAssociatedTokenAddress(auctionPost.tokenMint, auctionSol, true); // Get auction token balance
-        const auctionTokenBalance = await connection.getTokenAccountBalance(auctionTokenAccount);
-        const remainingTokens = parseInt(auctionTokenBalance.value.amount);
+          const auctionTokenAccount = await getAssociatedTokenAddress(auctionPost.tokenMint, auctionSol, true); // Get auction token balance
+          const auctionTokenBalance = await connection.getTokenAccountBalance(auctionTokenAccount);
+          const remainingTokens = parseInt(auctionTokenBalance.value.amount);
 
-        //console.log('lockPercent', lockPercent);
-        //console.log('lockedTokensPercent', lockedTokensPercent);
-        //console.log('totalTokens', totalTokens);
-        //console.log('lockedTokens', lockedTokens);
-        //console.log('expectedRemainingTokens', expectedRemainingTokens);
-        //console.log('remainingTokens', remainingTokens);
+          //console.log('lockPercent', lockPercent);
+          //console.log('lockedTokensPercent', lockedTokensPercent);
+          //console.log('totalTokens', totalTokens);
+          //console.log('lockedTokens', lockedTokens);
+          //console.log('expectedRemainingTokens', expectedRemainingTokens);
+          //console.log('remainingTokens', remainingTokens);
 
-        if (!skipMigrationWait) {
-          assert.equal(remainingTokens, expectedRemainingTokens, "Remaining tokens should be total tokens minus locked tokens");
+          if (!skipMigrationWait) {
+            assert.equal(remainingTokens, expectedRemainingTokens, "Remaining tokens should be total tokens minus locked tokens");
+          }
+        }
+        else {
+          console.log("Final Bid - skipping liq move assumption as requested...");
         }
       }
     } else {
@@ -2009,32 +2050,70 @@ async function waitForMigration(auctionId: number) {
 
 async function getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed) {
   try {
-    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
-    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    // Derive PDAs
+    const [auctionData] = PublicKey.findProgramAddressSync(
+      [Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)],
+      program.programId
+    );
+    const [auctionSol] = PublicKey.findProgramAddressSync(
+      [Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)],
+      program.programId
+    );
+
+    // Fetch auction state
     const auction = await program.account.auction.fetch(auctionData);
     const tokenMint = auction.tokenMint;
     const auctionTokenAccount = await getAssociatedTokenAddress(tokenMint, auctionSol, true);
-    const solBalance = await connection.getBalance(auctionSol);
-    const solInSol = (solBalance / LAMPORTS_PER_SOL).toFixed(9);
+
+    // Fetch account info for SOL balances and data lengths
+    const auctionDataInfo = await connection.getAccountInfo(auctionData);
+    const auctionSolInfo = await connection.getAccountInfo(auctionSol);
+    const auctionTokenAccountInfo = await connection.getAccountInfo(auctionTokenAccount);
+
+    // Handle cases where accounts might not exist (e.g., closed or never initialized)
+    //if (!auctionDataInfo) throw new Error(`Auction data account for ID ${auctionId} not found`);
+    //if (!auctionSolInfo) throw new Error(`Auction SOL account for ID ${auctionId} not found`);
+    //if (!auctionTokenAccountInfo) throw new Error(`Auction token account for ID ${auctionId} not found`);
+
+    // Get SOL balances (in lamports)
+    const solBalanceAuctionData = auctionDataInfo ? auctionDataInfo.lamports : undefined;
+    const solBalanceAuctionSol = auctionSolInfo ? auctionSolInfo.lamports : undefined;
+    const solBalanceAuctionTokenAccount = auctionTokenAccountInfo ? auctionTokenAccountInfo.lamports : undefined;
+
+    // Calculate rent exemptions based on data length
+    const rentExemptionAuctionData = auctionDataInfo ? await connection.getMinimumBalanceForRentExemption(auctionDataInfo.data.length) : undefined;
+    const rentExemptionAuctionSol = auctionSolInfo ? await connection.getMinimumBalanceForRentExemption(auctionSolInfo.data.length) : undefined;
+    const rentExemptionAuctionTokenAccount = auctionTokenAccountInfo ? await connection.getMinimumBalanceForRentExemption(auctionTokenAccountInfo.data.length) : undefined;
+
+    // Fetch token balance
     let tokenAmount = "0";
     try {
       const tokenBalance = await connection.getTokenAccountBalance(auctionTokenAccount);
       tokenAmount = tokenBalance.value.uiAmountString;
     } catch (error) {
       if (error.message.includes("could not find account")) {
-        tokenAmount = "0";
+        tokenAmount = "0"; // Account might be closed or not initialized
       } else {
         throw error;
       }
     }
-    const status = Object.keys(auction.lastStatus)[0]; // e.g., "live", "succeeded"
+
+    // Determine status
+    const status = Object.keys(auction.lastStatus)[0];
+
+    // Return detailed payload
     const details = {
       auctionId,
-      solBalance: solInSol,
+      solBalanceAuctionData: solBalanceAuctionData ? (solBalanceAuctionData / LAMPORTS_PER_SOL).toFixed(9) : undefined,
+      solBalanceAuctionSol: solBalanceAuctionSol ? (solBalanceAuctionSol / LAMPORTS_PER_SOL).toFixed(9) : undefined,
+      solBalanceAuctionTokenAccount: solBalanceAuctionTokenAccount ? (solBalanceAuctionTokenAccount / LAMPORTS_PER_SOL).toFixed(9) : undefined,
+      rentExemptionAuctionData: rentExemptionAuctionData ? (rentExemptionAuctionData / LAMPORTS_PER_SOL).toFixed(9) : undefined,
+      rentExemptionAuctionSol: rentExemptionAuctionSol ? (rentExemptionAuctionSol / LAMPORTS_PER_SOL).toFixed(9) : undefined,
+      rentExemptionAuctionTokenAccount: rentExemptionAuctionTokenAccount ? (rentExemptionAuctionTokenAccount / LAMPORTS_PER_SOL).toFixed(9) : undefined,
       tokenBalance: tokenAmount,
       status,
       isAdminAborted: auction.isAdminAborted,
-      tokenMintPublicKey: tokenMint.toBase58()
+      tokenMintPublicKey: tokenMint.toBase58(),
     };
     return details;
   } catch (error) {
@@ -2106,7 +2185,7 @@ async function abortAuction(auctionId) {
   console.log(`Auction ${auctionId} aborted successfully.`);
 }
 
-async function getMarketAndPoolInfo(tokenMintPublicKey: string): Promise<{
+async function getMarketAndPoolInfoDb(tokenMintPublicKey: string): Promise<{
   market_info: string | null;
   pool_keys: string | null;
   market_id: string | null;

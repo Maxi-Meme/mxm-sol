@@ -95,8 +95,8 @@ impl<'info> PlaceBid<'info> {
                 }
             }
             total_cost = low;
-            msg!("bumping total_cost to {} to cover min rent", total_cost);
-            
+            msg!("place_bid - bumping total_cost to {} to cover min rent", total_cost);
+
             // Calculate adjusted current_price (ceiling division)
             current_price = (total_cost + bid_quantity - 1) / bid_quantity;
 
@@ -107,13 +107,13 @@ impl<'info> PlaceBid<'info> {
         }
 
         // Log the values for debugging
-        msg!("bid_quantity: {}", bid_quantity);
-        msg!("current_price: {}", current_price);
-        msg!("remaining_tokens: {}", remaining_tokens);
-        msg!("total_cost: {}", total_cost);
-        msg!("auction_amount: {}", auction_amount);
-        msg!("fee: {}", fee);
-        msg!("min_rent: {}", min_rent);
+        msg!("place_bid - bid_quantity: {}", bid_quantity);
+        msg!("place_bid - current_price: {}", current_price);
+        msg!("place_bid - remaining_tokens: {}", remaining_tokens);
+        msg!("place_bid - total_cost: {}", total_cost);
+        msg!("place_bid - auction_amount: {}", auction_amount);
+        msg!("place_bid - fee: {}", fee);
+        msg!("place_bid - min_rent: {}", min_rent);
 
         // Transfer auction amount to auction_sol_account
         sol_transfer_user(
@@ -168,7 +168,7 @@ impl<'info> PlaceBid<'info> {
         );
         auction.last_status = auction_status;
         auction.clearing_price = clearing_price_wrapped.unwrap_or(0);
-        msg!("updated auction_status: {:?}", auction.last_status);
+        msg!("place_bid - updated auction_status: {:?}", auction.last_status);
 
         Ok(())
     }

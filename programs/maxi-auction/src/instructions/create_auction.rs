@@ -55,10 +55,10 @@ pub struct CreateAuction<'info> {
 
     /// CHECK: Signer for PDA - used as authority for the auction token account
     #[account(
-        //init_if_needed,
+        mut, // account must already exist
+        //init,
         //payer = creator,
         //space = 8,
-        mut,
         seeds = [AUCTION_SOL_SEED.as_ref(), global_info.auctions_num.to_le_bytes().as_ref()],
         bump
     )]

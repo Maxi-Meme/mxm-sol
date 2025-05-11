@@ -40,7 +40,7 @@ impl<'info> CancelBid<'info> {
         // Update and log auction finished status
         if Clock::get()?.unix_timestamp >= auction.end_timestamp {
             auction.is_finished = true;
-            msg!("Auction marked as finished");
+            msg!("cancel_bid - Auction marked as finished");
         }
         
         // Abort if the auction has finished
@@ -109,6 +109,7 @@ impl<'info> CancelBid<'info> {
         );
         auction.last_status = auction_status;
         auction.clearing_price = clearing_price_wrapped.unwrap_or(0);
+        msg!("cancel_bid - updated auction_status: {:?}", auction.last_status);
 
         Ok(())
     }

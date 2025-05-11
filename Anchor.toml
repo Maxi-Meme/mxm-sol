@@ -5,7 +5,7 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-maxi_auction = "3rSoaYQx1LBPnn5MepchZnj8tNzMpFHjoNGYYFcbRDXT"
+maxi_auction = "BkbYcL1k7YafoSghdWCpRBUR832hPwBMwUbyb67WqLQV"
 
 [programs.localnet]
 maxi_auction = "3rSoaYQx1LBPnn5MepchZnj8tNzMpFHjoNGYYFcbRDXT"

@@ -90,7 +90,11 @@ pub(crate) fn get_status_and_clearing_price(
     let rent_exempt_minimum = rent.minimum_balance(0); // 0 bytes for auction_sol_account
 
     // Subtract rent exemption to get final net_sol_raised
-    let net_sol_raised = net_sol_raised_before_rent.saturating_sub(/*rent_exempt_minimum*/0); // empty is cleaner
+    let net_sol_raised = net_sol_raised_before_rent.saturating_sub(rent_exempt_minimum); // empty would be nicer...
+
+    //
+    // ##### THIS IS STILL A PROBLEM... WE NEED TO MAINTAIN RENT_MIN UNTIL ALL LIQ IS MOVED AND/OR ALL CLAIMS ARE MOVED .... else account can be detailed by runtime!
+    //
 
     // Determine the auction status
     let supply_qty = auction.token_supply.saturating_div(10u64.pow(auction.token_decimals as u32));

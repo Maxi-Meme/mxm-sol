@@ -66,8 +66,8 @@ impl<'info> Claim<'info> {
         require!(!auction.is_admin_aborted, CustomError::AuctionAdminAborted);
 
         // Log initial claim information
-        msg!("Processing claim for auction ID: {}", auction_id);
-        msg!("Caller: {}", self.caller.key());
+        msg!("claim - Processing claim for auction ID: {}", auction_id);
+        msg!("claim - Caller: {}", self.caller.key());
 
         // Get and log auction status and clearing price
         let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(
@@ -76,13 +76,13 @@ impl<'info> Claim<'info> {
             min_total_sol,
         );
         let clearing_price = clearing_price_wrapped.unwrap_or(0);
-        msg!("Auction status: {:?}", auction_status);
-        msg!("Clearing price: {}", clearing_price);
+        msg!("claim - Auction status: {:?}", auction_status);
+        msg!("claim - Clearing price: {}", clearing_price);
 
         // Update and log auction finished status
         if Clock::get()?.unix_timestamp >= auction.end_timestamp {
             auction.is_finished = true;
-            msg!("Auction marked as finished");
+            msg!("claim - Auction marked as finished");
         }
 
         // Check if auction has finished
@@ -97,8 +97,8 @@ impl<'info> Claim<'info> {
         for (index, bid) in auction.bids.iter_mut().enumerate() {
             if bid.bidder == self.caller.key() && !bid.is_claimed {
                 // Log bid details
-                msg!("Processing bid index: {}", index);
-                msg!("Bid qty: {}, sol: {}, fee: {}", bid.bid_qty, bid.bid_sol, bid.bid_fee);
+                msg!("claim - Processing bid index: {}", index);
+                msg!("claim - Bid qty: {}, sol: {}, fee: {}", bid.bid_qty, bid.bid_sol, bid.bid_fee);
 
                 if auction_status == AuctionStatus::Succeeded {
                     if clearing_price == 0 {
@@ -120,7 +120,7 @@ impl<'info> Claim<'info> {
                     total_sol_to_refund = total_sol_to_refund
                         .checked_add(owed)
                         .ok_or(CustomError::Overflow)?;
-                    msg!("Paid: {}, Exact: {}, Owed: {}", paid, exact, owed);
+                    msg!("claim - Paid: {}, Exact: {}, Owed: {}", paid, exact, owed);
 
                     // Calculate and log claimable tokens
                     require!(lock_percent <= 1000, CustomError::InvalidLockPercent);
@@ -129,7 +129,7 @@ impl<'info> Claim<'info> {
                     total_tokens_to_claim = total_tokens_to_claim
                         .checked_add(claim_token_qty)
                         .ok_or(CustomError::Overflow)?;
-                    msg!("Claimable tokens for this bid: {}", claim_token_qty);
+                    msg!("claim - Claimable tokens for this bid: {}", claim_token_qty);
                 } else {
                     // Auction failed: refund SOL minus fee
                     let paid = bid
@@ -141,30 +141,30 @@ impl<'info> Claim<'info> {
                     total_sol_to_refund = total_sol_to_refund
                         .checked_add(paid)
                         .ok_or(CustomError::Overflow)?;
-                    msg!("Refund for failed auction: {}", paid);
+                    msg!("claim - Refund for failed auction: {}", paid);
                 }
 
                 // Mark bid as claimed and log
                 bid.is_claimed = true;
                 processed_bids += 1;
-                msg!("Bid marked as claimed");
+                msg!("claim - Bid marked as claimed");
             }
         }
 
         // Log totals
-        msg!("Total SOL to refund: {}", total_sol_to_refund);
-        msg!("Total tokens to claim: {}", total_tokens_to_claim);
-        msg!("Processed bids: {}", processed_bids);
+        msg!("claim - Total SOL to refund: {}", total_sol_to_refund);
+        msg!("claim - Total tokens to claim: {}", total_tokens_to_claim);
+        msg!("claim - Processed bids: {}", processed_bids);
 
         // Check if any bids were processed
         if processed_bids == 0 {
-            msg!("No unclaimed bids found for caller");
+            msg!("claim - No unclaimed bids found for caller");
             return err!(CustomError::NoBidFoundForCaller);
         }
 
         // Transfer SOL refund if applicable
         if total_sol_to_refund > 0 {
-            msg!("Transferring SOL refund: {}", total_sol_to_refund);
+            msg!("claim - Transferring SOL refund: {}", total_sol_to_refund);
             sol_transfer_with_signer(
                 self.auction_sol_account.to_account_info(),
                 self.caller.to_account_info(),
@@ -180,7 +180,7 @@ impl<'info> Claim<'info> {
 
         // Transfer tokens if auction succeeded
         if auction_status == AuctionStatus::Succeeded && total_tokens_to_claim > 0 {
-            msg!("Transferring tokens: {}", total_tokens_to_claim);
+            msg!("claim - Transferring tokens: {}", total_tokens_to_claim);
             let cpi_accounts = SplTransfer {
                 from: self.auction_token_account.to_account_info(),
                 to: self.caller_token_account.to_account_info(),
@@ -214,8 +214,8 @@ impl<'info> Claim<'info> {
         // Update and log auction state
         auction.last_status = auction_status;
         auction.clearing_price = clearing_price_wrapped.unwrap_or(0);
-        msg!("Updated auction status: {:?}", auction.last_status);
-        msg!("Updated clearing price: {}", auction.clearing_price);
+        msg!("claim - Updated auction status: {:?}", auction.last_status);
+        msg!("claim - Updated clearing price: {}", auction.clearing_price);
 
         Ok(())
     }

@@ -240,7 +240,7 @@ async function createAndFundPool(program: Program<MaxiAuction>, isMainnet: boole
   const baseAmount = new BN(tokenAmount.toString());
   const quoteAmount = new BN(wsolAmount.toString());
   console.log(`createAndFundPool -> baseAmount (tokens)`, baseAmount.toString());
-  console.log(`createAndFundPool -> quoteAmount (sol)`, quoteAmount.div(new BN(LAMPORTS_PER_SOL)).toString());
+  console.log(`createAndFundPool -> quoteAmount (lamports)`, quoteAmount.toString());
   if (baseAmount.mul(quoteAmount).lte(new BN(1).mul(new BN(10 ** baseMintInfo.decimals)).pow(new BN(2)))) { // need 1 sol for 1b tokens at 10^9 decimals
     throw new Error('initial liquidity too low');
   }
