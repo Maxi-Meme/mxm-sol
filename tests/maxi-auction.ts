@@ -271,6 +271,10 @@ describe("maxi-auction", () => {
     await test_create_auction_KP0();
   });
 
+  it("base - creates a short auction", async () => {
+    await test_create_auction_KP0(undefined, 1); // 1 unit ~= 36s
+  });
+
   it("base - places a bid", async () => {
     await test_create_auction_KP0();
     await test_bid_auction({ fill_percent: 0.1 });
