@@ -60,6 +60,7 @@ impl<'info> Claim<'info> {
     pub fn process(&mut self) -> Result<()> {
         let auction = &mut self.auction_data_account;
         let auction_id = auction.id;
+        let token_decimals = auction.token_decimals;
         let auction_bump = auction.bump;
         let dist_percent = auction.dist_percent;
         let min_total_sol = self.global_info.config.min_total_sol;
@@ -105,7 +106,7 @@ impl<'info> Claim<'info> {
                         return err!(CustomError::InvalidClearingPrice);
                     }
 
-                    // Calculate and log SOL refund
+                    // Auction succeeded: calc and log sol change
                     let paid = bid
                         .bid_qty
                         .checked_mul(bid.bid_sol)
@@ -117,30 +118,38 @@ impl<'info> Claim<'info> {
                         .checked_mul(clearing_price)
                         .ok_or(CustomError::Overflow)?;
                     let owed = paid.saturating_sub(exact);
-                    total_sol_to_refund = total_sol_to_refund
-                        .checked_add(owed)
-                        .ok_or(CustomError::Overflow)?;
-                    msg!("claim - Paid: {}, Exact: {}, Owed: {}", paid, exact, owed);
 
-                    // Calculate and log claimable tokens
-                    let claim_token_qty = (bid.bid_qty as u128 * (1000 - dist_percent as u128) / 1000) as u64;
+                        total_sol_to_refund = total_sol_to_refund
+                            .checked_add(owed)
+                            .ok_or(CustomError::Overflow)?;
+                        msg!("claim - Paid: {}, Exact: {}, Owed: {}", paid, exact, owed);
 
-                    total_tokens_to_claim = total_tokens_to_claim
-                        .checked_add(claim_token_qty)
+                    // Auction succeeded: calc & log token distribution
+                    let claim_token_qty = bid.bid_qty
+                        .checked_mul(dist_percent)
+                        .ok_or(CustomError::Overflow)?
+                        .checked_div(1000)
+                        .ok_or(CustomError::Overflow)?
+                        .checked_mul(10u64.pow(token_decimals as u32))
                         .ok_or(CustomError::Overflow)?;
-                    msg!("claim - Claimable tokens for this bid: {}", claim_token_qty);
+                        
+                        total_tokens_to_claim = total_tokens_to_claim
+                            .checked_add(claim_token_qty)
+                            .ok_or(CustomError::Overflow)?;
+                        msg!("claim - Claimable tokens for this bid: {}", claim_token_qty);
                 } else {
-                    // Auction failed: refund SOL minus fee
+                    // Auction failed: refund sol minus fee
                     let paid = bid
                         .bid_qty
                         .checked_mul(bid.bid_sol)
                         .ok_or(CustomError::Overflow)?
                         .checked_sub(bid.bid_fee)
                         .ok_or(CustomError::Overflow)?;
-                    total_sol_to_refund = total_sol_to_refund
-                        .checked_add(paid)
-                        .ok_or(CustomError::Overflow)?;
-                    msg!("claim - Refund for failed auction: {}", paid);
+                    
+                        total_sol_to_refund = total_sol_to_refund
+                            .checked_add(paid)
+                            .ok_or(CustomError::Overflow)?;
+                        msg!("claim - Refund for failed auction: {}", paid);
                 }
 
                 // Mark bid as claimed and log
@@ -179,6 +188,7 @@ impl<'info> Claim<'info> {
 
         // Transfer tokens if auction succeeded
         if auction_status == AuctionStatus::Succeeded && total_tokens_to_claim > 0 {
+            msg!("claim - Token balance: {}", self.auction_token_account.amount);
             msg!("claim - Transferring tokens: {}", total_tokens_to_claim);
             let cpi_accounts = SplTransfer {
                 from: self.auction_token_account.to_account_info(),
