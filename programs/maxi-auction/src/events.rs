@@ -6,7 +6,7 @@ pub struct AuctionCreated {
     pub creator: Pubkey,
     pub x_id: u64,
     pub token_mint: Pubkey,
-    pub lock_percent: u64,
+    pub dist_percent: u64,
 }
 
 #[event]

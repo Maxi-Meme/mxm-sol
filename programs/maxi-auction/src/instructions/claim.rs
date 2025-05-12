@@ -61,7 +61,7 @@ impl<'info> Claim<'info> {
         let auction = &mut self.auction_data_account;
         let auction_id = auction.id;
         let auction_bump = auction.bump;
-        let lock_percent = auction.lock_percent;
+        let dist_percent = auction.dist_percent;
         let min_total_sol = self.global_info.config.min_total_sol;
         require!(!auction.is_finalized, CustomError::AuctionAlreadyFinalized);
 
@@ -123,9 +123,8 @@ impl<'info> Claim<'info> {
                     msg!("claim - Paid: {}, Exact: {}, Owed: {}", paid, exact, owed);
 
                     // Calculate and log claimable tokens
-                    require!(lock_percent <= 1000, CustomError::InvalidLockPercent);
-                    let claim_token_qty =
-                        (bid.bid_qty as u128 * (1000 - lock_percent as u128) / 1000) as u64;
+                    let claim_token_qty = (bid.bid_qty as u128 * (1000 - dist_percent as u128) / 1000) as u64;
+
                     total_tokens_to_claim = total_tokens_to_claim
                         .checked_add(claim_token_qty)
                         .ok_or(CustomError::Overflow)?;

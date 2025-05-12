@@ -22,7 +22,7 @@ pub struct Auction {
     pub token_mint: Pubkey,   // 32
     pub token_supply: u64,    // 8
     pub token_decimals: u8,   // 1
-    pub lock_percent: u64,    // 8
+    pub dist_percent: u64,    // 8
     pub bump: u8,             // 1
     pub delay_in_seconds: u64, // 8
     pub bids: Vec<Bid>,       // 73 * max_bid

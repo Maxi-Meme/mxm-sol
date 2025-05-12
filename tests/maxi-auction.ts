@@ -32,7 +32,7 @@ import {
   auctionSolSeed,
   auctionDataSeed,
 
-  TEST_LOCK_PERCENT,
+  TEST_DISTRIBTION_PERCENT,
   TEST_STARTPRICE_SOL,
   TEST_TOKEN_DECIMALS,
   TEST_TOKEN_NAME,
@@ -288,13 +288,32 @@ describe("maxi-auction", () => {
     await test_create_auction_KP0(undefined, 2);
   });
 
+  it("base - creates a one hour auction and bids until the end", async () => {
+    const durationSecs = 60 * 5;
+    const everySecs = 10;
+    const nBids = Number(durationSecs / everySecs);
+    const bidPerc = (1 / (nBids - 1)); // we'll fill at the last minute
+    console.log(`nBids: ${nBids}, bidPerc: ${bidPerc}`);
+    await test_create_auction_KP0(undefined, durationSecs / 36);
+    for (let i = 0; i < nBids; i++) { // bid same user, let's see what happens...
+      await test_bid_auction({ fill_percent: bidPerc });
+      await sleep(everySecs);
+    }
+  });
+
   it("base - places a bid", async () => {
     await test_create_auction_KP0();
     await test_bid_auction({ fill_percent: 0.1 });
   });
 
+  it("base - user 1 fills & claims auction", async () => {
+    await test_create_auction_KP0(0.95, 1,); // 5% token lock, 36s
+    const bidResult = await test_bid_auction({ fill_percent: 1.0, bidderKp: USER_KPs[0] });
+    await test_claim_auction(USER_KPs[0], true, bidResult);
+  });
+
   it("cancels - only during auction period", async () => {
-    await test_create_auction_KP0(0.05, 1); // 36s
+    await test_create_auction_KP0(0.95, 1); // 36s
 
     const bidResult1 = await test_bid_auction({ fill_percent: 0.1, bidderKp: USER_KPs[1] });
     await test_cancel_bid(USER_KPs[1]); // cancel the first bid within the auction period (should succeed)
@@ -361,7 +380,7 @@ describe("maxi-auction", () => {
   });
 
   it("base - places a late bid", async () => {
-    await test_create_auction_KP0(0.05, 1); // ~36 secs
+    await test_create_auction_KP0(0.95, 1); // ~36 secs, 95% distribution
     await sleep(32);
     await test_bid_auction({ fill_percent: 0.1 });
   });
@@ -611,7 +630,7 @@ describe("maxi-auction", () => {
   it("claims - min total sol not reached", async () => {
     await test_init(10000); // 10k SOL minimum needed to move liquidity - will cause this auction to finished failed
 
-    await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0(0.95, 1); // 5% lock, 1 hour/100 duration (~36s)
 
     // Derive auction-related accounts after creating the auction
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
@@ -676,7 +695,7 @@ describe("maxi-auction", () => {
   });
 
   it("claims - full supply not bid", async () => {
-    await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0(0.95, 1); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
     const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
     logger.color("magenta").log("sleeping 36s...");
@@ -702,7 +721,7 @@ describe("maxi-auction", () => {
 
   it("claims - one user claims two multiple bids", async () => {
     await test_init(10000); // 10k SOL minimum needed to move liquidity - will cause this auction to finished failed
-    await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0(0.95, 1); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
     const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
     const bidResult3 = await test_bid_auction({ fill_percent: 0.2, bidderKp: USER_KPs[2], skipLiqMoveAssumption: true }); // will finish failed
@@ -728,7 +747,7 @@ describe("maxi-auction", () => {
   });
 
   it("claims - only after auction is finished", async () => {
-    await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0(0.95, 1); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
     const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
 
@@ -750,7 +769,7 @@ describe("maxi-auction", () => {
   });
 
   it("claims - auction creator bids & claims", async () => {
-    await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0(0.95, 1); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
     const bidResult2 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
     await test_claim_auction(USER_KPs[0], true, bidResult1); // creator claims
@@ -764,7 +783,7 @@ describe("maxi-auction", () => {
     lowClearingPrice = false,
     migrateAfterClaims = false // default/mainpath is to migrate *before* claims
   } = {}) {
-    await test_create_auction_KP0(0.05, 1); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0(0.95, 1); // 5% lock, 1 hour/100 duration (~36s)
 
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
@@ -1517,7 +1536,7 @@ describe("maxi-auction", () => {
   }
 
   async function test_create_auction_KP0(
-    auction_lock_percent = undefined, // 0-1
+    auction_distribution_percent = undefined, // 0-1
     duration_hours_div100 = undefined) {
     const signer = USER_KPs[0];
 
@@ -1537,7 +1556,7 @@ describe("maxi-auction", () => {
     const symbol = TEST_TOKEN_SYMBOL;
     const uri = TEST_TOKEN_URI;
     const durationHours = new BN(duration_hours_div100 || 10); // about 5mins: unit is actually hours_div_100, or 36s 
-    const lockPercent = new BN(auction_lock_percent * 1000 || TEST_LOCK_PERCENT); 
+    const distPercent = new BN(auction_distribution_percent !== undefined ? (auction_distribution_percent * 1000) : TEST_DISTRIBTION_PERCENT);
     const delaySeconds = new BN(0);
 
     // Log balances of all signing accounts before the transaction
@@ -1550,11 +1569,11 @@ describe("maxi-auction", () => {
     console.log(`Admin (${adminKp.publicKey.toBase58()}): ${(adminBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
     console.log(`Signer (${signer.publicKey.toBase58()}): ${(signerBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
     console.log(`Token mint (${token.publicKey.toBase58()}): ${(tokenBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-    console.log(`lockPercent: ${lockPercent.toNumber()/10} %`);
+    console.log(`distPercent: ${distPercent} = ${distPercent.toNumber() / 10}%`);
     console.log('durationHours', durationHours.toNumber());
 
     const tx = await program.methods
-      .createAuction(xId, name, symbol, uri, durationHours, lockPercent, delaySeconds)
+      .createAuction(xId, name, symbol, uri, durationHours, distPercent, delaySeconds)
       .accounts({
         creator: signer.publicKey,
         admin: adminKp.publicKey,
@@ -1902,9 +1921,9 @@ function logAuctionInfo(poolDbInfos: { market_info: string | null; pool_keys: st
   const quoteReserve = new BN(poolPpcInfo?.quoteReserve, 16);
   console.log(
     `ID: ${x.auctionId.toString().padEnd(3)}, [${(x.status ?? "-").padEnd(25)}], ` +
-    `AD: ${x.solBalanceAuctionData ?? "-".padEnd(12)} (${x.rentExemptionAuctionData ?? "".padEnd(12)}), ` +
-    `AS: ${(x.solBalanceAuctionSol ?? "-").padEnd(12)} (${(x.rentExemptionAuctionSol ?? "").padEnd(12)}), ` +
-    `AT: ${x.solBalanceAuctionTokenAccount ?? "-".padEnd(12)} (${x.rentExemptionAuctionTokenAccount ?? "".padEnd(12)}), ` +
+    `AD: ${(x.solBalanceAuctionData ?? "-").padEnd(12)} (${(x.rentExemptionAuctionData ?? " ").padEnd(12)}), ` +
+    `AS: ${(x.solBalanceAuctionSol ?? "-").padEnd(12)} (${(x.rentExemptionAuctionSol ?? " ").padEnd(12)}), ` +
+    `AT: ${x.solBalanceAuctionTokenAccount ?? "-".padEnd(12)} (${(x.rentExemptionAuctionTokenAccount ?? "").padEnd(12)}), ` +
     `Tokens: ${x.tokenBalance.padEnd(12)}, ` +
     `Mint: ${x.tokenMintPublicKey} ` +
     (poolPpcInfo

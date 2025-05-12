@@ -65,8 +65,11 @@ pub enum CustomError {
     #[msg("Invalid PDA.")]
     InvalidPDA,
 
-    #[msg("Lock percent must be between 10 and 1000 (1 and 100%)")]
-    InvalidLockPercent,
+    //#[msg("Lock percent must be between 10 and 1000 (1 and 100%)")]
+    //InvalidLockPercent,
+
+    #[msg("Invalid distribution percent.")]
+    InvalidDistPercent,
 
     #[msg("Auction liquidity already moved.")]
     AuctionLiquidityMoved,

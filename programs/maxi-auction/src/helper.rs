@@ -7,7 +7,6 @@ use anchor_lang::{prelude::*};
 pub(crate) fn get_remaining_tokens(auction: &Auction) -> u64 { // integer token units (not lamports
     let token_qty = auction
         .token_supply // token lamports
-    //.saturating_mul(1000 - auction.lock_percent as u64))
       .saturating_div(10u64.pow(auction.token_decimals as u32));
 
     let allocated: u64 = auction.bids.iter().map(|b| b.bid_qty).sum();
@@ -154,67 +153,3 @@ fn get_clearing_price(auction: &Auction) -> Option<u64> {
     }
     return None;
 }
-
-/*pub(crate) fn get_auction_status(auction: &Auction, current_time: i64) -> AuctionStatus {
-    let token_qty = auction
-        .token_supply
-        //.saturating_mul(1000 - auction.lock_percent as u64))
-        //.saturating_div(1000 * 10u64.pow(auction.token_decimals as u32)
-        ;
-
-    let allocated: u64 = auction.bids.iter().map(|b| b.bid_qty).sum();
-    if allocated >= token_qty { // && minsol reached
-        AuctionStatus::Succeeded 
-    } else if current_time < auction.start_timestamp {
-        AuctionStatus::Pending
-    } else if current_time < auction.end_timestamp {
-        AuctionStatus::Live
-    } else {
-        AuctionStatus::Failed
-    }
-}
-
-pub(crate) fn get_auction_clearing_price(auction: &Auction) -> Option<u64> {
-    let status = get_auction_status(auction, Clock::get().unwrap().unix_timestamp);
-    match status {
-        AuctionStatus::Pending => {
-            None // Auction hasn't started yet, no clearing price
-        }
-        AuctionStatus::Live => {
-            // TODO: change to weighted avg...
-            // clearing price = the last (lowest) bid in final order
-            // Bids are stored oldest first = highest first (?), we must confirm:
-            // The spec says: "oldest (highest) first" - so the last in the vector is the lowest
-            if auction.bids.is_empty() {
-                return None;
-            }
-            let last_bid = auction.bids.last().unwrap();
-            Some(last_bid.bid_sol)
-        }
-        AuctionStatus::Succeeded => {
-            let token_qty = auction
-                .token_supply
-                //.saturating_mul(1000 - auction.lock_percent as u64))
-                //.saturating_div(1000 * 10u64.pow(auction.token_decimals as u32)
-                ;
-
-            // clearing price is the last bid that exactly fills the supply
-            let mut cummulative_qty = 0u64;
-            for bid in &auction.bids {
-                cummulative_qty += bid.bid_qty;
-                if cummulative_qty == token_qty {
-                    return Some(bid.bid_sol);
-                }
-                if cummulative_qty > token_qty {
-                    // Should never happen if placeBid ensures no over-allocation
-                    // Just return Some(bid.bid_sol) anyway, or None to indicate error.
-                    return None;
-                }
-            }
-            None
-        }
-        AuctionStatus::Failed => {
-            return None;
-        }
-    }
-}*/

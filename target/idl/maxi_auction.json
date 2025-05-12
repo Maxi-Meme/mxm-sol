@@ -593,7 +593,7 @@
           "type": "u64"
         },
         {
-          "name": "lock_percent",
+          "name": "dist_percent",
           "type": "u64"
         },
         {
@@ -1255,8 +1255,8 @@
     },
     {
       "code": 6020,
-      "name": "InvalidLockPercent",
-      "msg": "Lock percent must be between 10 and 1000 (1 and 100%)"
+      "name": "InvalidDistPercent",
+      "msg": "Invalid distribution percent."
     },
     {
       "code": 6021,
@@ -1341,7 +1341,7 @@
             "type": "u8"
           },
           {
-            "name": "lock_percent",
+            "name": "dist_percent",
             "type": "u64"
           },
           {
@@ -1415,7 +1415,7 @@
             "type": "pubkey"
           },
           {
-            "name": "lock_percent",
+            "name": "dist_percent",
             "type": "u64"
           }
         ]

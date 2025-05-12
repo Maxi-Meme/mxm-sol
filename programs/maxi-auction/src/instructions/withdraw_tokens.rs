@@ -81,10 +81,9 @@ impl<'info> WithdrawTokens<'info> {
         auction.clearing_price = clearing_price_wrapped.unwrap_or(0);
         msg!("updated auction_status: {:?}", auction.last_status);
 
-        // Calculate amount to transfer: (token_balance * lock_percent) / 1000
+        // Calculate amount to transfer: (token_balance * dist_percent) / 1000
         let token_balance = self.auction_token_account.amount;
-        require!(auction.lock_percent <= 1000, CustomError::InvalidLockPercent);
-        let withdrawable = ((token_balance as u128) * (auction.lock_percent as u128) / 1000) as u64;
+        let withdrawable = ((token_balance as u128) * (auction.dist_percent as u128) / 1000) as u64;
         msg!("withdrawable {}", withdrawable);
         token::transfer(
             CpiContext::new_with_signer(

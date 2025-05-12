@@ -37,7 +37,7 @@ pub mod maxi_auction {
         symbol: String,
         uri: String,
         duration_hours: u64,
-        lock_percent: u64,
+        dist_percent: u64,
         delay_in_seconds: u64,
     ) -> Result<()> {
         ctx.accounts.process(
@@ -47,7 +47,7 @@ pub mod maxi_auction {
             symbol,
             uri,
             duration_hours,
-            lock_percent,
+            dist_percent,
             delay_in_seconds,
         )
     }

@@ -110,13 +110,13 @@ impl<'info> CreateAuction<'info> {
         uri: String,
         // --------------- auction config --------------- //
         duration_hours: u64,
-        lock_percent: u64,
+        dist_percent: u64,
         delay_in_seconds: u64,
         //start_price: u64,
     ) -> Result<()> {
         msg!("Calling create_auction...");
 
-        require!(lock_percent >= 10 && lock_percent <= 500, CustomError::InvalidLockPercent); // 1% - 50% lock
+        require!(dist_percent >= 80 && dist_percent <= 1000, CustomError::InvalidDistPercent); // 80% - 100% distribution
 
         let global_info = &mut self.global_info;
         let creator = &mut self.creator;
@@ -211,7 +211,7 @@ impl<'info> CreateAuction<'info> {
         auction_data_account.token_mint = token_mint.key();
         auction_data_account.token_supply = global_info.config.default_token_supply;
         auction_data_account.token_decimals = global_info.config.default_token_decimals;
-        auction_data_account.lock_percent = lock_percent; //lock_percent.unwrap_or(global_info.config.default_lock_percent);
+        auction_data_account.dist_percent = dist_percent; 
         auction_data_account.bids = vec![];
         auction_data_account.bump = auction_bump;
         auction_data_account.delay_in_seconds = delay_in_seconds;
@@ -233,7 +233,7 @@ impl<'info> CreateAuction<'info> {
             creator: creator.key(),
             x_id,
             token_mint: token_mint.key(),
-            lock_percent: auction_data_account.lock_percent,
+            dist_percent: auction_data_account.dist_percent,
         });
 
         Ok(())
