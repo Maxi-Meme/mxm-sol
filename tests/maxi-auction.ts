@@ -1780,7 +1780,7 @@ describe("maxi-auction", () => {
           console.log('remainingTokens', remainingTokens);
 
           if (!skipMigrationWait) {
-            //assert.equal(remainingTokens, expectedRemainingTokens, "Remaining tokens should be total tokens minus locked tokens");
+            assert.equal(remainingTokens, expectedRemainingTokens, "Remaining tokens should be total tokens minus locked tokens");
           }
         }
         else {
