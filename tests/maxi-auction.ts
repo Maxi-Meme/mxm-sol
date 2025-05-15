@@ -1,5 +1,5 @@
 import * as anchor from "@coral-xyz/anchor";
-import { Program } from "@coral-xyz/anchor";
+import { AnchorProvider, Program } from "@coral-xyz/anchor";
 import {
   Keypair,
   PublicKey,
@@ -107,6 +107,40 @@ var USER_KPs: Keypair[];
 
 // prevent moveliq from triggering
 var MOVELIQ_DISABLE = false;
+
+export async function setupProgramWithDeployedId(
+  programId: PublicKey,
+  network: string,
+  adminKp: Keypair
+): Promise<Program<any>> {
+  // Set up the connection to the specified network
+  const connection = new Connection(network, "confirmed");
+
+  // Set up the provider with the connection and admin keypair
+  const wallet = new anchor.Wallet(adminKp);
+  const provider = new AnchorProvider(connection, wallet, { commitment: "confirmed" });
+  anchor.setProvider(provider);
+
+  // Derive the IDL account address using the programId
+  const idlAddress = await PublicKey.findProgramAddressSync(
+    [Buffer.from("anchor:idl")],
+    programId
+  );
+
+  // Fetch the IDL account data from the blockchain
+  const idlAccountInfo = await connection.getAccountInfo(idlAddress[0]);
+  if (!idlAccountInfo) {
+    throw new Error(`IDL not found for programId: ${programId.toBase58()}`);
+  }
+
+  // Parse the IDL from the account data (skip the first 8 bytes for the discriminator)
+  const idlBuffer = idlAccountInfo.data.slice(8);
+  const idl = JSON.parse(idlBuffer.toString("utf8")) as Idl;
+
+  // Create and return the Program instance using the fetched IDL
+  const program = new Program(idl, programId, provider);
+  return program;
+}
 
 describe("maxi-auction", () => {
   // setup provider & program
@@ -278,14 +312,24 @@ describe("maxi-auction", () => {
   });
 
   it("base - creates an auction", async () => {
-    await test_create_auction_KP0();
+    await test_create_auction_KP0({});
   });
 
   it("base - creates a 1 min auction", async () => {
-    await test_create_auction_KP0(undefined, 1); // 1 unit ~= 36s
+    await test_create_auction_KP0({ duration_hours_div100: 1 }); // 1 unit ~= 36s
   });
   it("base - creates a 2 min auction", async () => {
-    await test_create_auction_KP0(undefined, 2);
+    await test_create_auction_KP0({ duration_hours_div100: 2 });
+  });
+
+  it("base - admin creates & bids 50%, 1 min, no claim", async () => {
+    await test_create_auction_KP0({ duration_hours_div100: 1 }); // 1 unit ~= 36s
+    await test_bid_auction({ fill_percent: 0.5, bidderKp: adminKp });
+  });
+
+  it("base - admin creates & bids 100%, 1 min, no claim", async () => {
+    await test_create_auction_KP0({ duration_hours_div100: 1 }); // 1 unit ~= 36s
+    await test_bid_auction({ fill_percent: 1.0, bidderKp: adminKp });
   });
 
   it("base - creates a one hour auction and bids until the end", async () => {
@@ -294,7 +338,7 @@ describe("maxi-auction", () => {
     const nBids = Number(durationSecs / everySecs);
     const bidPerc = (1 / (nBids - 1)); // we'll fill at the last minute
     console.log(`nBids: ${nBids}, bidPerc: ${bidPerc}`);
-    await test_create_auction_KP0(undefined, durationSecs / 36);
+    await test_create_auction_KP0({ duration_hours_div100: durationSecs / 36 });
     for (let i = 0; i < nBids; i++) { // bid same user, let's see what happens...
       await test_bid_auction({ fill_percent: bidPerc });
       await sleep(everySecs);
@@ -302,18 +346,18 @@ describe("maxi-auction", () => {
   });
 
   it("base - places a bid", async () => {
-    await test_create_auction_KP0();
+    await test_create_auction_KP0({});
     await test_bid_auction({ fill_percent: 0.1 });
   });
 
   it("base - user 1 fills & claims auction", async () => {
-    await test_create_auction_KP0(0.95, 1,); // 5% token lock, 36s
+    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% token lock, 36s
     const bidResult = await test_bid_auction({ fill_percent: 1.0, bidderKp: USER_KPs[0] });
     await test_claim_auction(USER_KPs[0], true, bidResult);
   });
 
   it("cancels - only during auction period", async () => {
-    await test_create_auction_KP0(0.95, 1); // 36s
+    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 36s
 
     const bidResult1 = await test_bid_auction({ fill_percent: 0.1, bidderKp: USER_KPs[1] });
     await test_cancel_bid(USER_KPs[1]); // cancel the first bid within the auction period (should succeed)
@@ -343,7 +387,7 @@ describe("maxi-auction", () => {
   });
 
   it("cancels - bids from different users", async () => {
-    await test_create_auction_KP0();
+    await test_create_auction_KP0({});
 
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
     const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[2] });
@@ -357,7 +401,7 @@ describe("maxi-auction", () => {
   });
 
   it("cancels - bids from same user", async () => {
-    await test_create_auction_KP0();
+    await test_create_auction_KP0({});
 
     await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
     await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
@@ -387,19 +431,19 @@ describe("maxi-auction", () => {
 
 
   it("base - user can bid twice", async () => {
-    await test_create_auction_KP0();
+    await test_create_auction_KP0({});
     await test_bid_auction({ fill_percent: 0.1 });
     await test_bid_auction({ fill_percent: 0.1 });
   });
 
   it("fills - auction fully filled", async () => {
-    await test_create_auction_KP0();
+    await test_create_auction_KP0({});
     await test_bid_auction({ fill_percent: 1.0 }); // fill
   });
 
   it("fills - no bids after filled", async () => {
     //if (isLocal) {
-    await test_create_auction_KP0();
+    await test_create_auction_KP0({});
     await test_bid_auction({ fill_percent: 0.5 });
     await test_bid_auction({ fill_percent: 0.5, }); // fill auction
     try {
@@ -1535,9 +1579,10 @@ describe("maxi-auction", () => {
     }
   }
 
-  async function test_create_auction_KP0(
+  async function test_create_auction_KP0({
     auction_distribution_percent = undefined, // 0-1
-    duration_hours_div100 = undefined) {
+    duration_hours_div100 = undefined }
+  ) {
     const signer = USER_KPs[0];
 
     logger.color("magenta").log(`${signer.publicKey.toBase58()} is creating auction...`);
@@ -2184,8 +2229,6 @@ async function getAuctionDetails(auctionId, connection, program, auctionDataSeed
     return null; // Return null for failed queries to filter later
   }
 }
-
-
 
 async function finalizeAuction(auctionId) {
   const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
