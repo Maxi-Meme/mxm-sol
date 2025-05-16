@@ -1648,227 +1648,85 @@ describe("maxi-auction", () => {
   });
 
   async function test_create_clmm_and_trade_v3() {
-    if (isLocal) {
-      logger.color("yellow").log("Skipping pool creation on localnet");
-      return;
-    }
+    if (isLocal) return logger.color("yellow").log("Skipping pool creation on localnet");
 
-    const adminBalanceAtStart = await connection.getBalance(adminKp.publicKey);
-    const txVersion = TxVersion.LEGACY;
-    const SUPPLY_TOKENS = 200; // Total supply of 200 whole tokens
-    const SUPPLY_DECIMALS = 6; // Token decimals
-    const LIQ_TOKENS = 100; // Locked tokens (100 whole tokens)
-    const LIQ_SOL = 0.2; // Locked SOL
-    const INITIAL_PRICE = 0.002; // Initial price in SOL per token
-    const B_PARAM = 0.999; // b parameter to maximize range
+    // KEY VARS
+    const INITIAL_PRICE = 0.1,         // model: price can be arbitrary, but we start at ~0.1 sol/token
+      LIQ_TOKENS = 50,                 // model: 5% lock on 1000 tokens
+      LIQ_SOL = INITIAL_PRICE * 1000;  // model: we raise ~1000 * price
 
-    // **Step 1: Set up connection and keypairs && Initialize the Raydium SDK**
-    const minterKp = adminKp;
-    const raydium = await Raydium.load({
-      connection,
-      owner: minterKp,
-      disableFeatureCheck: true,
-      blockhashCommitment: 'confirmed', //  blockhashCommitment: 'finalized'
-    });
+    const SUPPLY_TOKENS = 200, SUPPLY_DECIMALS = 6;
+    const txVersion = TxVersion.LEGACY, minterKp = adminKp;
+    // empircally determined min/max ticks for CLMM v3 - to create a full range position, v. important!
+    // we can 
+    const MIN_TICK = -443636 / 2, MAX_TICK = +443636 / 2;
+
+    // **Initialize Raydium SDK**
+    const raydium = await Raydium.load({ connection, owner: minterKp, disableFeatureCheck: true, blockhashCommitment: 'confirmed' });
     logger.color("green").log("Raydium SDK loaded");
 
-    // **Step 2: Mint a new token with total supply of 200**
+    // **Mint Token (200 tokens)**
     const tokenMint = await createMint(connection, minterKp, minterKp.publicKey, null, SUPPLY_DECIMALS);
     const minterTokenAccount = await getOrCreateAssociatedTokenAccount(connection, minterKp, tokenMint, minterKp.publicKey);
-    const totalSupply = new BN(SUPPLY_TOKENS).mul(new BN(10).pow(new BN(SUPPLY_DECIMALS)));
-    await mintTo(connection, minterKp, tokenMint, minterTokenAccount.address, minterKp, BigInt(totalSupply.toString()));
-    console.log('WSOLMint', WSOLMint.toBase58());
-    console.log('tokenMint', tokenMint.toBase58());
-
-    // Check that the tokens are minted correctly
-    const tokenBalance = await connection.getTokenAccountBalance(minterTokenAccount.address);
-    assert.equal(tokenBalance.value.uiAmount, SUPPLY_TOKENS, "Minter has wrong # of tokens after mint");
+    await mintTo(connection, minterKp, tokenMint, minterTokenAccount.address, minterKp, BigInt(new BN(SUPPLY_TOKENS).mul(new BN(10).pow(new BN(SUPPLY_DECIMALS))).toString()));
+    assert.equal((await connection.getTokenAccountBalance(minterTokenAccount.address)).value.uiAmount, SUPPLY_TOKENS, "Minter token balance mismatch");
     logger.color("green").log("Minted tokens");
 
-    // **Step 3: Wrap SOL into WSOL**
+    // **Wrap SOL to WSOL if needed**
     const minterWsolAccount = await getOrCreateAssociatedTokenAccount(connection, minterKp, WSOLMint, minterKp.publicKey);
-    const wsolBalance = await connection.getTokenAccountBalance(minterWsolAccount.address);
-    const currentWsolAmount = wsolBalance.value.uiAmount || 0;
-    console.log(`Current WSOL balance: ${currentWsolAmount} WSOL`);
-    if (currentWsolAmount < LIQ_SOL) {
-      const shortfall = LIQ_SOL - currentWsolAmount;
-      const lamportsToWrap = Math.ceil(shortfall * LAMPORTS_PER_SOL);
-      console.log(`Wrapping ${shortfall} SOL to reach ${LIQ_SOL} WSOL`);
+    const wsolShortfall = LIQ_SOL - ((await connection.getTokenAccountBalance(minterWsolAccount.address)).value.uiAmount || 0);
+    if (wsolShortfall > 0) {
+      console.log('wsolShortfall', wsolShortfall);
       const wrapTx = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: minterKp.publicKey,
-          toPubkey: minterWsolAccount.address,
-          lamports: lamportsToWrap,
-        }),
+        SystemProgram.transfer({ fromPubkey: minterKp.publicKey, toPubkey: minterWsolAccount.address, lamports: Math.ceil(wsolShortfall * LAMPORTS_PER_SOL) }),
         createSyncNativeInstruction(minterWsolAccount.address)
       );
       wrapTx.feePayer = minterKp.publicKey;
       wrapTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-      const wrapSig = await sendAndConfirmTransaction(connection, wrapTx, [minterKp]);
-      await logSuccessTx(connection, wrapSig, "Wrapped minter's SOL into WSOL");
+      await logSuccessTx(connection, await sendAndConfirmTransaction(connection, wrapTx, [minterKp]), "Wrapped SOL to WSOL");
     }
 
-    // **Step 4: Create the CLMM Pool**
-    //const clmmConfigs = await raydium.api.getClmmConfigs(); // mainnet
-    const clmmConfigs = clmmDevConfigs; // devnet
-    console.log('clmmConfigs[0]', clmmConfigs[0]);
-    console.log(`DEVNET_PROGRAM_ID.CLMM`, DEVNET_PROGRAM_ID.CLMM);
-    const ammConfig = { ...clmmConfigs[0], id: new PublicKey(clmmConfigs[0].id), fundOwner: '', description: '' };
-
-    // Define ApiV3Token for the new token
-    const tokenInfo: ApiV3Token = {
-      chainId: 103, // devnet
-      address: tokenMint.toBase58(),
-      programId: TOKEN_PROGRAM_ID.toBase58(),
-      logoURI: '',
-      symbol: 'TEST',
-      name: 'Test Token',
-      decimals: SUPPLY_DECIMALS,
-      tags: ['test-token'],       // Array of tags for categorization
-      extensions: {},             // Object for additional metadata (empty as placeholder)
-    };
-    // Define ApiV3Token for WSOL
-    const wsolInfo: ApiV3Token = {
-      chainId: 103, // devnet
-      address: WSOLMint.toBase58(),
-      programId: TOKEN_PROGRAM_ID.toBase58(),
-      logoURI: 'https://example.com/wsol.png',
-      symbol: 'WSOL',
-      name: 'Wrapped SOL',
-      decimals: 9,
-      tags: ['wrapped', 'solana'],
-      extensions: {},
-    };
-
+    // **Create CLMM Pool**
+    const adminBalanceAtStart = await connection.getBalance(adminKp.publicKey);
+    const ammConfig = { ...clmmDevConfigs[0], id: new PublicKey(clmmDevConfigs[0].id), fundOwner: '', description: '' };
+    const tokenInfo = { chainId: 103, address: tokenMint.toBase58(), programId: TOKEN_PROGRAM_ID.toBase58(), symbol: 'TEST', name: 'Test Token', decimals: SUPPLY_DECIMALS, tags: ['test-token'], extensions: {} };
+    const wsolInfo = { chainId: 103, address: WSOLMint.toBase58(), programId: TOKEN_PROGRAM_ID.toBase58(), symbol: 'WSOL', name: 'Wrapped SOL', decimals: 9, tags: ['wrapped', 'solana'], extensions: {} };
     const { execute: execCreatePool, extInfo: poolExtInfo } = await raydium.clmm.createPool({
-      programId: DEVNET_PROGRAM_ID.CLMM,
-      mint1: tokenInfo,
-      mint2: wsolInfo,
-      ammConfig,
-      initialPrice: new Decimal(INITIAL_PRICE),
-      txVersion,
+      programId: DEVNET_PROGRAM_ID.CLMM, mint1: tokenInfo, mint2: wsolInfo, ammConfig, initialPrice: new Decimal(INITIAL_PRICE), txVersion
     });
     const createPoolTx = await execCreatePool({ sendAndConfirm: true });
-    await logSuccessTx(connection, createPoolTx.txId, "Pool created"); // want to await for finalized TX
-
-    console.log('CLMM pool created: ', createPoolTx.txId);
-    console.log('poolExtInfo:', JSON.stringify(poolExtInfo, null, 2));
+    await logSuccessTx(connection, createPoolTx.txId, "Pool created");
     const poolId = poolExtInfo.address.poolId;
-    console.log('poolId', poolId.toBase58()); // B5xbbmXm9CwzAKfrERRb9ANyijkzNtZumLmpKEYKuoN3
 
-    // **Step 5: Calculate the Liquidity Range**
-    const S = LIQ_SOL * 10 ** 9; // 200,000,000 lamports
-    const T = LIQ_TOKENS * 10 ** SUPPLY_DECIMALS; // 100,000,000 smallest units
-    const S_div_T = S / T; // 2
-    const b = B_PARAM; // 0.999
-    const a = b / (S_div_T * 10 ** -3 / INITIAL_PRICE); // 0.999 / (2 * 0.001 / 0.002) = 0.999 / 1 = 0.999
-    const k = 1 / (1 - a) ** 2; // 1,000,000
-    const m = 1 / (1 - b) ** 2; // 1,000,000
-    const expectedP_a = INITIAL_PRICE / m; // 0.000000002
-    const expectedP_b = INITIAL_PRICE * k; // 2,000
-
-    console.log('S', S);
-    console.log('T', T);
-    console.log('S_div_T', S_div_T);
-    console.log('b', b);
-    console.log('a', a);
-    console.log('k', k);
-    console.log('m', m);
-    console.log('expectedP_a', expectedP_a);
-    console.log('expectedP_b', expectedP_b);
-
+    // **Set Full Range Ticks**
     const poolInfo = await raydium.clmm.getPoolInfoFromRpc(poolId.toBase58());
-    const tickLower = TickUtils.getPriceAndTick({
-      poolInfo: poolInfo.poolInfo,
-      price: new Decimal(expectedP_a),
-      baseIn: true,
-    }).tick;
-    const tickUpper = TickUtils.getPriceAndTick({
-      poolInfo: poolInfo.poolInfo,
-      price: new Decimal(expectedP_b),
-      baseIn: true,
-    }).tick;
+    const tickSpacing = poolInfo.poolInfo.tickSpacing;
+    const tickLower = Math.ceil(MIN_TICK / tickSpacing) * tickSpacing; // Adjusted min tick
+    const tickUpper = Math.floor(MAX_TICK / tickSpacing) * tickSpacing; // Adjusted max tick
 
-    // Adjust ticks to tick spacing (assume 0.3% fee tier, tick spacing = 60)
-    const tickSpacing = 60;
-    const adjustedTickLower = Math.floor(tickLower / tickSpacing) * tickSpacing;
-    const adjustedTickUpper = Math.ceil(tickUpper / tickSpacing) * tickSpacing;
-
-    // **Step 6: Open Liquidity Position**
-    const baseAmount = new BN(LIQ_TOKENS).mul(new BN(10).pow(new BN(SUPPLY_DECIMALS)));
-    const quoteAmount = new BN(LIQ_SOL * 10 ** 9);
-    const { execute: execOpenPosition, extInfo: positionExtInfo } = await raydium.clmm.openPositionFromBase({
-      poolInfo: poolInfo.poolInfo,
-      poolKeys: poolExtInfo.address,
-      tickLower: adjustedTickLower,
-      tickUpper: adjustedTickUpper,
-      base: 'MintA',
-      ownerInfo: { useSOLBalance: true },
-      baseAmount,
-      otherAmountMax: quoteAmount,
-      txVersion,
+    // **Open Full Range Liquidity Position**
+    const { execute: execOpenPosition } = await raydium.clmm.openPositionFromBase({
+      poolInfo: poolInfo.poolInfo, poolKeys: poolExtInfo.address, tickLower, tickUpper, base: 'MintA', ownerInfo: { useSOLBalance: true },
+      baseAmount: new BN(LIQ_TOKENS).mul(new BN(10).pow(new BN(SUPPLY_DECIMALS))), otherAmountMax: new BN(LIQ_SOL * 10 ** 9), txVersion
     });
     const positionTx = await execOpenPosition({ sendAndConfirm: true });
-    await logSuccessTx(connection, positionTx.txId, "Position opened"); // want to await for finalized TX
-    console.log('Position opened: ', positionTx.txId);
+    await logSuccessTx(connection, positionTx.txId, "Full range position opened");
     await sleep(6);
 
-    // **Step 7: Query the Position for the Actual Range**
-    const positionInfo = await raydium.clmm.getOwnerPositionInfo({
-      programId: DEVNET_PROGRAM_ID.CLMM, // devnet
-    });
-    //console.log('positionInfo', positionInfo);
-    const position = positionInfo.find(pos => pos.poolId.toBase58() === poolId.toBase58());
+    // **Validate Position Range**
+    const position = (await raydium.clmm.getOwnerPositionInfo({ programId: DEVNET_PROGRAM_ID.CLMM })).find(pos => pos.poolId.toBase58() === poolId.toBase58());
     if (!position) throw new Error('Position not found');
-    console.log('position', position);
+    const priceLower = TickUtils.getTickPrice({ poolInfo: poolInfo.poolInfo, tick: position.tickLower, baseIn: true }).price.toNumber();
+    const priceUpper = TickUtils.getTickPrice({ poolInfo: poolInfo.poolInfo, tick: position.tickUpper, baseIn: true }).price.toNumber();
+    logger.color("green").log(`Liquidity range set: [${priceLower}, ${priceUpper}]`);
 
-    const actualTickLower = position.tickLower;
-    const actualTickUpper = position.tickUpper;
-    const priceLower = TickUtils.getTickPrice({
-      poolInfo: poolInfo.poolInfo,
-      tick: actualTickLower,
-      baseIn: true,
-    }).price.toNumber();
-    const priceUpper = TickUtils.getTickPrice({
-      poolInfo: poolInfo.poolInfo,
-      tick: actualTickUpper,
-      baseIn: true,
-    }).price.toNumber();
-
-    console.log(`Actual liquidity range: [${priceLower}, ${priceUpper}] SOL per token`);
-
-    // **Step 8: Validate the Range**
-    assert.ok(
-      Math.abs(priceLower - expectedP_a) < 1e-6, // tick quantums
-      `Lower price ${priceLower} does not match expected P_a ${expectedP_a}`
-    );
-    assert.ok(
-      Math.abs(priceUpper - expectedP_b) < 10, // tick quantums
-      `Upper price ${priceUpper} does not match expected P_b ${expectedP_b}`
-    );
-    logger.color("green").log(`Liquidity range validated: [${priceLower}, ${priceUpper}] matches expected [${expectedP_a}, ${expectedP_b}]`);
-
-    // ** Step 9: Cleanup and Cost Calculation **
-    // const tokenBalanceAfter = await connection.getTokenAccountBalance(minterTokenAccount.address);
-    // assert.equal(
-    //   tokenBalanceAfter.value.uiAmount,
-    //   SUPPLY_TOKENS - LIQ_TOKENS,
-    //   "Minter has wrong # of tokens after pool creation"
-    // );
-
-    // const adminBalanceAtEnd = await connection.getBalance(adminKp.publicKey);
-    // const totalCost = adminBalanceAtEnd - adminBalanceAtStart;
-    // console.log('Total cost (SOL):', totalCost / LAMPORTS_PER_SOL);
-
-    // **Step 9: Price as Expected?**
-    //const poolId = new PublicKey('4yjWD8f6UKYbSzEFvCP4aHXGxHvqsjifFRueUEmEDxd8');
-    const res = await raydium.clmm.getRpcClmmPoolInfos({
-      poolIds: [poolId],
-    })
-    const poolInfoRpc = res[poolId]
-    console.log('poolInfoRpc', poolInfoRpc)
-    console.log('poolInfoRpc.currentPrice:', poolInfoRpc.currentPrice)
+    // **Cost and Final Validation**
+    const totalCost = (await connection.getBalance(adminKp.publicKey, 'confirmed')) - adminBalanceAtStart;
+    console.log('Total cost (SOL):', totalCost / LAMPORTS_PER_SOL);
+    const poolInfoRpc = (await raydium.clmm.getRpcClmmPoolInfos({ poolIds: [poolId] }))[poolId];
+    assert.ok(Math.abs(INITIAL_PRICE - 1 / poolInfoRpc.currentPrice) < 1e-6, 'Current price mismatch');
   }
+
 
   it("admin - creates & interacts with a v2 (legacy CPMM) pool", async () => {
     await test_create_amm_and_trade_v2();
