@@ -52,7 +52,10 @@ import { Raydium, TOKEN_WSOL } from '@raydium-io/raydium-sdk-v2';
 import { RAYMint, USDCMint, OPEN_BOOK_PROGRAM, TxVersion, DEVNET_PROGRAM_ID, WSOLMint, USDTMint } from '@raydium-io/raydium-sdk-v2'
 import { MARKET_STATE_LAYOUT_V3, AMM_V4, FEE_DESTINATION_ID, } from '@raydium-io/raydium-sdk-v2'
 import { TRANSFER_SOURCE_INDEX } from "@project-serum/serum/lib/token-instructions";
-import { ApiV3PoolInfoStandardItem, AmmV4Keys, AmmRpcData, } from '@raydium-io/raydium-sdk-v2'
+import {
+  ApiV3PoolInfoStandardItem, AmmV4Keys, AmmRpcData, ApiV3PoolInfoConcentratedItem, TickUtils, PoolUtils, ClmmKeys, ApiV3Token
+
+} from '@raydium-io/raydium-sdk-v2'
 import {  AMM_STABLE, } from '@raydium-io/raydium-sdk-v2'
 
 import Decimal from 'decimal.js'
@@ -466,10 +469,6 @@ describe("maxi-auction", () => {
     //  assert.equal(err.toString().includes("AuctionEnded"), true, "Contract error was expected.");
     //}
     //}
-  });
-
-  it("admin - creates & interacts with a v2 pool", async () => {
-    await test_create_pool_and_trade();
   });
 
   it("admin - no withdraws during auction", async () => {
@@ -1206,319 +1205,6 @@ describe("maxi-auction", () => {
     }    
   }
 
-  async function test_create_pool_and_trade() { // https://github.com/raydium-io/raydium-sdk-V2-demo/tree/master/src/amm
-    if (isLocal) { logger.color("yellow").log("Skipping pool creation on localnet"); return; }
-    const adminBalanceAtStart = await connection.getBalance(adminKp.publicKey);
-    const txVersion = TxVersion.LEGACY; // TxVersion.V0
-    const LIQ_SOL = 0.1; // max one decimal please
-    const SUPPLY_TOKENS = 1_000_000_000; //1_000_000;
-    const SUPPLY_DECIMALS = 9;
-    const LIQ_TOKENS = SUPPLY_TOKENS * 0.1;
-
-    // **Step 1: Set up connection and keypairs && Initialize the Raydium SDK **
-    const minterKp = adminKp; //Keypair.generate();
-    const raydium = await Raydium.load({ connection, owner: minterKp, disableFeatureCheck: true, blockhashCommitment: 'finalized', });
-    logger.color("green").log("Raydium SDK loaded");
-
-    // **Step 2: Mint a new fucking token**
-    const tokenMint = await createMint(connection, minterKp, minterKp.publicKey, null, SUPPLY_DECIMALS);
-    const minterTokenAccount = await getOrCreateAssociatedTokenAccount(connection, minterKp, tokenMint, minterKp.publicKey); // ATA
-    const totalSupply = new BN(SUPPLY_TOKENS).mul(new BN(10).pow(new BN(SUPPLY_DECIMALS)));
-    await mintTo(connection, minterKp, tokenMint, minterTokenAccount.address, minterKp, BigInt(totalSupply.toString()));
-    console.log('WSOLMint', WSOLMint.toBase58());
-    console.log('tokenMint', tokenMint.toBase58());
-
-    // Check that the tokens are there
-    const tokenBalance = await connection.getTokenAccountBalance(minterTokenAccount.address);
-    assert.equal(tokenBalance.value.uiAmount, SUPPLY_TOKENS, "Minter has wrong # of tokens after mint");
-    logger.color("green").log("Minted tokens");
-
-    // **Step 3: Wrap SOL into WSOL **
-    console.log('TOKEN_WSOL.address', TOKEN_WSOL.address); // So11111111111111111111111111111111111111112
-    const minterWsolAccount = await getOrCreateAssociatedTokenAccount(connection, minterKp, new PublicKey(TOKEN_WSOL.address), minterKp.publicKey);
-    const wsolBalance = await connection.getTokenAccountBalance(minterWsolAccount.address); // Get current WSOL balance
-    const currentWsolAmount = wsolBalance.value.uiAmount || 0; // Default to 0 if null
-    console.log(`Current WSOL balance: ${currentWsolAmount} WSOL`);
-    if (currentWsolAmount < LIQ_SOL) { // Check if we need to wrap more SOL
-      const shortfall = LIQ_SOL - currentWsolAmount;
-      const lamportsToWrap = Math.ceil(shortfall * LAMPORTS_PER_SOL);
-      console.log(`Wrapping ${shortfall} SOL to reach ${LIQ_SOL} WSOL`);
-      const wrapTx = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: minterKp.publicKey,
-          toPubkey: minterWsolAccount.address,
-          lamports: lamportsToWrap,
-        }),
-        createSyncNativeInstruction(minterWsolAccount.address)
-      );
-      wrapTx.feePayer = minterKp.publicKey;
-      wrapTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-      const wrapSig = await sendAndConfirmTransaction(connection, wrapTx, [minterKp]);
-      await logSuccessTx(connection, wrapSig, "Wrapped minter's SOL into WSOL");
-    }
-
-    //
-    // **Step 4: create a market ** ~1.9 SOL FEE TO CREATE A MARKET
-    //
-    //console.log('RAYMint', RAYMint.toBase58());
-    //console.log('USDCMint', USDCMint.toBase58());
-    var { execute: execCM, extInfo: extInfoCM, transactions: txsCM } = await raydium.marketV2.create({
-      baseInfo: {
-        // create market doesn't support token 2022
-        mint: tokenMint, //RAYMint,
-        decimals: SUPPLY_DECIMALS,
-      },
-      quoteInfo: {
-        // create market doesn't support token 2022
-        mint: WSOLMint, //USDCMint, //new PublicKey(TOKEN_WSOL.address), //USDCMint,
-        decimals: 9,
-      },
-      lotSize: 1,
-      tickSize: 0.01,
-      //dexProgramId: OPEN_BOOK_PROGRAM, // MAINNET
-      dexProgramId: DEVNET_PROGRAM_ID.OPENBOOK_MARKET, // devnet
-
-      // requestQueueSpace: 5120 + 12, // optional
-      // eventQueueSpace: 262144 + 12, // optional
-      // orderbookQueueSpace: 65536 + 12, // optional
-
-      txVersion,
-      // optional: set up priority fee here
-      // computeBudgetConfig: {
-      //   units: 600000,
-      //   microLamports: 46591500,
-      // },
-    })
-    const txIds = await execCM({ sequentially: true, });
-    await logSuccessTx(connection, txIds.txIds[0], "Create market");
-    const marketInfo = Object.keys(extInfoCM.address).reduce(
-      (acc, cur) => ({ ...acc, [cur]: extInfoCM.address[cur as keyof typeof extInfoCM.address].toBase58(), }), {});
-    console.log(`create market total ${txsCM.length} txs, market info: `, marketInfo);
-    const marketId = new PublicKey(marketInfo['marketId']);
-    //const marketId = new PublicKey('EGkf4X4XCdzH8dmefyL6dyj9oUqxu8q2YZEoEQMniiHo'); // sale devnet SOL - this costs 1.9 SOL
-    console.log('marketId', marketId.toBase58());
-
-    // **Step 5: Create a pool**
-    const marketBufferInfo = await raydium.connection.getAccountInfo(new PublicKey(marketId));
-    console.log('marketBufferInfo', marketBufferInfo);
-    const { baseMint, quoteMint } = MARKET_STATE_LAYOUT_V3.decode(marketBufferInfo!.data);
-    const baseMintInfo = await raydium.token.getTokenInfo(baseMint);
-    const quoteMintInfo = await raydium.token.getTokenInfo(quoteMint);
-    console.log('baseMintInfo', baseMintInfo);
-    console.log('quoteMintInfo', quoteMintInfo);
-    console.log('TOKEN_PROGRAM_ID', TOKEN_PROGRAM_ID.toBase58());
-    if (baseMintInfo.programId !== TOKEN_PROGRAM_ID.toBase58() || quoteMintInfo.programId !== TOKEN_PROGRAM_ID.toBase58()) {
-      throw new Error('baseMint or quoteMint is not a supported token type');
-    }
-    const baseAmount = new BN(LIQ_TOKENS).mul(new BN(10).pow(new BN(SUPPLY_DECIMALS)));
-    const quoteAmount = new BN(LIQ_SOL * 10).mul(new BN(10).pow(new BN(8)));
-    console.log('baseAmount', baseAmount.toString());
-    console.log('quoteAmount', quoteAmount.toString());
-
-    console.log('baseAmount (tokens)', BigInt(baseAmount.toString()) / BigInt(10 ** SUPPLY_DECIMALS));
-    console.log('quoteAmount (wsol)', BigInt(quoteAmount.toString()) / BigInt(10 ** 9));
-
-    if (baseAmount.mul(quoteAmount).lte(new BN(1).mul(new BN(10 ** baseMintInfo.decimals)).pow(new BN(2)))) {
-      throw new Error('initial liquidity too low, try adding more baseAmount/quoteAmount');
-    }
-
-    const { execute: execCP, extInfo: extInfoCP, } = await raydium.liquidity.createPoolV4({
-      //programId: AMM_V4, // MAINNET
-      programId: DEVNET_PROGRAM_ID.AmmV4, // devnet
-
-      marketInfo: {
-        marketId,
-        //programId: OPEN_BOOK_PROGRAM, // MAINNET
-        programId: DEVNET_PROGRAM_ID.OPENBOOK_MARKET, // devent
-      },
-      baseMintInfo: {
-        mint: baseMint,
-        decimals: baseMintInfo.decimals, // if you know mint decimals here, can pass number directly
-      },
-      quoteMintInfo: {
-        mint: quoteMint,
-        decimals: quoteMintInfo.decimals, // if you know mint decimals here, can pass number directly
-      },
-      baseAmount, //: new BN(1000),
-      quoteAmount, //: new BN(1000),
-
-      // sol devnet faucet: https://faucet.solana.com/
-      // baseAmount: new BN(4 * 10 ** 9), // if devent pool with sol/wsol, better use amount >= 4*10**9
-      // quoteAmount: new BN(4 * 10 ** 9), // if devent pool with sol/wsol, better use amount >= 4*10**9
-
-      startTime: new BN(0), // unit in seconds
-      ownerInfo: {
-        useSOLBalance: true,
-      },
-      associatedOnly: false,
-      txVersion,
-
-      //feeDestinationId: FEE_DESTINATION_ID, // MAINNET
-      feeDestinationId: DEVNET_PROGRAM_ID.FEE_DESTINATION_ID, // devnet
-
-      // optional: set up priority fee here
-      // computeBudgetConfig: {
-      //   units: 600000,
-      //   microLamports: 4659150,
-      // },
-    });
-    const { txId } = await execCP({ sendAndConfirm: true })
-    const poolKeys = Object.keys(extInfoCP.address).reduce(
-      (acc, cur) => ({
-        ...acc,
-        [cur]: extInfoCP.address[cur as keyof typeof extInfoCP.address].toBase58(),
-      }),
-      {}
-    );
-    console.log('amm pool created! txId: ', txId, ', poolKeys:', poolKeys);
-
-    const tokenBalanceAfter = await connection.getTokenAccountBalance(minterTokenAccount.address);
-    console.log('tokenBalanceAfter', tokenBalanceAfter);
-    console.log('tokenBalanceAfter.value.uiAmount', tokenBalanceAfter.value.uiAmount);
-    console.log('SUPPLY_TOKENS', SUPPLY_TOKENS);
-    console.log('LIQ_TOKENS', LIQ_TOKENS);
-    assert.equal(tokenBalanceAfter.value.uiAmount, SUPPLY_TOKENS - LIQ_TOKENS, "Minter has wrong # of tokens after pool creation");
-
-    // get total admin cost to create market & pool
-    const adminBalanceAtEnd = await connection.getBalance(adminKp.publicKey);
-    const totalCost = adminBalanceAtEnd - adminBalanceAtStart;
-    console.log('totalCost', totalCost);
-    console.log('totalCost (SOL)', totalCost / LAMPORTS_PER_SOL);
-
-    // test poolkeys - ignore
-    /*const poolKeys = { // devnet pool: 4t7PN6oWscEqnqiSwRuTZXWosyshVD4qJpp7iJhffNdR8StTjRvuGKngw2uyuRpB1ihdK5WCbrwuF52RpXzL6PZW
-      programId: 'HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8',
-      ammId: 'BpdmAjTjMDamyyEzShzjzMQnjfkrs1vn9amSQGJzxLMX',
-      ammAuthority: 'DbQqP6ehDYmeYjcBaMRuA8tAJY1EjDUz9DpwSLjaQqfC',
-      ammOpenOrders: '2ZRHYYKB6t7Ko19M4v2LjhrnLX7npLHJNokya5kZMeNf',
-      lpMint: '79UAW3WqbgaPQEbVsCdNK9MHmEiG6fJJv5gXvhAUHfWu',
-      coinMint: 'HXGt4TmVWKmwGkGPwHP3Kp4T2Jd52NoieA7Gad9Bhkdb',
-      pcMint: 'So11111111111111111111111111111111111111112',
-      coinVault: '2diEnXLNHrMsDBcADYu2ubZCZtjWf1C63C1hN1pUZf5v',
-      pcVault: '6QJZAhbQ9UDdSUVK12AzzEP5ArUcG64mrZMyD4wK1Nkp',
-      withdrawQueue: '2hFbvzyQWbHNXqBWJxNV9JK7eFTuQcQtmANxsV7SVcuX',
-      ammTargetOrders: 'CaUstCJsdT56uzk6JsBCxg6RyBuudYDyvcqNGSKAbuLo',
-      poolTempLp: 'Hv5dTdndbvL9hw8sHQumsnwJtW2Xckj2Xwrhsea8kspE',
-      marketProgramId: 'EoTcMgcDRTJVZDMZWBoU6rhYHZfkNTVEAfz3uUJRcYGj',
-      marketId: 'FYiWxYY2w5L4wXGNCSK4ouvxTnP6CyPKmyb6B4jPye6T',
-      ammConfigId: '8QN9yfKqWDoKjvZmqFsgCzAqwZBQuzVVnC388dN5RCPo',
-      feeDestinationId: '3XMrhbv989VxAMi3DErLV9eJht1pHppW5LbKxe9fkEFR'
-    };*/
-  
-    // **Step 6: Query the damn pool price**
-    const poolId = poolKeys['ammId'];
-    let poolInfo: AmmRpcData | undefined;
-    const getPrice = async () => { 
-      const poolInfos = await raydium.liquidity.getRpcPoolInfos([poolId]);
-      const poolInfo = poolInfos[poolId];
-      const price = new Decimal(poolInfo.quoteReserve.toString()).div(poolInfo.baseReserve.toString()).toNumber();
-      logger.color("green").log(`Reserve ratios: ${price} WSOL per token`);
-      logger.color("green").log(`poolInfo.poolPrice: ${poolInfo.poolPrice} WSOL per token`);
-      return poolInfo;
-    }
-    poolInfo = await getPrice();
-  
-    //
-    // **Step 7: Buy & sell some tokens **
-    //
-    const swap = async (buyTokens: boolean) => {
-      const inputMint = buyTokens ? poolInfo.quoteMint.toBase58() : poolInfo.baseMint.toBase58();
-      const amountIn = buyTokens ? 0.01 * 10 ** 9 // 0.01 WSOL 
-        : 100_00 * 10 ** 6 // 10k TOKENS
-      let poolInfo2: ApiV3PoolInfoStandardItem | undefined;
-      let poolKeys2: AmmV4Keys | undefined;
-      let rpcData: AmmRpcData;
-      if (isMainnet) {
-        // note: api doesn't support get devnet pool info, so in devnet else we go rpc method
-        // if you wish to get pool info from rpc, also can modify logic to go rpc method directly
-        const data = await raydium.api.fetchPoolById({ ids: poolId });
-        poolInfo2 = data[0] as ApiV3PoolInfoStandardItem;
-        if (!isValidAmm(poolInfo2.programId)) throw new Error('target pool is not AMM pool');
-        poolKeys2 = await raydium.liquidity.getAmmPoolKeys(poolId);
-        rpcData = await raydium.liquidity.getRpcPoolInfo(poolId);
-      } else {
-        // note: getPoolInfoFromRpc method only return required pool data for computing not all detail pool info
-        const data = await raydium.liquidity.getPoolInfoFromRpc({ poolId });
-        poolInfo2 = data.poolInfo;
-        poolKeys2 = data.poolKeys;
-        rpcData = data.poolRpcData;
-      }
-
-      //assert.equal(poolInfo2, poolInfo, 'poolInfo2 should be equal to poolInfo');
-      //assert.equal(poolKeys2, poolKeys, 'poolKeys2 should be equal to poolKeys');
-      const [baseReserve, quoteReserve, status] = [rpcData.baseReserve, rpcData.quoteReserve, rpcData.status.toNumber()];
-      if (poolInfo2.mintA.address !== inputMint && poolInfo2.mintB.address !== inputMint) throw new Error('input mint does not match pool')
-
-      const baseIn = inputMint === poolInfo2.mintA.address
-      const [mintIn, mintOut] = baseIn ? [poolInfo2.mintA, poolInfo2.mintB] : [poolInfo2.mintB, poolInfo2.mintA]
-      console.log('baseIn', baseIn);
-      console.log('mintIn', mintIn.address);
-      console.log('mintOut', mintOut.address);
-      const out = raydium.liquidity.computeAmountOut({
-        poolInfo: {
-          ...poolInfo2,
-          baseReserve,
-          quoteReserve,
-          status,
-          version: 4,
-        },
-        amountIn: new BN(amountIn),
-        mintIn: mintIn.address,
-        mintOut: mintOut.address,
-        slippage: 0.01, // range: 1 ~ 0.0001, means 100% ~ 0.01%
-      })
-      console.log(
-        `computed swap ${new Decimal(amountIn)
-          .div(10 ** mintIn.decimals)
-          .toDecimalPlaces(mintIn.decimals)
-          .toString()} ${mintIn.symbol || mintIn.address} to ${new Decimal(out.amountOut.toString())
-            .div(10 ** mintOut.decimals)
-            .toDecimalPlaces(mintOut.decimals)
-            .toString()} ${mintOut.symbol || mintOut.address}, minimum amount out ${new Decimal(out.minAmountOut.toString())
-              .div(10 ** mintOut.decimals)
-              .toDecimalPlaces(mintOut.decimals)} ${mintOut.symbol || mintOut.address}`
-      );
-
-      const { execute } = await raydium.liquidity.swap({
-        poolInfo: poolInfo2,
-        poolKeys: poolKeys2,
-        amountIn: new BN(amountIn),
-        amountOut: out.minAmountOut, // out.amountOut means amount 'without' slippage
-        fixedSide: 'in',
-        inputMint: mintIn.address,
-        txVersion,
-        // optional: set up token account
-        // config: {
-        //   inputUseSolBalance: true, // default: true, if you want to use existed wsol token account to pay token in, pass false
-        //   outputUseSolBalance: true, // default: true, if you want to use existed wsol token account to receive token out, pass false
-        //   associatedOnly: true, // default: true, if you want to use ata only, pass true
-        // },
-        // optional: set up priority fee here
-        // computeBudgetConfig: {
-        //   units: 600000,
-        //   microLamports: 46591500,
-        // },
-        // optional: add transfer sol to tip account instruction. e.g sent tip to jito
-        // txTipConfig: {
-        //   address: new PublicKey('96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5'),
-        //   amount: new BN(10000000), // 0.01 sol
-        // },
-      });
-
-      // don't want to wait confirm, set sendAndConfirm to false or don't pass any params to execute
-      const { txId: swapTx1Id } = await execute({ sendAndConfirm: true });
-      const SwapTx1 = await getTransactionDetailsWithRetry(connection, swapTx1Id);
-      if (SwapTx1.meta.err) {
-        throw new Error(`SwapTx1 failed: ${JSON.stringify(SwapTx1.meta.err)}`);
-      }
-      console.log(`${buyTokens ? 'bought' : 'sold'} tokens successfully in amm pool:`, swapTx1Id);
-    }
-    await swap(true);
-    poolInfo = await getPrice();
-    await swap(false);
-    poolInfo = await getPrice();
-  }
-
   async function test_init(mintotal_sol: number = undefined) {
     const signer = adminKp;
 
@@ -1957,6 +1643,542 @@ describe("maxi-auction", () => {
     return { auctionDataAfter, balanceAfter, balanceBefore, totalRefund, networkFee, auctionSol };
   }
 
+  it("admin - creates & interacts with a v3 CLMM pool", async () => {
+    await test_create_clmm_and_trade_v3();
+  });
+
+  async function test_create_clmm_and_trade_v3() {
+    if (isLocal) {
+      logger.color("yellow").log("Skipping pool creation on localnet");
+      return;
+    }
+
+    const adminBalanceAtStart = await connection.getBalance(adminKp.publicKey);
+    const txVersion = TxVersion.LEGACY;
+    const SUPPLY_TOKENS = 200; // Total supply of 200 whole tokens
+    const SUPPLY_DECIMALS = 6; // Token decimals
+    const LIQ_TOKENS = 100; // Locked tokens (100 whole tokens)
+    const LIQ_SOL = 0.2; // Locked SOL
+    const INITIAL_PRICE = 0.002; // Initial price in SOL per token
+    const B_PARAM = 0.999; // b parameter to maximize range
+
+    // **Step 1: Set up connection and keypairs && Initialize the Raydium SDK**
+    const minterKp = adminKp;
+    const raydium = await Raydium.load({
+      connection,
+      owner: minterKp,
+      disableFeatureCheck: true,
+      blockhashCommitment: 'confirmed', //  blockhashCommitment: 'finalized'
+    });
+    logger.color("green").log("Raydium SDK loaded");
+
+    // **Step 2: Mint a new token with total supply of 200**
+    const tokenMint = await createMint(connection, minterKp, minterKp.publicKey, null, SUPPLY_DECIMALS);
+    const minterTokenAccount = await getOrCreateAssociatedTokenAccount(connection, minterKp, tokenMint, minterKp.publicKey);
+    const totalSupply = new BN(SUPPLY_TOKENS).mul(new BN(10).pow(new BN(SUPPLY_DECIMALS)));
+    await mintTo(connection, minterKp, tokenMint, minterTokenAccount.address, minterKp, BigInt(totalSupply.toString()));
+    console.log('WSOLMint', WSOLMint.toBase58());
+    console.log('tokenMint', tokenMint.toBase58());
+
+    // Check that the tokens are minted correctly
+    const tokenBalance = await connection.getTokenAccountBalance(minterTokenAccount.address);
+    assert.equal(tokenBalance.value.uiAmount, SUPPLY_TOKENS, "Minter has wrong # of tokens after mint");
+    logger.color("green").log("Minted tokens");
+
+    // **Step 3: Wrap SOL into WSOL**
+    const minterWsolAccount = await getOrCreateAssociatedTokenAccount(connection, minterKp, WSOLMint, minterKp.publicKey);
+    const wsolBalance = await connection.getTokenAccountBalance(minterWsolAccount.address);
+    const currentWsolAmount = wsolBalance.value.uiAmount || 0;
+    console.log(`Current WSOL balance: ${currentWsolAmount} WSOL`);
+    if (currentWsolAmount < LIQ_SOL) {
+      const shortfall = LIQ_SOL - currentWsolAmount;
+      const lamportsToWrap = Math.ceil(shortfall * LAMPORTS_PER_SOL);
+      console.log(`Wrapping ${shortfall} SOL to reach ${LIQ_SOL} WSOL`);
+      const wrapTx = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: minterKp.publicKey,
+          toPubkey: minterWsolAccount.address,
+          lamports: lamportsToWrap,
+        }),
+        createSyncNativeInstruction(minterWsolAccount.address)
+      );
+      wrapTx.feePayer = minterKp.publicKey;
+      wrapTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      const wrapSig = await sendAndConfirmTransaction(connection, wrapTx, [minterKp]);
+      await logSuccessTx(connection, wrapSig, "Wrapped minter's SOL into WSOL");
+    }
+
+    // **Step 4: Create the CLMM Pool**
+    //const clmmConfigs = await raydium.api.getClmmConfigs(); // mainnet
+    const clmmConfigs = clmmDevConfigs; // devnet
+    console.log('clmmConfigs[0]', clmmConfigs[0]);
+    console.log(`DEVNET_PROGRAM_ID.CLMM`, DEVNET_PROGRAM_ID.CLMM);
+    const ammConfig = { ...clmmConfigs[0], id: new PublicKey(clmmConfigs[0].id), fundOwner: '', description: '' };
+
+    // Define ApiV3Token for the new token
+    const tokenInfo: ApiV3Token = {
+      chainId: 103, // devnet
+      address: tokenMint.toBase58(),
+      programId: TOKEN_PROGRAM_ID.toBase58(),
+      logoURI: '',
+      symbol: 'TEST',
+      name: 'Test Token',
+      decimals: SUPPLY_DECIMALS,
+      tags: ['test-token'],       // Array of tags for categorization
+      extensions: {},             // Object for additional metadata (empty as placeholder)
+    };
+    // Define ApiV3Token for WSOL
+    const wsolInfo: ApiV3Token = {
+      chainId: 103, // devnet
+      address: WSOLMint.toBase58(),
+      programId: TOKEN_PROGRAM_ID.toBase58(),
+      logoURI: 'https://example.com/wsol.png',
+      symbol: 'WSOL',
+      name: 'Wrapped SOL',
+      decimals: 9,
+      tags: ['wrapped', 'solana'],
+      extensions: {},
+    };
+
+    const { execute: execCreatePool, extInfo: poolExtInfo } = await raydium.clmm.createPool({
+      programId: DEVNET_PROGRAM_ID.CLMM,
+      mint1: tokenInfo,
+      mint2: wsolInfo,
+      ammConfig,
+      initialPrice: new Decimal(INITIAL_PRICE),
+      txVersion,
+    });
+    const createPoolTx = await execCreatePool({ sendAndConfirm: true });
+    await logSuccessTx(connection, createPoolTx.txId, "Pool created"); // want to await for finalized TX
+
+    console.log('CLMM pool created: ', createPoolTx.txId);
+    console.log('poolExtInfo:', JSON.stringify(poolExtInfo, null, 2));
+    const poolId = poolExtInfo.address.poolId;
+    console.log('poolId', poolId.toBase58()); // B5xbbmXm9CwzAKfrERRb9ANyijkzNtZumLmpKEYKuoN3
+
+    // **Step 5: Calculate the Liquidity Range**
+    const S = LIQ_SOL * 10 ** 9; // 200,000,000 lamports
+    const T = LIQ_TOKENS * 10 ** SUPPLY_DECIMALS; // 100,000,000 smallest units
+    const S_div_T = S / T; // 2
+    const b = B_PARAM; // 0.999
+    const a = b / (S_div_T * 10 ** -3 / INITIAL_PRICE); // 0.999 / (2 * 0.001 / 0.002) = 0.999 / 1 = 0.999
+    const k = 1 / (1 - a) ** 2; // 1,000,000
+    const m = 1 / (1 - b) ** 2; // 1,000,000
+    const expectedP_a = INITIAL_PRICE / m; // 0.000000002
+    const expectedP_b = INITIAL_PRICE * k; // 2,000
+
+    console.log('S', S);
+    console.log('T', T);
+    console.log('S_div_T', S_div_T);
+    console.log('b', b);
+    console.log('a', a);
+    console.log('k', k);
+    console.log('m', m);
+    console.log('expectedP_a', expectedP_a);
+    console.log('expectedP_b', expectedP_b);
+
+    const poolInfo = await raydium.clmm.getPoolInfoFromRpc(poolId.toBase58());
+    const tickLower = TickUtils.getPriceAndTick({
+      poolInfo: poolInfo.poolInfo,
+      price: new Decimal(expectedP_a),
+      baseIn: true,
+    }).tick;
+    const tickUpper = TickUtils.getPriceAndTick({
+      poolInfo: poolInfo.poolInfo,
+      price: new Decimal(expectedP_b),
+      baseIn: true,
+    }).tick;
+
+    // Adjust ticks to tick spacing (assume 0.3% fee tier, tick spacing = 60)
+    const tickSpacing = 60;
+    const adjustedTickLower = Math.floor(tickLower / tickSpacing) * tickSpacing;
+    const adjustedTickUpper = Math.ceil(tickUpper / tickSpacing) * tickSpacing;
+
+    // **Step 6: Open Liquidity Position**
+    const baseAmount = new BN(LIQ_TOKENS).mul(new BN(10).pow(new BN(SUPPLY_DECIMALS)));
+    const quoteAmount = new BN(LIQ_SOL * 10 ** 9);
+    const { execute: execOpenPosition, extInfo: positionExtInfo } = await raydium.clmm.openPositionFromBase({
+      poolInfo: poolInfo.poolInfo,
+      poolKeys: poolExtInfo.address,
+      tickLower: adjustedTickLower,
+      tickUpper: adjustedTickUpper,
+      base: 'MintA',
+      ownerInfo: { useSOLBalance: true },
+      baseAmount,
+      otherAmountMax: quoteAmount,
+      txVersion,
+    });
+    const positionTx = await execOpenPosition({ sendAndConfirm: true });
+    await logSuccessTx(connection, positionTx.txId, "Position opened"); // want to await for finalized TX
+    console.log('Position opened: ', positionTx.txId);
+    await sleep(3);
+
+    // **Step 7: Query the Position for the Actual Range**
+    const positionInfo = await raydium.clmm.getOwnerPositionInfo({
+      programId: DEVNET_PROGRAM_ID.CLMM, // devnet
+    });
+    //console.log('positionInfo', positionInfo);
+    const position = positionInfo.find(pos => pos.poolId.toBase58() === poolId.toBase58());
+    if (!position) throw new Error('Position not found');
+    console.log('position', position);
+
+    const actualTickLower = position.tickLower;
+    const actualTickUpper = position.tickUpper;
+    const priceLower = TickUtils.getTickPrice({
+      poolInfo: poolInfo.poolInfo,
+      tick: actualTickLower,
+      baseIn: true,
+    }).price.toNumber();
+    const priceUpper = TickUtils.getTickPrice({
+      poolInfo: poolInfo.poolInfo,
+      tick: actualTickUpper,
+      baseIn: true,
+    }).price.toNumber();
+
+    console.log(`Actual liquidity range: [${priceLower}, ${priceUpper}] SOL per token`);
+
+    // **Step 8: Validate the Range**
+    const TOLERANCE = 1e-6; // Small tolerance for floating-point comparison
+    assert.ok(
+      Math.abs(priceLower - expectedP_a) < TOLERANCE,
+      `Lower price ${priceLower} does not match expected P_a ${expectedP_a}`
+    );
+    assert.ok(
+      Math.abs(priceUpper - expectedP_b) < TOLERANCE,
+      `Upper price ${priceUpper} does not match expected P_b ${expectedP_b}`
+    );
+    logger.color("green").log(`Liquidity range validated: [${priceLower}, ${priceUpper}] matches expected [${expectedP_a}, ${expectedP_b}]`);
+
+    // **Step 9: Cleanup and Cost Calculation**
+    const tokenBalanceAfter = await connection.getTokenAccountBalance(minterTokenAccount.address);
+    assert.equal(
+      tokenBalanceAfter.value.uiAmount,
+      SUPPLY_TOKENS - LIQ_TOKENS,
+      "Minter has wrong # of tokens after pool creation"
+    );
+
+    const adminBalanceAtEnd = await connection.getBalance(adminKp.publicKey);
+    const totalCost = adminBalanceAtEnd - adminBalanceAtStart;
+    console.log('Total cost (SOL):', totalCost / LAMPORTS_PER_SOL);
+  }
+
+  it("admin - creates & interacts with a v2 (legacy CPMM) pool", async () => {
+    await test_create_amm_and_trade_v2();
+  });
+
+  async function test_create_amm_and_trade_v2() { // https://github.com/raydium-io/raydium-sdk-V2-demo/tree/master/src/amm
+    if (isLocal) { logger.color("yellow").log("Skipping pool creation on localnet"); return; }
+    const adminBalanceAtStart = await connection.getBalance(adminKp.publicKey);
+    const txVersion = TxVersion.LEGACY; // TxVersion.V0
+    const LIQ_SOL = 0.1; // max one decimal please
+    const SUPPLY_TOKENS = 1_000_000_000; //1_000_000;
+    const SUPPLY_DECIMALS = 9;
+    const LIQ_TOKENS = SUPPLY_TOKENS * 0.1;
+
+    // **Step 1: Set up connection and keypairs && Initialize the Raydium SDK **
+    const minterKp = adminKp; //Keypair.generate();
+    const raydium = await Raydium.load({ connection, owner: minterKp, disableFeatureCheck: true, blockhashCommitment: 'finalized', });
+    logger.color("green").log("Raydium SDK loaded");
+
+    // **Step 2: Mint a new fucking token**
+    const tokenMint = await createMint(connection, minterKp, minterKp.publicKey, null, SUPPLY_DECIMALS);
+    const minterTokenAccount = await getOrCreateAssociatedTokenAccount(connection, minterKp, tokenMint, minterKp.publicKey); // ATA
+    const totalSupply = new BN(SUPPLY_TOKENS).mul(new BN(10).pow(new BN(SUPPLY_DECIMALS)));
+    await mintTo(connection, minterKp, tokenMint, minterTokenAccount.address, minterKp, BigInt(totalSupply.toString()));
+    console.log('WSOLMint', WSOLMint.toBase58());
+    console.log('tokenMint', tokenMint.toBase58());
+
+    // Check that the tokens are there
+    const tokenBalance = await connection.getTokenAccountBalance(minterTokenAccount.address);
+    assert.equal(tokenBalance.value.uiAmount, SUPPLY_TOKENS, "Minter has wrong # of tokens after mint");
+    logger.color("green").log("Minted tokens");
+
+    // **Step 3: Wrap SOL into WSOL **
+    console.log('TOKEN_WSOL.address', TOKEN_WSOL.address); // So11111111111111111111111111111111111111112
+    const minterWsolAccount = await getOrCreateAssociatedTokenAccount(connection, minterKp, new PublicKey(TOKEN_WSOL.address), minterKp.publicKey);
+    const wsolBalance = await connection.getTokenAccountBalance(minterWsolAccount.address); // Get current WSOL balance
+    const currentWsolAmount = wsolBalance.value.uiAmount || 0; // Default to 0 if null
+    console.log(`Current WSOL balance: ${currentWsolAmount} WSOL`);
+    if (currentWsolAmount < LIQ_SOL) { // Check if we need to wrap more SOL
+      const shortfall = LIQ_SOL - currentWsolAmount;
+      const lamportsToWrap = Math.ceil(shortfall * LAMPORTS_PER_SOL);
+      console.log(`Wrapping ${shortfall} SOL to reach ${LIQ_SOL} WSOL`);
+      const wrapTx = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: minterKp.publicKey,
+          toPubkey: minterWsolAccount.address,
+          lamports: lamportsToWrap,
+        }),
+        createSyncNativeInstruction(minterWsolAccount.address)
+      );
+      wrapTx.feePayer = minterKp.publicKey;
+      wrapTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      const wrapSig = await sendAndConfirmTransaction(connection, wrapTx, [minterKp]);
+      await logSuccessTx(connection, wrapSig, "Wrapped minter's SOL into WSOL");
+    }
+
+    //
+    // **Step 4: create a market ** ~1.9 SOL FEE TO CREATE A MARKET
+    //
+    //console.log('RAYMint', RAYMint.toBase58());
+    //console.log('USDCMint', USDCMint.toBase58());
+    var { execute: execCM, extInfo: extInfoCM, transactions: txsCM } = await raydium.marketV2.create({
+      baseInfo: {
+        // create market doesn't support token 2022
+        mint: tokenMint, //RAYMint,
+        decimals: SUPPLY_DECIMALS,
+      },
+      quoteInfo: {
+        // create market doesn't support token 2022
+        mint: WSOLMint, //USDCMint, //new PublicKey(TOKEN_WSOL.address), //USDCMint,
+        decimals: 9,
+      },
+      lotSize: 1,
+      tickSize: 0.01,
+      //dexProgramId: OPEN_BOOK_PROGRAM, // MAINNET
+      dexProgramId: DEVNET_PROGRAM_ID.OPENBOOK_MARKET, // devnet
+
+      // requestQueueSpace: 5120 + 12, // optional
+      // eventQueueSpace: 262144 + 12, // optional
+      // orderbookQueueSpace: 65536 + 12, // optional
+
+      txVersion,
+      // optional: set up priority fee here
+      // computeBudgetConfig: {
+      //   units: 600000,
+      //   microLamports: 46591500,
+      // },
+    })
+    const txIds = await execCM({ sequentially: true, });
+    await logSuccessTx(connection, txIds.txIds[0], "Create market");
+    const marketInfo = Object.keys(extInfoCM.address).reduce(
+      (acc, cur) => ({ ...acc, [cur]: extInfoCM.address[cur as keyof typeof extInfoCM.address].toBase58(), }), {});
+    console.log(`create market total ${txsCM.length} txs, market info: `, marketInfo);
+    const marketId = new PublicKey(marketInfo['marketId']);
+    //const marketId = new PublicKey('EGkf4X4XCdzH8dmefyL6dyj9oUqxu8q2YZEoEQMniiHo'); // sale devnet SOL - this costs 1.9 SOL
+    console.log('marketId', marketId.toBase58());
+
+    // **Step 5: Create a pool**
+    const marketBufferInfo = await raydium.connection.getAccountInfo(new PublicKey(marketId));
+    console.log('marketBufferInfo', marketBufferInfo);
+    const { baseMint, quoteMint } = MARKET_STATE_LAYOUT_V3.decode(marketBufferInfo!.data);
+    const baseMintInfo = await raydium.token.getTokenInfo(baseMint);
+    const quoteMintInfo = await raydium.token.getTokenInfo(quoteMint);
+    console.log('baseMintInfo', baseMintInfo);
+    console.log('quoteMintInfo', quoteMintInfo);
+    console.log('TOKEN_PROGRAM_ID', TOKEN_PROGRAM_ID.toBase58());
+    if (baseMintInfo.programId !== TOKEN_PROGRAM_ID.toBase58() || quoteMintInfo.programId !== TOKEN_PROGRAM_ID.toBase58()) {
+      throw new Error('baseMint or quoteMint is not a supported token type');
+    }
+    const baseAmount = new BN(LIQ_TOKENS).mul(new BN(10).pow(new BN(SUPPLY_DECIMALS)));
+    const quoteAmount = new BN(LIQ_SOL * 10).mul(new BN(10).pow(new BN(8)));
+    console.log('baseAmount', baseAmount.toString());
+    console.log('quoteAmount', quoteAmount.toString());
+
+    console.log('baseAmount (tokens)', BigInt(baseAmount.toString()) / BigInt(10 ** SUPPLY_DECIMALS));
+    console.log('quoteAmount (wsol)', BigInt(quoteAmount.toString()) / BigInt(10 ** 9));
+
+    if (baseAmount.mul(quoteAmount).lte(new BN(1).mul(new BN(10 ** baseMintInfo.decimals)).pow(new BN(2)))) {
+      throw new Error('initial liquidity too low, try adding more baseAmount/quoteAmount');
+    }
+
+    const { execute: execCP, extInfo: extInfoCP, } = await raydium.liquidity.createPoolV4({
+      //programId: AMM_V4, // MAINNET
+      programId: DEVNET_PROGRAM_ID.AmmV4, // devnet
+
+      marketInfo: {
+        marketId,
+        //programId: OPEN_BOOK_PROGRAM, // MAINNET
+        programId: DEVNET_PROGRAM_ID.OPENBOOK_MARKET, // devent
+      },
+      baseMintInfo: {
+        mint: baseMint,
+        decimals: baseMintInfo.decimals, // if you know mint decimals here, can pass number directly
+      },
+      quoteMintInfo: {
+        mint: quoteMint,
+        decimals: quoteMintInfo.decimals, // if you know mint decimals here, can pass number directly
+      },
+      baseAmount, //: new BN(1000),
+      quoteAmount, //: new BN(1000),
+
+      // sol devnet faucet: https://faucet.solana.com/
+      // baseAmount: new BN(4 * 10 ** 9), // if devent pool with sol/wsol, better use amount >= 4*10**9
+      // quoteAmount: new BN(4 * 10 ** 9), // if devent pool with sol/wsol, better use amount >= 4*10**9
+
+      startTime: new BN(0), // unit in seconds
+      ownerInfo: {
+        useSOLBalance: true,
+      },
+      associatedOnly: false,
+      txVersion,
+
+      //feeDestinationId: FEE_DESTINATION_ID, // MAINNET
+      feeDestinationId: DEVNET_PROGRAM_ID.FEE_DESTINATION_ID, // devnet
+
+      // optional: set up priority fee here
+      // computeBudgetConfig: {
+      //   units: 600000,
+      //   microLamports: 4659150,
+      // },
+    });
+    const { txId } = await execCP({ sendAndConfirm: true })
+    const poolKeys = Object.keys(extInfoCP.address).reduce(
+      (acc, cur) => ({
+        ...acc,
+        [cur]: extInfoCP.address[cur as keyof typeof extInfoCP.address].toBase58(),
+      }),
+      {}
+    );
+    console.log('amm pool created! txId: ', txId, ', poolKeys:', poolKeys);
+
+    const tokenBalanceAfter = await connection.getTokenAccountBalance(minterTokenAccount.address);
+    console.log('tokenBalanceAfter', tokenBalanceAfter);
+    console.log('tokenBalanceAfter.value.uiAmount', tokenBalanceAfter.value.uiAmount);
+    console.log('SUPPLY_TOKENS', SUPPLY_TOKENS);
+    console.log('LIQ_TOKENS', LIQ_TOKENS);
+    assert.equal(tokenBalanceAfter.value.uiAmount, SUPPLY_TOKENS - LIQ_TOKENS, "Minter has wrong # of tokens after pool creation");
+
+    // get total admin cost to create market & pool
+    const adminBalanceAtEnd = await connection.getBalance(adminKp.publicKey);
+    const totalCost = adminBalanceAtEnd - adminBalanceAtStart;
+    console.log('totalCost', totalCost);
+    console.log('totalCost (SOL)', totalCost / LAMPORTS_PER_SOL);
+
+    // test poolkeys - ignore
+    /*const poolKeys = { // devnet pool: 4t7PN6oWscEqnqiSwRuTZXWosyshVD4qJpp7iJhffNdR8StTjRvuGKngw2uyuRpB1ihdK5WCbrwuF52RpXzL6PZW
+      programId: 'HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8',
+      ammId: 'BpdmAjTjMDamyyEzShzjzMQnjfkrs1vn9amSQGJzxLMX',
+      ammAuthority: 'DbQqP6ehDYmeYjcBaMRuA8tAJY1EjDUz9DpwSLjaQqfC',
+      ammOpenOrders: '2ZRHYYKB6t7Ko19M4v2LjhrnLX7npLHJNokya5kZMeNf',
+      lpMint: '79UAW3WqbgaPQEbVsCdNK9MHmEiG6fJJv5gXvhAUHfWu',
+      coinMint: 'HXGt4TmVWKmwGkGPwHP3Kp4T2Jd52NoieA7Gad9Bhkdb',
+      pcMint: 'So11111111111111111111111111111111111111112',
+      coinVault: '2diEnXLNHrMsDBcADYu2ubZCZtjWf1C63C1hN1pUZf5v',
+      pcVault: '6QJZAhbQ9UDdSUVK12AzzEP5ArUcG64mrZMyD4wK1Nkp',
+      withdrawQueue: '2hFbvzyQWbHNXqBWJxNV9JK7eFTuQcQtmANxsV7SVcuX',
+      ammTargetOrders: 'CaUstCJsdT56uzk6JsBCxg6RyBuudYDyvcqNGSKAbuLo',
+      poolTempLp: 'Hv5dTdndbvL9hw8sHQumsnwJtW2Xckj2Xwrhsea8kspE',
+      marketProgramId: 'EoTcMgcDRTJVZDMZWBoU6rhYHZfkNTVEAfz3uUJRcYGj',
+      marketId: 'FYiWxYY2w5L4wXGNCSK4ouvxTnP6CyPKmyb6B4jPye6T',
+      ammConfigId: '8QN9yfKqWDoKjvZmqFsgCzAqwZBQuzVVnC388dN5RCPo',
+      feeDestinationId: '3XMrhbv989VxAMi3DErLV9eJht1pHppW5LbKxe9fkEFR'
+    };*/
+
+    // **Step 6: Query the damn pool price**
+    const poolId = poolKeys['ammId'];
+    let poolInfo: AmmRpcData | undefined;
+    const getPrice = async () => {
+      const poolInfos = await raydium.liquidity.getRpcPoolInfos([poolId]);
+      const poolInfo = poolInfos[poolId];
+      const price = new Decimal(poolInfo.quoteReserve.toString()).div(poolInfo.baseReserve.toString()).toNumber();
+      logger.color("green").log(`Reserve ratios: ${price} WSOL per token`);
+      logger.color("green").log(`poolInfo.poolPrice: ${poolInfo.poolPrice} WSOL per token`);
+      return poolInfo;
+    }
+    poolInfo = await getPrice();
+
+    //
+    // **Step 7: Buy & sell some tokens **
+    //
+    const swap = async (buyTokens: boolean) => {
+      const inputMint = buyTokens ? poolInfo.quoteMint.toBase58() : poolInfo.baseMint.toBase58();
+      const amountIn = buyTokens ? 0.01 * 10 ** 9 // 0.01 WSOL 
+        : 100_00 * 10 ** 6 // 10k TOKENS
+      let poolInfo2: ApiV3PoolInfoStandardItem | undefined;
+      let poolKeys2: AmmV4Keys | undefined;
+      let rpcData: AmmRpcData;
+      if (isMainnet) {
+        // note: api doesn't support get devnet pool info, so in devnet else we go rpc method
+        // if you wish to get pool info from rpc, also can modify logic to go rpc method directly
+        const data = await raydium.api.fetchPoolById({ ids: poolId });
+        poolInfo2 = data[0] as ApiV3PoolInfoStandardItem;
+        if (!isValidAmm(poolInfo2.programId)) throw new Error('target pool is not AMM pool');
+        poolKeys2 = await raydium.liquidity.getAmmPoolKeys(poolId);
+        rpcData = await raydium.liquidity.getRpcPoolInfo(poolId);
+      } else {
+        // note: getPoolInfoFromRpc method only return required pool data for computing not all detail pool info
+        const data = await raydium.liquidity.getPoolInfoFromRpc({ poolId });
+        poolInfo2 = data.poolInfo;
+        poolKeys2 = data.poolKeys;
+        rpcData = data.poolRpcData;
+      }
+
+      //assert.equal(poolInfo2, poolInfo, 'poolInfo2 should be equal to poolInfo');
+      //assert.equal(poolKeys2, poolKeys, 'poolKeys2 should be equal to poolKeys');
+      const [baseReserve, quoteReserve, status] = [rpcData.baseReserve, rpcData.quoteReserve, rpcData.status.toNumber()];
+      if (poolInfo2.mintA.address !== inputMint && poolInfo2.mintB.address !== inputMint) throw new Error('input mint does not match pool')
+
+      const baseIn = inputMint === poolInfo2.mintA.address
+      const [mintIn, mintOut] = baseIn ? [poolInfo2.mintA, poolInfo2.mintB] : [poolInfo2.mintB, poolInfo2.mintA]
+      console.log('baseIn', baseIn);
+      console.log('mintIn', mintIn.address);
+      console.log('mintOut', mintOut.address);
+      const out = raydium.liquidity.computeAmountOut({
+        poolInfo: {
+          ...poolInfo2,
+          baseReserve,
+          quoteReserve,
+          status,
+          version: 4,
+        },
+        amountIn: new BN(amountIn),
+        mintIn: mintIn.address,
+        mintOut: mintOut.address,
+        slippage: 0.01, // range: 1 ~ 0.0001, means 100% ~ 0.01%
+      })
+      console.log(
+        `computed swap ${new Decimal(amountIn)
+          .div(10 ** mintIn.decimals)
+          .toDecimalPlaces(mintIn.decimals)
+          .toString()} ${mintIn.symbol || mintIn.address} to ${new Decimal(out.amountOut.toString())
+            .div(10 ** mintOut.decimals)
+            .toDecimalPlaces(mintOut.decimals)
+            .toString()} ${mintOut.symbol || mintOut.address}, minimum amount out ${new Decimal(out.minAmountOut.toString())
+              .div(10 ** mintOut.decimals)
+              .toDecimalPlaces(mintOut.decimals)} ${mintOut.symbol || mintOut.address}`
+      );
+
+      const { execute } = await raydium.liquidity.swap({
+        poolInfo: poolInfo2,
+        poolKeys: poolKeys2,
+        amountIn: new BN(amountIn),
+        amountOut: out.minAmountOut, // out.amountOut means amount 'without' slippage
+        fixedSide: 'in',
+        inputMint: mintIn.address,
+        txVersion,
+        // optional: set up token account
+        // config: {
+        //   inputUseSolBalance: true, // default: true, if you want to use existed wsol token account to pay token in, pass false
+        //   outputUseSolBalance: true, // default: true, if you want to use existed wsol token account to receive token out, pass false
+        //   associatedOnly: true, // default: true, if you want to use ata only, pass true
+        // },
+        // optional: set up priority fee here
+        // computeBudgetConfig: {
+        //   units: 600000,
+        //   microLamports: 46591500,
+        // },
+        // optional: add transfer sol to tip account instruction. e.g sent tip to jito
+        // txTipConfig: {
+        //   address: new PublicKey('96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5'),
+        //   amount: new BN(10000000), // 0.01 sol
+        // },
+      });
+
+      // don't want to wait confirm, set sendAndConfirm to false or don't pass any params to execute
+      const { txId: swapTx1Id } = await execute({ sendAndConfirm: true });
+      const SwapTx1 = await getTransactionDetailsWithRetry(connection, swapTx1Id);
+      if (SwapTx1.meta.err) {
+        throw new Error(`SwapTx1 failed: ${JSON.stringify(SwapTx1.meta.err)}`);
+      }
+      console.log(`${buyTokens ? 'bought' : 'sold'} tokens successfully in amm pool:`, swapTx1Id);
+    }
+    await swap(true);
+    poolInfo = await getPrice();
+    await swap(false);
+    poolInfo = await getPrice();
+  }
+
 });
 
 function logAuctionInfo(poolDbInfos: { market_info: string | null; pool_keys: string | null; market_id: string | null; pool_id: string | null; }[], index: number, poolPpcInfosMap: Map<string, AmmRpcData>, x: { auctionId: any; solBalanceAuctionData: string; solBalanceAuctionSol: string; solBalanceAuctionTokenAccount: string; rentExemptionAuctionData: string; rentExemptionAuctionSol: string; rentExemptionAuctionTokenAccount: string; tokenBalance: string; status: string; isFinalized: any; tokenMintPublicKey: any; }) {
@@ -2332,3 +2554,50 @@ async function getMarketAndPoolInfoDb(tokenMintPublicKey: string): Promise<{
     await pool.close();
   }
 }
+
+export const clmmDevConfigs = [
+  {
+    id: 'CQYbhr6amxUER4p5SC44C63R4qw4NFc9Z4Db9vF4tZwG',
+    index: 0,
+    protocolFeeRate: 120000,
+    tradeFeeRate: 100,
+    tickSpacing: 10,
+    fundFeeRate: 40000,
+    description: 'Best for very stable pairs',
+    defaultRange: 0.005,
+    defaultRangePoint: [0.001, 0.003, 0.005, 0.008, 0.01],
+  },
+  {
+    id: 'B9H7TR8PSjJT7nuW2tuPkFC63z7drtMZ4LoCtD7PrCN1',
+    index: 1,
+    protocolFeeRate: 120000,
+    tradeFeeRate: 2500,
+    tickSpacing: 60,
+    fundFeeRate: 40000,
+    description: 'Best for most pairs',
+    defaultRange: 0.1,
+    defaultRangePoint: [0.01, 0.05, 0.1, 0.2, 0.5],
+  },
+  {
+    id: 'GjLEiquek1Nc2YjcBhufUGFRkaqW1JhaGjsdFd8mys38',
+    index: 3,
+    protocolFeeRate: 120000,
+    tradeFeeRate: 10000,
+    tickSpacing: 120,
+    fundFeeRate: 40000,
+    description: 'Best for exotic pairs',
+    defaultRange: 0.1,
+    defaultRangePoint: [0.01, 0.05, 0.1, 0.2, 0.5],
+  },
+  {
+    id: 'GVSwm4smQBYcgAJU7qjFHLQBHTc4AdB3F2HbZp6KqKof',
+    index: 2,
+    protocolFeeRate: 120000,
+    tradeFeeRate: 500,
+    tickSpacing: 10,
+    fundFeeRate: 40000,
+    description: 'Best for tighter ranges',
+    defaultRange: 0.1,
+    defaultRangePoint: [0.01, 0.05, 0.1, 0.2, 0.5],
+  },
+]
