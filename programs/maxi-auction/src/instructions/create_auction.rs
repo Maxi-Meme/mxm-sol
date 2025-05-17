@@ -116,9 +116,8 @@ impl<'info> CreateAuction<'info> {
     ) -> Result<()> {
         msg!("Calling create_auction...");
 
-        // 80% - 97% tokens must be distributed to bidders
-        // (3% - 20% tokens are reserved for liquidity)
-        require!(dist_percent >= 800 && dist_percent <= 970, CustomError::InvalidDistPercent); 
+        // 1-100% tokens must be distributed to bidders
+        require!(dist_percent >= 100 && dist_percent <= 10000, CustomError::InvalidDistPercent); 
 
         let global_info = &mut self.global_info;
         let creator = &mut self.creator;

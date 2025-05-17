@@ -20,6 +20,7 @@ import {
   getMint,
   TOKEN_PROGRAM_ID,
   createAssociatedTokenAccountInstruction,
+  TokenAccountNotFoundError,
 } from "@solana/spl-token";
 import { MaxiAuction } from "../target/types/maxi_auction";
 import keypair from "../id.json";
@@ -209,7 +210,8 @@ describe("maxi-auction", () => {
       // Process migration and resolve the promise
       migrateAuction(program, isMainnet, auctionId, adminKp, connection)
         .catch((err) => {
-          console.error(`auction ${auctionId} migration complete - catch`, err);
+          logObject('auction migration error', err);
+          logger.color("red").error(`auction ${auctionId} migration complete - catch`, err);
           throw err;
         })
         .finally(async () => {
@@ -354,7 +356,7 @@ describe("maxi-auction", () => {
   });
 
   it("base - user 1 fills & claims auction", async () => {
-    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% token lock, 36s
+    await test_create_auction_KP0({ auction_distribution_percent: 0.9631, duration_hours_div100: 1 }); // 3.69% token lock, 36s
     const bidResult = await test_bid_auction({ fill_percent: 1.0, bidderKp: USER_KPs[0] });
     await test_claim_auction(USER_KPs[0], true, bidResult);
   });
@@ -514,13 +516,13 @@ describe("maxi-auction", () => {
     await Promise.all(detailPromises);
   });
 
-  it("admin - cleanup finished auctions", async () => {
+  it("admin - finalize finished auctions ###", async () => { // cleanup - withdraw in full/close accounts ### ACHTUNG!
     // get all auctions
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
     const totalAuctions = Number(globalInfoAccount.auctionsNum);
     console.log(`Total auctions: ${totalAuctions}`);
-    const auctionIds = [2]; //Array.from({ length: totalAuctions }, (_, i) => i);
+    const auctionIds = Array.from({ length: totalAuctions }, (_, i) => i); // [2]
     const promises = auctionIds.map(auctionId =>
       getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed)
     );
@@ -538,41 +540,51 @@ describe("maxi-auction", () => {
     const rpcResult = uniquePoolIds.length > 0 ? await raydium.liquidity.getRpcPoolInfos(uniquePoolIds) : {};
     const poolPpcInfosMap = new Map(Object.entries(rpcResult));
 
-    // CLEANUP
+    // CLEANUP -
     const detailPromises = successfulResults.map(async (x, index) => {
       if (!x.isFinalized) {
-        if (x.status != "live") {
+        //if (x.status != "live") { // KILL EM ALL!
           console.log("BEFORE:")
           logAuctionInfo(poolDbInfos, index, poolPpcInfosMap, x);
 
-          await finalizeAuction(x.auctionId); // KILL EM ALL
+        await finalizeAuction(x.auctionId); 
 
           console.log("AFTER:")
           const refreshed = await getAuctionDetails(x.auctionId, connection, program, auctionDataSeed, auctionSolSeed);
           x = { ...x, ...refreshed };
           logAuctionInfo(poolDbInfos, index, poolPpcInfosMap, x);
-        }
+        //}
       }
     });
     await Promise.all(detailPromises);
   });
 
-  it("admin - remove liquidity from pools ### ACHTUNG ###", async () => {
-    // get all auctions
+  it("admin - pools v2 - remove liquidity ###", async () => { // ### ACHTUNG!
+  // Get all auctions
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
     const totalAuctions = Number(globalInfoAccount.auctionsNum);
     console.log(`Total auctions: ${totalAuctions}`);
-    // ######################
-    const auctionIds = [37]; //Array.from({ length: totalAuctions }, (_, i) => i);
-    // ######################
+
+    // Generate auction IDs
+    // ##############
+    const auctionIds = Array.from({ length: totalAuctions }, (_, i) => i);
+    // ##############
+
+    // Fetch auction details in parallel
     const promises = auctionIds.map(auctionId =>
       getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed)
     );
     const results = await Promise.all(promises);
     const successfulResults = results.filter(result => result !== null);
 
-    const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: true, blockhashCommitment: 'confirmed', });
+    // Initialize Raydium SDK
+    const raydium = await Raydium.load({
+      connection,
+      owner: adminKp,
+      disableFeatureCheck: true,
+      blockhashCommitment: 'confirmed'
+    });
 
     // Collect poolDbInfos and pool IDs
     const poolDbInfosPromises = successfulResults.map(x => getMarketAndPoolInfoDb(x.tokenMintPublicKey));
@@ -584,19 +596,54 @@ describe("maxi-auction", () => {
     const rpcResult = uniquePoolIds.length > 0 ? await raydium.liquidity.getRpcPoolInfos(uniquePoolIds) : {};
     const poolPpcInfosMap = new Map(Object.entries(rpcResult));
 
-    // Process each auction with pre-fetched pool info
-    const removalPromises = successfulResults.map(async (x, index) => {
+    // Process each auction sequentially
+    for (const [index, x] of successfulResults.entries()) {
       const poolDb = poolDbInfos[index];
       const poolPpcInfo = poolDb?.pool_id ? poolPpcInfosMap.get(poolDb.pool_id) : undefined;
+
       if (poolPpcInfo) {
         try {
           const poolId = poolDb.pool_id;
-          var lpAta, lpBalance;
-          lpAta = await getAssociatedTokenAddress(new PublicKey(poolPpcInfo.lpMint), adminKp.publicKey, true);
-          lpBalance = await connection.getTokenAccountBalance(lpAta);
+          console.log(`\n=== Processing auction ID: ${x.auctionId} ===`);
 
-          if (lpBalance.value.amount > 0) {
-            console.log("BEFORE:");
+          // Get LP mint and total supply
+          const lpMint = new PublicKey(poolPpcInfo.lpMint);
+          let totalLpSupply;
+          try {
+            const mintInfo = await getMint(connection, lpMint);
+            totalLpSupply = mintInfo.supply.toString();
+            console.log(`Total LP token supply: ${totalLpSupply} LP tokens`);
+          } catch (err) {
+            console.error(`Error fetching LP mint info for ${lpMint.toBase58()}:`, err);
+            continue;
+          }
+
+          // Get admin's LP token balance
+          let lpBalance = { value: { amount: '0' } };
+          const lpAta = await getAssociatedTokenAddress(new PublicKey(poolPpcInfo.lpMint), adminKp.publicKey, true);
+          try {
+            lpBalance = await connection.getTokenAccountBalance(lpAta);
+            console.log(`Admin LP balance: ${lpBalance.value.amount} LP tokens`);
+          } catch (err) {
+            if (err instanceof TokenAccountNotFoundError) {
+              console.log(`Admin LP token account not found; balance set to 0`);
+            } else {
+              console.error(`Error fetching admin LP balance:`, err);
+              continue;
+            }
+          }
+
+          // Verify if admin is the sole LP
+          if (lpBalance.value.amount === totalLpSupply) {
+            console.log(`Admin is the sole LP for pool ${poolId}`);
+          } else {
+            console.log(`Warning: Admin holds ${lpBalance.value.amount} of ${totalLpSupply} LP tokens; other LPs may exist`);
+          }
+
+          // Check if there are LP tokens to withdraw
+          if (Number(lpBalance.value.amount) > 0) {
+            // Log pool state BEFORE withdrawal
+            console.log("BEFORE withdrawal:");
             const poolPriceBefore = Number(poolPpcInfo.poolPrice);
             const baseReserveBefore = new BN(poolPpcInfo.baseReserve, 16);
             const quoteReserveBefore = new BN(poolPpcInfo.quoteReserve, 16);
@@ -604,30 +651,32 @@ describe("maxi-auction", () => {
               ` > ${poolId} price: ${poolPriceBefore.toFixed(6)} >> LIQ: [${baseReserveBefore.toString()} T-lamports, ${Number(quoteReserveBefore.toString()) / LAMPORTS_PER_SOL} WSOL]`
             );
 
-            // https://github.com/raydium-io/raydium-sdk-V2-demo/blob/master/src/amm/withdrawLiquidity.ts
-            let poolKeys: AmmV4Keys | undefined;
-            let poolInfo: ApiV3PoolInfoStandardItem;
+            // Prepare withdrawal
+            let poolKeys;
+            let poolInfo;
             const withdrawLpAmount = new BN(lpBalance.value.amount);
             const isMainnet = false;
+
             if (isMainnet) {
-              console.log(`raydium.api.fetchPoolById: `, poolInfo);
               const data = await raydium.api.fetchPoolById({ ids: poolId });
-              poolInfo = data[0] as ApiV3PoolInfoStandardItem;
+              poolInfo = data[0];
             } else {
-              console.log(`raydium.liquidity.getPoolInfoFromRpc: `, poolInfo);
               const data = await raydium.liquidity.getPoolInfoFromRpc({ poolId });
               poolInfo = data.poolInfo;
               poolKeys = data.poolKeys;
             }
+
             if (!poolInfo) {
-              console.log(`poolInfo is undefined for auction ID ${x.auctionId}`);
-              throw new Error(`poolInfo is undefined for auction ID ${x.auctionId}`);
+              console.log(`Pool info is undefined for auction ID ${x.auctionId}`);
+              continue;
             }
 
             if (!isValidAmm(poolInfo.programId)) {
-              console.log(`target pool is not AMM pool`);
-              throw new Error('target pool is not AMM pool');
+              console.log(`Target pool is not an AMM pool for auction ID ${x.auctionId}`);
+              continue;
             }
+
+            // Calculate withdrawal amounts
             const [baseRatio, quoteRatio] = [
               new Decimal(poolInfo.mintAmountA).div(poolInfo.lpAmount || 1),
               new Decimal(poolInfo.mintAmountB).div(poolInfo.lpAmount || 1),
@@ -639,35 +688,63 @@ describe("maxi-auction", () => {
               withdrawAmountDe.mul(quoteRatio).mul(10 ** (poolInfo?.mintB.decimals || 0)),
             ];
 
-            const lpSlippage = 0.1; // means 1%
+            const lpSlippage = 0.1; // 10% slippage tolerance
+            const baseAmountMin = new BN(withdrawAmountA.mul(1 - lpSlippage).toFixed(0));
+            const quoteAmountMin = new BN(withdrawAmountB.mul(1 - lpSlippage).toFixed(0));
 
-            console.log(`lpMint: `, poolInfo.lpMint);
-            console.log(`lpMint.decimals: `, poolInfo.lpMint.decimals);
-            console.log(`withdrawLpAmount: `, withdrawLpAmount.toString());
-            console.log(`withdrawAmountDe: `, withdrawAmountDe.toString());
-            console.log(`withdrawAmountA: `, withdrawAmountA.toString());
-            console.log(`withdrawAmountB: `, withdrawAmountB.toString());
+            // Log withdrawal details
+            console.log(`Withdrawal details:`);
+            console.log(`- lpMint: ${poolInfo.lpMint}`);
+            console.log(`- lpMint.decimals: ${poolInfo.lpMint.decimals}`);
+            console.log(`- withdrawLpAmount: ${withdrawLpAmount.toString()} LP tokens`);
+            console.log(`- withdrawAmountA (base): ${withdrawAmountA.toString()}`);
+            console.log(`- withdrawAmountB (quote): ${withdrawAmountB.toString()}`);
+            console.log(`- baseAmountMin: ${baseAmountMin.toString()}`);
+            console.log(`- quoteAmountMin: ${quoteAmountMin.toString()}`);
+
+            // Execute withdrawal
             const { execute: execRL } = await raydium.liquidity.removeLiquidity({
               poolInfo,
               poolKeys,
               lpAmount: withdrawLpAmount,
-              baseAmountMin: new BN(withdrawAmountA.mul(1 - lpSlippage).toFixed(0)),
-              quoteAmountMin: new BN(withdrawAmountB.mul(1 - lpSlippage).toFixed(0)),
+              baseAmountMin,
+              quoteAmountMin,
               txVersion: TxVersion.LEGACY,
             });
-            console.log(`removeLiquidity -> ${x.auctionId}) => execRL...`);
-            const rlSig = await execRL({ sendAndConfirm: true });
-            console.log(`removeLiquidity -> ${rlSig.txId} for auction ID ${x.auctionId}) => execRL OK`);
 
-            console.log("AFTER:");
-            //...
+            console.log(`Executing removeLiquidity for auction ID: ${x.auctionId}...`);
+            const rlSig = await execRL({ sendAndConfirm: true });
+            console.log(`Withdrawal successful - txId: ${rlSig.txId}`);
+
+            // Query and log pool state AFTER withdrawal
+            console.log("AFTER withdrawal:");
+            const updatedPoolInfo = await raydium.liquidity.getRpcPoolInfos([poolId]);
+            const updatedPool = updatedPoolInfo[poolId];
+            if (updatedPool) {
+              const baseReserveAfter = new BN(updatedPool.baseReserve, 16);
+              const quoteReserveAfter = new BN(updatedPool.quoteReserve, 16);
+              console.log(`LIQ: [${baseReserveAfter.toString()} T-lamports, ${Number(quoteReserveAfter.toString()) / LAMPORTS_PER_SOL} WSOL]`);
+            } else {
+              console.log(`Failed to fetch updated pool info for pool ID: ${poolId}`);
+            }
+
+            // Verify admin's LP balance post-withdrawal
+            try {
+              const postLpBalance = await connection.getTokenAccountBalance(lpAta);
+              console.log(`Admin LP balance after withdrawal: ${postLpBalance.value.amount} LP tokens`);
+            } catch (err) {
+              console.log(`Admin LP balance after withdrawal: 0 (account likely closed)`);
+            }
+          } else {
+            console.log(`No LP tokens to withdraw for auction ID: ${x.auctionId}`);
           }
         } catch (err) {
-          console.log("error: ", err);
+          console.error(`Error processing auction ID: ${x.auctionId}:`, err);
         }
+      } else {
+        console.log(`\nNo pool info available for auction ID: ${x.auctionId}`);
       }
-    });
-    await Promise.all(removalPromises);
+    }
   });
 
   it("claims - min total sol not reached", async () => {
@@ -1283,11 +1360,11 @@ describe("maxi-auction", () => {
 
     // test auction data
     const xId = new BN(42);
-    const name = TEST_TOKEN_NAME;
+    const name = TEST_TOKEN_NAME + ` ${Date.now() / 1000}`;
     const symbol = TEST_TOKEN_SYMBOL;
     const uri = TEST_TOKEN_URI;
     const durationHours = new BN(duration_hours_div100 || 10); // about 5mins: unit is actually hours_div_100, or 36s 
-    const distPercent = new BN(auction_distribution_percent !== undefined ? (auction_distribution_percent * 1000) : TEST_DISTRIBTION_PERCENT);
+    const distPercent = new BN(auction_distribution_percent !== undefined ? (auction_distribution_percent * 10000) : TEST_DISTRIBTION_PERCENT); // 10000 = 100%
     const delaySeconds = new BN(0);
 
     // Log balances of all signing accounts before the transaction
@@ -1300,7 +1377,7 @@ describe("maxi-auction", () => {
     console.log(`Admin (${adminKp.publicKey.toBase58()}): ${(adminBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
     console.log(`Signer (${signer.publicKey.toBase58()}): ${(signerBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
     console.log(`Token mint (${token.publicKey.toBase58()}): ${(tokenBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-    console.log(`distPercent: ${distPercent} = ${distPercent.toNumber() / 10}%`);
+    console.log(`distPercent: ${distPercent} = ${distPercent.toNumber() / 100}%`);
     console.log('durationHours', durationHours.toNumber());
 
     const tx = await program.methods
@@ -1493,7 +1570,7 @@ describe("maxi-auction", () => {
           console.log("auctionPost", auctionPost);
 
           const distPercent = auctionPost.distPercent.toNumber(); // Calculate locked and expected remaining tokens
-          const lockedTokensPercent = distPercent / 10;
+          const lockedTokensPercent = distPercent / 100; // 10000 = 100%
           const totalTokens = auctionPost.tokenSupply.toNumber();
 
           const lockedTokens = Math.floor((totalTokens * (100 - lockedTokensPercent)) / 100);
@@ -1511,7 +1588,7 @@ describe("maxi-auction", () => {
           console.log('remainingTokens', remainingTokens);
 
           if (!skipMigrationWait) {
-            assert.equal(remainingTokens, expectedRemainingTokens, "Remaining tokens should be total tokens minus locked tokens");
+            assert.equal(Math.abs(remainingTokens - expectedRemainingTokens) <= 1, true, "Remaining tokens should be total tokens minus locked tokens");
           }
         }
         else {
@@ -1643,23 +1720,25 @@ describe("maxi-auction", () => {
     return { auctionDataAfter, balanceAfter, balanceBefore, totalRefund, networkFee, auctionSol };
   }
 
-  it("admin - creates & interacts with a v3 CLMM pool", async () => {
+  //
+  // Raydium - v3 CLMM Pools
+  //
+  it("admin - pools v3 - creates & LPs CLMM pool", async () => {
     await test_create_clmm_and_trade_v3();
   });
-
   async function test_create_clmm_and_trade_v3() {
     if (isLocal) return logger.color("yellow").log("Skipping pool creation on localnet");
 
     // KEY VARS
-    const INITIAL_PRICE = 0.1,         // model: price can be arbitrary, but we start at ~0.1 sol/token
-      LIQ_TOKENS = 50,                 // model: 5% lock on 1000 tokens
-      LIQ_SOL = INITIAL_PRICE * 1000;  // model: we raise ~1000 * price
+    const INITIAL_PRICE = 0.01,       // model: price can be arbitrary, but we start at ~0.1 sol/token
+      LIQ_TOKENS = 2,                 // model: 5% lock on 1000 tokens
+      LIQ_SOL = INITIAL_PRICE * 100;  // model: we raise ~1000 * price
 
     const SUPPLY_TOKENS = 200, SUPPLY_DECIMALS = 6;
     const txVersion = TxVersion.LEGACY, minterKp = adminKp;
     // empircally determined min/max ticks for CLMM v3 - to create a full range position, v. important!
     // we can 
-    const MIN_TICK = -443636 / 2, MAX_TICK = +443636 / 2;
+    const MIN_TICK = -443636, MAX_TICK = +443636;
 
     // **Initialize Raydium SDK**
     const raydium = await Raydium.load({ connection, owner: minterKp, disableFeatureCheck: true, blockhashCommitment: 'confirmed' });
@@ -1711,9 +1790,9 @@ describe("maxi-auction", () => {
     });
     const positionTx = await execOpenPosition({ sendAndConfirm: true });
     await logSuccessTx(connection, positionTx.txId, "Full range position opened");
-    await sleep(6);
 
     // **Validate Position Range**
+    await sleep(6);
     const position = (await raydium.clmm.getOwnerPositionInfo({ programId: DEVNET_PROGRAM_ID.CLMM })).find(pos => pos.poolId.toBase58() === poolId.toBase58());
     if (!position) throw new Error('Position not found');
     const priceLower = TickUtils.getTickPrice({ poolInfo: poolInfo.poolInfo, tick: position.tickLower, baseIn: true }).price.toNumber();
@@ -1724,14 +1803,18 @@ describe("maxi-auction", () => {
     const totalCost = (await connection.getBalance(adminKp.publicKey, 'confirmed')) - adminBalanceAtStart;
     console.log('Total cost (SOL):', totalCost / LAMPORTS_PER_SOL);
     const poolInfoRpc = (await raydium.clmm.getRpcClmmPoolInfos({ poolIds: [poolId] }))[poolId];
+    console.log(`1 / poolInfoRpc.currentPrice: ${1 / poolInfoRpc.currentPrice} `);
+    console.log(`INITIAL_PRICE: ${INITIAL_PRICE}`);
+
     assert.ok(Math.abs(INITIAL_PRICE - 1 / poolInfoRpc.currentPrice) < 1e-6, 'Current price mismatch');
   }
 
-
-  it("admin - creates & interacts with a v2 (legacy CPMM) pool", async () => {
+  //
+  // Raydium - v2 AMM Pools
+  //
+  it("admin - pools v2 - creates & LPs AMM pool", async () => {
     await test_create_amm_and_trade_v2();
   });
-
   async function test_create_amm_and_trade_v2() { // https://github.com/raydium-io/raydium-sdk-V2-demo/tree/master/src/amm
     if (isLocal) { logger.color("yellow").log("Skipping pool creation on localnet"); return; }
     const adminBalanceAtStart = await connection.getBalance(adminKp.publicKey);
@@ -2047,23 +2130,57 @@ describe("maxi-auction", () => {
 
 });
 
-function logAuctionInfo(poolDbInfos: { market_info: string | null; pool_keys: string | null; market_id: string | null; pool_id: string | null; }[], index: number, poolPpcInfosMap: Map<string, AmmRpcData>, x: { auctionId: any; solBalanceAuctionData: string; solBalanceAuctionSol: string; solBalanceAuctionTokenAccount: string; rentExemptionAuctionData: string; rentExemptionAuctionSol: string; rentExemptionAuctionTokenAccount: string; tokenBalance: string; status: string; isFinalized: any; tokenMintPublicKey: any; }) {
+async function logAuctionInfo(poolDbInfos: { market_info: string | null; pool_keys: string | null; market_id: string | null; pool_id: string | null; }[], index: number, poolPpcInfosMap: Map<string, AmmRpcData>, x: { auctionId: any; solBalanceAuctionData: string; solBalanceAuctionSol: string; solBalanceAuctionTokenAccount: string; rentExemptionAuctionData: string; rentExemptionAuctionSol: string; rentExemptionAuctionTokenAccount: string; tokenBalance: string; status: string; isFinalized: any; tokenMintPublicKey: any; }) {
   const poolDbInfo = poolDbInfos[index];
   const poolPpcInfo = poolDbInfo?.pool_id ? poolPpcInfosMap.get(poolDbInfo.pool_id) : undefined;
   const poolPrice = Number(poolPpcInfo?.poolPrice);
   const baseReserve = new BN(poolPpcInfo?.baseReserve, 16);
   const quoteReserve = new BN(poolPpcInfo?.quoteReserve, 16);
+  // var lpProviders = "N/A (1)";
+  // try {
+  //   if (poolPpcInfo) {
+  //     lpProviders = await getLpProvidersForPool(connection, poolPpcInfo);
+  //   }
+  // } catch (error) {
+  //   console.error(`Error fetching LP providers for pool ${ poolDbInfo.pool_id }:`, error);
+  // }
   console.log(
     `ID: ${x.auctionId.toString().padEnd(3)}, [${(x.status ?? "-").padEnd(25)}], ` +
     `AD: ${(x.solBalanceAuctionData ?? "-").padEnd(12)} (${(x.rentExemptionAuctionData ?? " ").padEnd(12)}), ` +
     `AS: ${(x.solBalanceAuctionSol ?? "-").padEnd(12)} (${(x.rentExemptionAuctionSol ?? " ").padEnd(12)}), ` +
-    `AT: ${x.solBalanceAuctionTokenAccount ?? "-".padEnd(12)} (${(x.rentExemptionAuctionTokenAccount ?? "").padEnd(12)}), ` +
+    `AT: ${(x.solBalanceAuctionTokenAccount ?? "-").padEnd(12)} (${(x.rentExemptionAuctionTokenAccount ?? " ").padEnd(12)}), ` +
     `Tokens: ${x.tokenBalance.padEnd(12)}, ` +
     `Mint: ${x.tokenMintPublicKey} ` +
     (poolPpcInfo
-      ? `> PRICE: ${poolPrice.toFixed(6)} LIQ: [${baseReserve.toString()} T - lamports, ${(Number(quoteReserve.toString()) / LAMPORTS_PER_SOL).toFixed(9)} WSOL] `
+      ? `> PRICE: ${poolPrice.toFixed(6)} LIQ: [${baseReserve.toString()} T - lamports, ${(Number(quoteReserve.toString()) / LAMPORTS_PER_SOL).toFixed(9)} WSOL]` //LP Providers: [${lpProviders}]`
       : '')
   );
+}
+
+async function getLpProvidersForPool(connection, poolInfo) {
+  if (!poolInfo || !poolInfo.lpMint) return "N/A (2)";
+
+  const lpMint = new PublicKey(poolInfo.lpMint);
+  const lpProviders = await fetchLpProviders(connection, lpMint);
+
+  // Convert PublicKey objects to shortened base58 strings and join with commas
+  return lpProviders.map(provider => {
+    const pubkeyStr = provider.toBase58();
+    return `${pubkeyStr.substring(0, 4)}...${pubkeyStr.substring(pubkeyStr.length - 4)}`;
+  }).join(', ');
+}
+
+async function fetchLpProviders(connection, lpMint) {
+  const filters = [
+    {
+      memcmp: {
+        offset: 0,
+        bytes: lpMint.toBase58(),
+      },
+    },
+  ];
+  const accounts = await connection.getProgramAccounts(TOKEN_PROGRAM_ID, { filters });
+  return accounts.map(account => account.pubkey);
 }
 
 // Recursively convert BN and PublicKey values

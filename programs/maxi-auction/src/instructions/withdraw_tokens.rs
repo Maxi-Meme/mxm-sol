@@ -84,9 +84,9 @@ impl<'info> WithdrawTokens<'info> {
         // Calculate amount to transfer
         let token_balance = self.auction_token_account.amount;
         let withdrawable = token_balance
-            .checked_mul(1000 - auction.dist_percent)
+            .checked_mul(10000 - auction.dist_percent)
             .ok_or(CustomError::Overflow)?
-            .checked_div(1000)
+            .checked_div(10000)
             .ok_or(CustomError::Overflow)?;
             
         msg!("withdrawable {}", withdrawable);

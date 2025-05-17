@@ -128,7 +128,7 @@ impl<'info> Claim<'info> {
                     let claim_token_qty = bid.bid_qty
                         .checked_mul(dist_percent)
                         .ok_or(CustomError::Overflow)?
-                        .checked_div(1000)
+                        .checked_div(10000)
                         .ok_or(CustomError::Overflow)?
                         .checked_mul(10u64.pow(token_decimals as u32))
                         .ok_or(CustomError::Overflow)?;

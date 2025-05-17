@@ -1,4 +1,5 @@
 import * as anchor from "@coral-xyz/anchor";
+import { Decimal } from 'decimal.js';
 import {
   LAMPORTS_PER_SOL,
   PublicKey,
@@ -11,9 +12,10 @@ import {
   createAssociatedTokenAccountIdempotent,
   createAssociatedTokenAccountIdempotentInstruction,
   getAssociatedTokenAddressSync,
+  getTokenMetadata,
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
-import { Raydium, TxVersion, DEVNET_PROGRAM_ID, WSOLMint, AMM_V4, OPEN_BOOK_PROGRAM, FEE_DESTINATION_ID, MARKET_STATE_LAYOUT_V3, TOKEN_WSOL, } from '@raydium-io/raydium-sdk-v2';
+import { Raydium, TxVersion, DEVNET_PROGRAM_ID, CLMM_PROGRAM_ID, WSOLMint, AMM_V4, OPEN_BOOK_PROGRAM, FEE_DESTINATION_ID, MARKET_STATE_LAYOUT_V3, TOKEN_WSOL, ApiV3Token, TickUtils } from '@raydium-io/raydium-sdk-v2';
 import { getMint, getOrCreateAssociatedTokenAccount, createSyncNativeInstruction, createTransferInstruction } from '@solana/spl-token';
 import { Connection, Keypair } from "@solana/web3.js";
 import { Program } from "@coral-xyz/anchor";
@@ -52,6 +54,9 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
   const auctionDataFetched = await program.account.auction.fetch(auctionData);
   if (auctionDataFetched.lastStatus?.failedMinNotReached) {
     throw new Error('failedMinNotReached');
+  }
+  if (auctionDataFetched.clearingPrice.lte(new BN(0))) {
+    throw new Error('invalid clearing price');
   }
   //console.log(`auctionDataFetched`, auctionDataFetched); // how to get status?
 
@@ -114,22 +119,28 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
   console.log(`feeTokens`, feeTokens.toString());
 
   // Create & fund a new market/pool
-  const { marketId, poolId, marketInfo, poolKeys } = await createAndFundPool(
+  // const { marketId, poolId, marketInfo, poolKeys } = await createAndFundPool_v2_AMM(
+  //   program, isMainnet, auctionId, tokenMint,
+  //   BigInt(liquidityTokens.toString()),
+  //   BigInt(liquidityWSol.toString()),
+  //   adminKp, connection);
+  const { poolId, poolKeys } = await createAndFundPool_v3_CLMM(
     program, isMainnet, auctionId, tokenMint,
     BigInt(liquidityTokens.toString()),
     BigInt(liquidityWSol.toString()),
-    adminKp, connection);
+    adminKp, connection, auctionDataFetched.clearingPrice.toNumber());
+
   console.log(`migrateAuction => OK!`);
-  console.log(`marketInfo:`, marketInfo);
-  console.log(`poolKeys:`, poolKeys);
   console.log(`tokenMint: ${tokenMint.toBase58()}`);
-  console.log(`marketId: ${marketId.toBase58()}`);
-  console.log(`poolId: ${poolId.toBase58()}`);
   console.log(`liquidityTokens: ${liquidityTokens.toString()}`);
   console.log(`liquidityWSol: ${liquidityWSol.toString()}`);
+  //console.log(`marketInfo:`, marketInfo);
+  //console.log(`marketId: ${marketId.toBase58()}`);
+  console.log(`poolId: ${poolId.toBase58()}`);
+  console.log(`poolKeys:`, poolKeys);
 
   // update DB
-  await updateKeyPairPoolInfo(tokenMint, marketInfo, poolKeys, marketId, poolId);
+  await updateKeyPairPoolInfo(tokenMint, null /*marketInfo*/, poolKeys, null /*marketId*/, poolId);
 
   // Send fee tokens to the revenue wallet
   const feeAccount = globalInfoAccount.config.feeAccount;
@@ -166,6 +177,7 @@ async function withdrawFunds(program: Program<MaxiAuction>, isMainnet: boolean, 
 
   // Withdraw SOL
   const solBefore = BigInt(await connection.getBalance(auctionSol));
+  console.log('calling withdrawSol...');
   const withdrawSolSig = await program.methods
     .withdrawSol()
     .accounts({
@@ -183,6 +195,7 @@ async function withdrawFunds(program: Program<MaxiAuction>, isMainnet: boolean, 
 
   // Withdraw Tokens
   const tokenBefore = BigInt((await connection.getTokenAccountBalance(auctionTokenAccount)).value.amount);
+  console.log('calling withdrawTokens...');
   const withdrawTokenSig = await program.methods
     .withdrawTokens()
     .accounts({
@@ -202,8 +215,142 @@ async function withdrawFunds(program: Program<MaxiAuction>, isMainnet: boolean, 
   return { solAmount: solWithdrawn, tokenAmount: tokenWithdrawn, tokenMint, adminTokenAccount };
 }
 
-// (2) Create market and pool
-async function createAndFundPool(program: Program<MaxiAuction>, isMainnet: boolean, auctionId: number, tokenMint: PublicKey, tokenAmount: bigint, wsolAmount: bigint, adminKp: Keypair, connection: Connection): Promise<{
+// (2) Create market and pool - v3 CLMM (constant product pool; full range position)
+async function createAndFundPool_v3_CLMM(
+  program: Program<MaxiAuction>,
+  isMainnet: boolean,
+  auctionId: number,
+  tokenMint: PublicKey,
+  tokenAmount: bigint,
+  wsolAmount: bigint,
+  adminKp: Keypair,
+  connection: Connection,
+  auctionClearingPrice: number
+): Promise<{
+  poolId: PublicKey;
+  poolKeys: Object;
+  marketId: PublicKey; // not used by CLMM - returs null
+  marketInfo: Object;  // not used by CLMM
+}> {
+  console.log(`createAndFundPool_v3_CLMM...`);
+  const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: true, blockhashCommitment: 'finalized', });
+
+  const mintAccount = await getMint(connection, tokenMint);
+  const tokenDecimals = mintAccount.decimals;
+  const initialPrice = new Decimal(auctionClearingPrice);
+
+  const clmmProgramId = isMainnet ? CLMM_PROGRAM_ID : DEVNET_PROGRAM_ID.CLMM;
+  const chainId = isMainnet ? 101 : 103;
+
+  var logoURI = '';
+  const accountInfo = await connection.getAccountInfo(tokenMint);
+  if (!accountInfo) {
+    console.log(`Mint account not found: ${tokenMint.toBase58()}`);
+    throw new Error(`Mint account not found: ${tokenMint.toBase58()}`);
+  }
+  if (!accountInfo.owner.equals(new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'))) {
+    console.log(`Invalid owner for ${tokenMint.toBase58()}: got ${accountInfo.owner.toBase58()}`);
+    throw new Error(`Invalid owner for ${tokenMint.toBase58()}: got ${accountInfo.owner.toBase58()}`);
+  }
+  // logObject('getTokenMetadata...', tokenMint);
+  // const metadata = await getTokenMetadata(connection, tokenMint);
+  // logObject('metadata', metadata);
+  // if (metadata && metadata.uri) {
+  //   try {
+  //     const response = await fetch(metadata.uri);
+  //     const json = await response.json();
+  //     console.log(`json`, json);
+  //     logoURI = json.image || ''; // ERC-721 standard uses 'image' for logo URI    
+  //   } catch (error) {
+  //     console.error('Error fetching token metadata:', error);
+  //   }
+  // }
+  // console.log(`logoURI`, logoURI);
+
+  const tokenInfo: ApiV3Token = {
+    chainId,
+    address: tokenMint.toBase58(),
+    programId: TOKEN_PROGRAM_ID.toBase58(),
+    symbol: 'UNKNOWN',  //metadata ? metadata.symbol : 'UNKNOWN',
+    name: 'Unknown Token', //metadata ? metadata.name : 'Unknown Token',
+    decimals: tokenDecimals,
+    tags: ['maxi'],
+    logoURI,
+    extensions: {},
+  };
+  const wsolInfo: ApiV3Token = {
+    chainId,
+    address: WSOLMint.toBase58(),
+    programId: TOKEN_PROGRAM_ID.toBase58(),
+    symbol: 'WSOL',
+    name: 'Wrapped SOL',
+    decimals: 9,
+    tags: ['wrapped', 'solana'],
+    logoURI: '',
+    extensions: {},
+  };
+
+  // Create CLMM pool
+  var clmmConfigs = isMainnet ? await raydium.api.getClmmConfigs() : clmmDevConfigs;
+  const ammConfig = { ...clmmConfigs[0], id: new PublicKey(clmmConfigs[0].id), fundOwner: '', description: '' };
+  const { execute: execCreatePool, extInfo: poolExtInfo } = await raydium.clmm.createPool({
+    programId: clmmProgramId,
+    mint1: tokenInfo, // Base token
+    mint2: wsolInfo,  // Quote token (WSOL)
+    ammConfig,
+    initialPrice,
+    txVersion: TxVersion.LEGACY,
+  });
+  const createPoolTx = await execCreatePool({ sendAndConfirm: true });
+  console.log(`createAndFundPool -> ${createPoolTx.txId} createAndFundPool (${auctionId}) => Pool created`);
+  const poolId = poolExtInfo.address.poolId;
+  console.log(`poolId`, poolId.toBase58());
+
+  // Fetch pool info to get tick spacing
+  const poolInfo = await raydium.clmm.getPoolInfoFromRpc(poolId.toBase58());
+  const tickSpacing = poolInfo.poolInfo.tickSpacing;
+
+  // Set full range ticks
+  const MIN_TICK = -443636;
+  const MAX_TICK = 443636;
+  const tickLower = Math.ceil(MIN_TICK / tickSpacing) * tickSpacing;
+  const tickUpper = Math.floor(MAX_TICK / tickSpacing) * tickSpacing;
+
+  // Open full range liquidity position
+  const baseAmount = new BN(tokenAmount.toString());
+  const otherAmountMax = new BN(wsolAmount.toString());
+  const { execute: execOpenPosition } = await raydium.clmm.openPositionFromBase({
+    poolInfo: poolInfo.poolInfo,
+    poolKeys: poolExtInfo.address,
+    tickLower,
+    tickUpper,
+    base: 'MintA', // mint1 (tokenMint) is the base token
+    ownerInfo: { useSOLBalance: true }, // only use WSOL (don't autowrap)
+    baseAmount,
+    otherAmountMax,
+    txVersion: TxVersion.LEGACY,
+  });
+  const positionTx = await execOpenPosition({ sendAndConfirm: true });
+  console.log(`createAndFundPool -> ${positionTx.txId} createAndFundPool (${auctionId}) => Full range position opened`);
+
+  // test - get position info
+  //await sleep(6);
+  // const position = (await raydium.clmm.getOwnerPositionInfo({ programId: DEVNET_PROGRAM_ID.CLMM })).find(pos => pos.poolId.toBase58() === poolId.toBase58());
+  // if (!position) throw new Error('Position not found');
+  // const priceLower = TickUtils.getTickPrice({ poolInfo: poolInfo.poolInfo, tick: position.tickLower, baseIn: true }).price.toNumber();
+  // const priceUpper = TickUtils.getTickPrice({ poolInfo: poolInfo.poolInfo, tick: position.tickUpper, baseIn: true }).price.toNumber();
+  // console.log(`createAndFundPool -> priceLower: ${priceLower} / priceUpper: ${priceUpper}`);
+
+  logObject('poolExtInfo', poolExtInfo);
+  // const poolKeys = Object.keys(poolExtInfo.address).reduce(
+  //   (acc, cur) => ({ ...acc, [cur]: poolExtInfo.address[cur].toBase58() }),
+  //   {}
+  // );
+  return { poolId, poolKeys: poolExtInfo, marketInfo: {}, marketId: null };
+}
+
+// (2) OLD: Create market and pool - v2 AMM (continuous product pool)
+async function createAndFundPool_v2_AMM(program: Program<MaxiAuction>, isMainnet: boolean, auctionId: number, tokenMint: PublicKey, tokenAmount: bigint, wsolAmount: bigint, adminKp: Keypair, connection: Connection): Promise<{
   marketId: PublicKey;
   poolId: PublicKey;
   marketInfo: Object;
@@ -276,18 +423,18 @@ export const updateKeyPairPoolInfo = async (tokenMint, marketInfo, poolKeys, mar
     // Prepare input parameters
     const publicKey = tokenMint.toBase58();
     request.input('PublicKey', sql.VarChar(255), publicKey);
-    request.input('market_info', sql.NVarChar(sql.MAX), JSON.stringify(marketInfo));
-    request.input('pool_keys', sql.NVarChar(sql.MAX), JSON.stringify(poolKeys));
-    request.input('market_id', sql.NVarChar(44), marketId.toBase58());
     request.input('pool_id', sql.NVarChar(44), poolId.toBase58());
+    request.input('pool_keys', sql.NVarChar(sql.MAX), JSON.stringify(poolKeys));
+    //request.input('market_info', sql.NVarChar(sql.MAX), JSON.stringify(marketInfo));
+    //request.input('market_id', sql.NVarChar(44), marketId.toBase58());
 
     // SQL update query
     const query = `
       UPDATE [dbo].[KeyPair]
-      SET [market_info] = @market_info,
-          [pool_keys] = @pool_keys,
-          [market_id] = @market_id,
+      SET [pool_keys] = @pool_keys,
           [pool_id] = @pool_id
+          --[market_info] = @market_info,
+          --[market_id] = @market_id,
       WHERE [PublicKey] = @PublicKey
     `;
 
@@ -362,3 +509,51 @@ function logObject(label, obj) {
   const convertedObj = convertValue(obj);
   console.log(label, convertedObj);
 }
+
+// https://github.com/raydium-io/raydium-sdk-V2-demo/blob/master/src/clmm/utils.ts
+export const clmmDevConfigs = [
+  {
+    id: 'CQYbhr6amxUER4p5SC44C63R4qw4NFc9Z4Db9vF4tZwG',
+    index: 0,
+    protocolFeeRate: 120000,
+    tradeFeeRate: 100,
+    tickSpacing: 10,
+    fundFeeRate: 40000,
+    description: 'Best for very stable pairs',
+    defaultRange: 0.005,
+    defaultRangePoint: [0.001, 0.003, 0.005, 0.008, 0.01],
+  },
+  {
+    id: 'B9H7TR8PSjJT7nuW2tuPkFC63z7drtMZ4LoCtD7PrCN1',
+    index: 1,
+    protocolFeeRate: 120000,
+    tradeFeeRate: 2500,
+    tickSpacing: 60,
+    fundFeeRate: 40000,
+    description: 'Best for most pairs',
+    defaultRange: 0.1,
+    defaultRangePoint: [0.01, 0.05, 0.1, 0.2, 0.5],
+  },
+  {
+    id: 'GjLEiquek1Nc2YjcBhufUGFRkaqW1JhaGjsdFd8mys38',
+    index: 3,
+    protocolFeeRate: 120000,
+    tradeFeeRate: 10000,
+    tickSpacing: 120,
+    fundFeeRate: 40000,
+    description: 'Best for exotic pairs',
+    defaultRange: 0.1,
+    defaultRangePoint: [0.01, 0.05, 0.1, 0.2, 0.5],
+  },
+  {
+    id: 'GVSwm4smQBYcgAJU7qjFHLQBHTc4AdB3F2HbZp6KqKof',
+    index: 2,
+    protocolFeeRate: 120000,
+    tradeFeeRate: 500,
+    tickSpacing: 10,
+    fundFeeRate: 40000,
+    description: 'Best for tighter ranges',
+    defaultRange: 0.1,
+    defaultRangePoint: [0.01, 0.05, 0.1, 0.2, 0.5],
+  },
+]
