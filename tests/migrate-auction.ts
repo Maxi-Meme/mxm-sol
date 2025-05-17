@@ -237,7 +237,29 @@ async function createAndFundPool_v3_CLMM(
 
   const mintAccount = await getMint(connection, tokenMint);
   const tokenDecimals = mintAccount.decimals;
-  const initialPrice = new Decimal(auctionClearingPrice);
+  const initialPrice = new Decimal(auctionClearingPrice / LAMPORTS_PER_SOL);
+
+  console.log(`createAndFundPool_v3_CLMM -> auctionClearingPrice`, auctionClearingPrice);
+  console.log(`createAndFundPool_v3_CLMM -> initialPrice (SOL)`, initialPrice);
+
+  console.log(`createAndFundPool_v3_CLMM -> wsolAmount (SOL)`, Number(wsolAmount.toString()) / LAMPORTS_PER_SOL);
+  console.log(`createAndFundPool_v3_CLMM -> tokenAmount (tokens)`, Number(tokenAmount.toString()) / 10 ** tokenDecimals);
+
+  const adminTokenAccount = await getOrCreateAssociatedTokenAccount(connection, adminKp, tokenMint, adminKp.publicKey);
+  const adminWsolAccount = await getOrCreateAssociatedTokenAccount(connection, adminKp, WSOLMint, adminKp.publicKey);
+
+  // check balances
+  const tokenBalance = (await connection.getTokenAccountBalance(adminTokenAccount.address)).value.amount;
+  const wsolBalance = (await connection.getTokenAccountBalance(adminWsolAccount.address)).value.amount;
+  if (new BN(tokenBalance).lt(new BN(tokenAmount.toString()))) {
+    console.log(`createAndFundPool_v3_CLMM -> Insufficient token balance: have ${tokenBalance}, need ${tokenAmount.toString()}`);
+    throw new Error(`Insufficient token balance: have ${tokenBalance}, need ${tokenAmount.toString()}`);
+  }
+  if (new BN(wsolBalance).lt(new BN(wsolAmount.toString()))) {
+    console.log(`createAndFundPool_v3_CLMM -> Insufficient wsol balance: have ${wsolBalance}, need ${wsolAmount.toString()}`);
+    throw new Error(`Insufficient wsol balance: have ${wsolBalance}, need ${wsolAmount.toString()}`);
+  }
+  console.log(`createAndFundPool_v3_CLMM -> balances ok.`);
 
   const clmmProgramId = isMainnet ? CLMM_PROGRAM_ID : DEVNET_PROGRAM_ID.CLMM;
   const chainId = isMainnet ? 101 : 103;
@@ -245,11 +267,11 @@ async function createAndFundPool_v3_CLMM(
   var logoURI = '';
   const accountInfo = await connection.getAccountInfo(tokenMint);
   if (!accountInfo) {
-    console.log(`Mint account not found: ${tokenMint.toBase58()}`);
+    console.log(`createAndFundPool_v3_CLMM -> Mint account not found: ${tokenMint.toBase58()}`);
     throw new Error(`Mint account not found: ${tokenMint.toBase58()}`);
   }
   if (!accountInfo.owner.equals(new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'))) {
-    console.log(`Invalid owner for ${tokenMint.toBase58()}: got ${accountInfo.owner.toBase58()}`);
+    console.log(`createAndFundPool_v3_CLMM -> Invalid owner for ${tokenMint.toBase58()}: got ${accountInfo.owner.toBase58()}`);
     throw new Error(`Invalid owner for ${tokenMint.toBase58()}: got ${accountInfo.owner.toBase58()}`);
   }
   // logObject('getTokenMetadata...', tokenMint);
@@ -302,9 +324,9 @@ async function createAndFundPool_v3_CLMM(
     txVersion: TxVersion.LEGACY,
   });
   const createPoolTx = await execCreatePool({ sendAndConfirm: true });
-  console.log(`createAndFundPool -> ${createPoolTx.txId} createAndFundPool (${auctionId}) => Pool created`);
+  console.log(`createAndFundPool_v3_CLMM -> ${createPoolTx.txId} createAndFundPool (${auctionId}) => Pool created`);
   const poolId = poolExtInfo.address.poolId;
-  console.log(`poolId`, poolId.toBase58());
+  console.log(`createAndFundPool_v3_CLMM -> poolId`, poolId.toBase58());
 
   // Fetch pool info to get tick spacing
   const poolInfo = await raydium.clmm.getPoolInfoFromRpc(poolId.toBase58());
@@ -331,17 +353,32 @@ async function createAndFundPool_v3_CLMM(
     txVersion: TxVersion.LEGACY,
   });
   const positionTx = await execOpenPosition({ sendAndConfirm: true });
-  console.log(`createAndFundPool -> ${positionTx.txId} createAndFundPool (${auctionId}) => Full range position opened`);
+  console.log(`createAndFundPool_v3_CLMM -> ${positionTx.txId} createAndFundPool (${auctionId}) => Full range position opened`);
 
   // test - get position info
-  //await sleep(6);
-  // const position = (await raydium.clmm.getOwnerPositionInfo({ programId: DEVNET_PROGRAM_ID.CLMM })).find(pos => pos.poolId.toBase58() === poolId.toBase58());
-  // if (!position) throw new Error('Position not found');
-  // const priceLower = TickUtils.getTickPrice({ poolInfo: poolInfo.poolInfo, tick: position.tickLower, baseIn: true }).price.toNumber();
-  // const priceUpper = TickUtils.getTickPrice({ poolInfo: poolInfo.poolInfo, tick: position.tickUpper, baseIn: true }).price.toNumber();
-  // console.log(`createAndFundPool -> priceLower: ${priceLower} / priceUpper: ${priceUpper}`);
+  await sleep(6);
+  const adminPositions = await raydium.clmm.getOwnerPositionInfo({ programId: DEVNET_PROGRAM_ID.CLMM });
+  //logObject("createAndFundPool_v3_CLMM -> adminPositions", adminPositions);
+  const position = adminPositions.find(pos => pos.poolId.toBase58() === poolId.toBase58());
+  if (!position) {
+    console.log(`createAndFundPool_v3_CLMM -> Position not found for pool ${poolId.toBase58()}`);
+    throw new Error('Position not found');
+  }
+  const priceLower = TickUtils.getTickPrice({ poolInfo: poolInfo.poolInfo, tick: position.tickLower, baseIn: true }).price.toNumber();
+  const priceUpper = TickUtils.getTickPrice({ poolInfo: poolInfo.poolInfo, tick: position.tickUpper, baseIn: true }).price.toNumber();
+  console.log(`createAndFundPool -> priceLower: ${priceLower} / priceUpper: ${priceUpper}`);
 
-  logObject('poolExtInfo', poolExtInfo);
+  // get pool price
+  const poolInfoRpc = (await raydium.clmm.getRpcClmmPoolInfos({ poolIds: [poolId] }))[poolId];
+  console.log(`poolInfoRpc.currentPrice: ${poolInfoRpc.currentPrice} `);
+  console.log(`1 / poolInfoRpc.currentPrice: ${1 / poolInfoRpc.currentPrice} `);
+  console.log(`initialPrice: ${initialPrice}`);
+  if (Math.abs(initialPrice.toNumber() - 1 / poolInfoRpc.currentPrice) > 1e-6) {
+    console.log(`createAndFundPool_v3_CLMM -> Current price mismatch`);
+    throw new Error('Current price mismatch');
+  }
+
+  logObject('createAndFundPool_v3_CLMM -> poolExtInfo', poolExtInfo);
   // const poolKeys = Object.keys(poolExtInfo.address).reduce(
   //   (acc, cur) => ({ ...acc, [cur]: poolExtInfo.address[cur].toBase58() }),
   //   {}

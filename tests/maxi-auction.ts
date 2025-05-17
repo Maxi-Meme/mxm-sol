@@ -49,12 +49,12 @@ import { getOrCreateAssociatedTokenAccount, createSyncNativeInstruction } from '
 import { NATIVE_MINT } from '@solana/spl-token';
 import { SystemProgram, } from '@solana/web3.js';
 
-import { Raydium, TOKEN_WSOL } from '@raydium-io/raydium-sdk-v2';
+import { BigNumberish, Raydium, TOKEN_WSOL } from '@raydium-io/raydium-sdk-v2';
 import { RAYMint, USDCMint, OPEN_BOOK_PROGRAM, TxVersion, DEVNET_PROGRAM_ID, WSOLMint, USDTMint } from '@raydium-io/raydium-sdk-v2'
 import { MARKET_STATE_LAYOUT_V3, AMM_V4, FEE_DESTINATION_ID, } from '@raydium-io/raydium-sdk-v2'
 import { TRANSFER_SOURCE_INDEX } from "@project-serum/serum/lib/token-instructions";
 import {
-  ApiV3PoolInfoStandardItem, AmmV4Keys, AmmRpcData, ApiV3PoolInfoConcentratedItem, TickUtils, PoolUtils, ClmmKeys, ApiV3Token
+  ApiV3PoolInfoStandardItem, AmmV4Keys, AmmRpcData, ClmmRpcData, ApiV3PoolInfoConcentratedItem, TickUtils, PoolUtils, ClmmKeys, ApiV3Token
 
 } from '@raydium-io/raydium-sdk-v2'
 import {  AMM_STABLE, } from '@raydium-io/raydium-sdk-v2'
@@ -496,22 +496,18 @@ describe("maxi-auction", () => {
       getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed)
     );
     const results = await Promise.all(promises);
-    const successfulResults = results.filter(result => result !== null);
+    const auctions = results.filter(result => result !== null);
+    //console.log("auctions", auctions.length);
 
     // Collect poolDbInfos and pool IDs from DB
-    const poolDbInfosPromises = successfulResults.map(x => getMarketAndPoolInfoDb(x.tokenMintPublicKey));
-    const poolDbInfos = await Promise.all(poolDbInfosPromises);
-    const poolIds = poolDbInfos.map(info => info?.pool_id).filter(id => id !== undefined && id !== null);
-    const uniquePoolIds = [...new Set(poolIds)];
-
-    // Fetch all pool infos in one RPC 
-    const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: false, blockhashCommitment: 'finalized' });
-    const rpcResult = uniquePoolIds.length > 0 ? await raydium.liquidity.getRpcPoolInfos(uniquePoolIds) : {};
-    const poolPpcInfosMap = new Map(Object.entries(rpcResult));
+    const { poolDbInfos, poolPpcInfosMapv2, poolPpcInfosMapv3 } = await getPoolDbAndRpcInfos(auctions);
+    // logObject("poolDbInfos", poolDbInfos);
+    // logObject("poolPpcInfosMapv2", poolPpcInfosMapv2);
+    // logObject("poolPpcInfosMapv3", poolPpcInfosMapv3);  
 
     // Log
-    const detailPromises = successfulResults.map(async (x, index) => {
-      logAuctionInfo(poolDbInfos, index, poolPpcInfosMap, x);
+    const detailPromises = auctions.map(async (x, index) => {
+      logAuctionInfo(poolDbInfos, index, poolPpcInfosMapv2, poolPpcInfosMapv3, x);
     });
     await Promise.all(detailPromises);
   });
@@ -527,32 +523,24 @@ describe("maxi-auction", () => {
       getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed)
     );
     const results = await Promise.all(promises);
-    const successfulResults = results.filter(result => result !== null);
+    const auctions = results.filter(result => result !== null);
 
     // Collect poolDbInfos and pool IDs from DB
-    const poolDbInfosPromises = successfulResults.map(x => getMarketAndPoolInfoDb(x.tokenMintPublicKey));
-    const poolDbInfos = await Promise.all(poolDbInfosPromises);
-    const poolIds = poolDbInfos.map(info => info?.pool_id).filter(id => id !== undefined && id !== null);
-    const uniquePoolIds = [...new Set(poolIds)];
-
-    // Fetch all pool infos in one RPC 
-    const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: false, blockhashCommitment: 'finalized' });
-    const rpcResult = uniquePoolIds.length > 0 ? await raydium.liquidity.getRpcPoolInfos(uniquePoolIds) : {};
-    const poolPpcInfosMap = new Map(Object.entries(rpcResult));
+    const { poolDbInfos, poolPpcInfosMapv2, poolPpcInfosMapv3 } = await getPoolDbAndRpcInfos(auctions);
 
     // CLEANUP -
-    const detailPromises = successfulResults.map(async (x, index) => {
+    const detailPromises = auctions.map(async (x, index) => {
       if (!x.isFinalized) {
         //if (x.status != "live") { // KILL EM ALL!
           console.log("BEFORE:")
-          logAuctionInfo(poolDbInfos, index, poolPpcInfosMap, x);
+        logAuctionInfo(poolDbInfos, index, poolPpcInfosMapv2, poolPpcInfosMapv3, x);
 
         await finalizeAuction(x.auctionId); 
 
           console.log("AFTER:")
           const refreshed = await getAuctionDetails(x.auctionId, connection, program, auctionDataSeed, auctionSolSeed);
           x = { ...x, ...refreshed };
-          logAuctionInfo(poolDbInfos, index, poolPpcInfosMap, x);
+        logAuctionInfo(poolDbInfos, index, poolPpcInfosMapv2, poolPpcInfosMapv3, x);
         //}
       }
     });
@@ -571,35 +559,23 @@ describe("maxi-auction", () => {
     const auctionIds = Array.from({ length: totalAuctions }, (_, i) => i);
     // ##############
 
+    // Initialize Raydium SDK
+    const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: true, blockhashCommitment: 'confirmed' });
+
     // Fetch auction details in parallel
     const promises = auctionIds.map(auctionId =>
       getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed)
     );
     const results = await Promise.all(promises);
-    const successfulResults = results.filter(result => result !== null);
+    const auctions = results.filter(result => result !== null);
 
-    // Initialize Raydium SDK
-    const raydium = await Raydium.load({
-      connection,
-      owner: adminKp,
-      disableFeatureCheck: true,
-      blockhashCommitment: 'confirmed'
-    });
-
-    // Collect poolDbInfos and pool IDs
-    const poolDbInfosPromises = successfulResults.map(x => getMarketAndPoolInfoDb(x.tokenMintPublicKey));
-    const poolDbInfos = await Promise.all(poolDbInfosPromises);
-    const poolIds = poolDbInfos.map(info => info?.pool_id).filter(id => id !== undefined && id !== null);
-    const uniquePoolIds = [...new Set(poolIds)];
-
-    // Fetch all pool infos in one call
-    const rpcResult = uniquePoolIds.length > 0 ? await raydium.liquidity.getRpcPoolInfos(uniquePoolIds) : {};
-    const poolPpcInfosMap = new Map(Object.entries(rpcResult));
+    // Collect poolDbInfos and pool IDs from DB
+    const { poolDbInfos, poolPpcInfosMapv2, poolPpcInfosMapv3 } = await getPoolDbAndRpcInfos(auctions);
 
     // Process each auction sequentially
-    for (const [index, x] of successfulResults.entries()) {
+    for (const [index, x] of auctions.entries()) {
       const poolDb = poolDbInfos[index];
-      const poolPpcInfo = poolDb?.pool_id ? poolPpcInfosMap.get(poolDb.pool_id) : undefined;
+      const poolPpcInfo = poolDb?.pool_id ? poolPpcInfosMapv2.get(poolDb.pool_id) : undefined;
 
       if (poolPpcInfo) {
         try {
@@ -1730,9 +1706,9 @@ describe("maxi-auction", () => {
     if (isLocal) return logger.color("yellow").log("Skipping pool creation on localnet");
 
     // KEY VARS
-    const INITIAL_PRICE = 0.01,       // model: price can be arbitrary, but we start at ~0.1 sol/token
-      LIQ_TOKENS = 2,                 // model: 5% lock on 1000 tokens
-      LIQ_SOL = INITIAL_PRICE * 100;  // model: we raise ~1000 * price
+    const INITIAL_PRICE = 0.000861112, //0.01,  // model: price can be arbitrary, but we start at ~0.1 sol/token
+      LIQ_TOKENS = 3.6531, //2,                    // model: 3.6% lock on tokens
+      LIQ_SOL = 0.084317208; // INITIAL_PRICE * 1;             // model: we raise ~1000 * price
 
     const SUPPLY_TOKENS = 200, SUPPLY_DECIMALS = 6;
     const txVersion = TxVersion.LEGACY, minterKp = adminKp;
@@ -1793,7 +1769,9 @@ describe("maxi-auction", () => {
 
     // **Validate Position Range**
     await sleep(6);
-    const position = (await raydium.clmm.getOwnerPositionInfo({ programId: DEVNET_PROGRAM_ID.CLMM })).find(pos => pos.poolId.toBase58() === poolId.toBase58());
+    const adminPositions = await raydium.clmm.getOwnerPositionInfo({ programId: DEVNET_PROGRAM_ID.CLMM });
+    logObject("adminPositions", adminPositions); // 2aV3fmLhrrYAD1BZnL1VusaARin4KuvoY7LEuowQP6ij (prev)
+    const position = adminPositions.find(pos => pos.poolId.toBase58() === poolId.toBase58());
     if (!position) throw new Error('Position not found');
     const priceLower = TickUtils.getTickPrice({ poolInfo: poolInfo.poolInfo, tick: position.tickLower, baseIn: true }).price.toNumber();
     const priceUpper = TickUtils.getTickPrice({ poolInfo: poolInfo.poolInfo, tick: position.tickUpper, baseIn: true }).price.toNumber();
@@ -2130,31 +2108,84 @@ describe("maxi-auction", () => {
 
 });
 
-async function logAuctionInfo(poolDbInfos: { market_info: string | null; pool_keys: string | null; market_id: string | null; pool_id: string | null; }[], index: number, poolPpcInfosMap: Map<string, AmmRpcData>, x: { auctionId: any; solBalanceAuctionData: string; solBalanceAuctionSol: string; solBalanceAuctionTokenAccount: string; rentExemptionAuctionData: string; rentExemptionAuctionSol: string; rentExemptionAuctionTokenAccount: string; tokenBalance: string; status: string; isFinalized: any; tokenMintPublicKey: any; }) {
-  const poolDbInfo = poolDbInfos[index];
-  const poolPpcInfo = poolDbInfo?.pool_id ? poolPpcInfosMap.get(poolDbInfo.pool_id) : undefined;
-  const poolPrice = Number(poolPpcInfo?.poolPrice);
-  const baseReserve = new BN(poolPpcInfo?.baseReserve, 16);
-  const quoteReserve = new BN(poolPpcInfo?.quoteReserve, 16);
-  // var lpProviders = "N/A (1)";
-  // try {
-  //   if (poolPpcInfo) {
-  //     lpProviders = await getLpProvidersForPool(connection, poolPpcInfo);
-  //   }
-  // } catch (error) {
-  //   console.error(`Error fetching LP providers for pool ${ poolDbInfo.pool_id }:`, error);
-  // }
-  console.log(
-    `ID: ${x.auctionId.toString().padEnd(3)}, [${(x.status ?? "-").padEnd(25)}], ` +
-    `AD: ${(x.solBalanceAuctionData ?? "-").padEnd(12)} (${(x.rentExemptionAuctionData ?? " ").padEnd(12)}), ` +
-    `AS: ${(x.solBalanceAuctionSol ?? "-").padEnd(12)} (${(x.rentExemptionAuctionSol ?? " ").padEnd(12)}), ` +
-    `AT: ${(x.solBalanceAuctionTokenAccount ?? "-").padEnd(12)} (${(x.rentExemptionAuctionTokenAccount ?? " ").padEnd(12)}), ` +
-    `Tokens: ${x.tokenBalance.padEnd(12)}, ` +
-    `Mint: ${x.tokenMintPublicKey} ` +
-    (poolPpcInfo
-      ? `> PRICE: ${poolPrice.toFixed(6)} LIQ: [${baseReserve.toString()} T - lamports, ${(Number(quoteReserve.toString()) / LAMPORTS_PER_SOL).toFixed(9)} WSOL]` //LP Providers: [${lpProviders}]`
-      : '')
-  );
+async function getPoolDbAndRpcInfos(successfulResults: { auctionId: any; solBalanceAuctionData: any; solBalanceAuctionSol: any; solBalanceAuctionTokenAccount: any; rentExemptionAuctionData: any; rentExemptionAuctionSol: any; rentExemptionAuctionTokenAccount: any; tokenBalance: string; status: any; isFinalized: any; tokenMintPublicKey: any; }[]) {
+
+  const poolDbInfosPromises = successfulResults.map(x => getMarketAndPoolInfoDb(x.tokenMintPublicKey));
+  const poolDbInfos = await Promise.all(poolDbInfosPromises);
+  const v2PoolIds = poolDbInfos.filter(p => p?.market_id).map(info => info?.pool_id).filter(id => id !== undefined && id !== null); // v2 AMMs use markets
+  const uniquev2PoolIds = [...new Set(v2PoolIds)];
+
+  const v3PoolIds = poolDbInfos.filter(p => p?.pool_id && !p?.market_id).map(info => info?.pool_id).filter(id => id !== undefined && id !== null); // v3 CLMM use only pools
+  const uniquev3PoolIds = [...new Set(v3PoolIds)];
+
+  logObject("uniquev2PoolIds", uniquev2PoolIds);
+  logObject("uniquev3PoolIds", uniquev3PoolIds);
+
+  // Fetch all pool infos in one RPC - v2
+  const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: false, blockhashCommitment: 'finalized' });
+  const rpcResultv2 = uniquev2PoolIds.length > 0 ? await raydium.liquidity.getRpcPoolInfos(uniquev2PoolIds) : {};
+  const poolPpcInfosMapv2 = new Map(Object.entries(rpcResultv2));
+
+  // Fetch all pool infos in one RPC - v3
+  const rpcResultv3 = uniquev3PoolIds.length > 0 ? await raydium.clmm.getRpcClmmPoolInfos({ poolIds: uniquev3PoolIds }) : {};
+  const poolPpcInfosMapv3 = new Map(Object.entries(rpcResultv3));
+
+  return { poolDbInfos, poolPpcInfosMapv2, poolPpcInfosMapv3 };
+}
+
+async function logAuctionInfo(
+  poolDbInfos: { market_info: string | null; pool_keys: string | null; market_id: string | null; pool_id: string | null; }[],
+  index: number,
+  poolPpcInfosMapv2: Map<string, AmmRpcData>,
+  poolPpcInfosMapv3: Map<string, ClmmRpcData>,
+  x: {
+    auctionId: any;
+    solBalanceAuctionData: string;
+    solBalanceAuctionSol: string;
+    solBalanceAuctionTokenAccount: string;
+    rentExemptionAuctionData: string;
+    rentExemptionAuctionSol: string;
+    rentExemptionAuctionTokenAccount: string;
+    tokenBalance: string;
+    status: string;
+    isFinalized: any;
+    tokenMintPublicKey: any;
+    clearingPrice: any;
+  }) {
+  try {
+    const poolDbInfo = poolDbInfos[index];
+    const poolPpcInfov2 = poolDbInfo?.pool_id ? poolPpcInfosMapv2.get(poolDbInfo.pool_id) : undefined;
+    const poolPpcInfov3 = poolDbInfo?.pool_id ? poolPpcInfosMapv3.get(poolDbInfo.pool_id) : undefined;
+    const poolPrice = Number(poolPpcInfov2?.poolPrice || poolPpcInfov3?.currentPrice);
+    const baseReserve = poolPpcInfov2?.baseReserve ? new BN(poolPpcInfov2?.baseReserve, 16) : null;
+    const quoteReserve = poolPpcInfov2?.quoteReserve ? new BN(poolPpcInfov2?.quoteReserve, 16) : null;
+    // var lpProviders = "N/A (1)";
+    // try {
+    //   if (poolPpcInfo) {
+    //     lpProviders = await getLpProvidersForPool(connection, poolPpcInfo);
+    //   }
+    // } catch (error) {
+    //   console.error(`Error fetching LP providers for pool ${ poolDbInfo.pool_id }:`, error);
+    // }
+    console.log(
+      `ID: ${x.auctionId.toString().padEnd(3)}, [${(x.status ?? "-").padEnd(25)}], ` +
+      `AD: ${(x.solBalanceAuctionData ?? "-").padEnd(12)} (${(x.rentExemptionAuctionData ?? " ").padEnd(12)}), ` +
+      `AS: ${(x.solBalanceAuctionSol ?? "-").padEnd(12)} (${(x.rentExemptionAuctionSol ?? " ").padEnd(12)}), ` +
+      `AT: ${(x.solBalanceAuctionTokenAccount ?? "-").padEnd(12)} (${(x.rentExemptionAuctionTokenAccount ?? " ").padEnd(12)}), ` +
+      `Tokens: ${x.tokenBalance.padEnd(12)}, ` +
+      `Mint: ${x.tokenMintPublicKey} ` +
+      `CP: ${(x.clearingPrice ? (x.clearingPrice.toNumber() / LAMPORTS_PER_SOL).toFixed(10) : "-").padEnd(12)} ` +
+      (poolPpcInfov2 || poolPpcInfov3
+        ? (`> PRICE: ${poolPrice.toFixed(10)} ` +
+          (baseReserve && quoteReserve
+            ? `LIQv2: [${baseReserve.toString()} T - lamports, ${(Number(quoteReserve.toString()) / LAMPORTS_PER_SOL).toFixed(9)} WSOL]` //LP Providers: [${lpProviders}]`
+            : 'LIQv3: TBC'))
+        : '')
+    );
+  }
+  catch (error) {
+    console.error(`Error logging auction info for index ${index}:`, error);
+  }
 }
 
 async function getLpProvidersForPool(connection, poolInfo) {
@@ -2342,15 +2373,11 @@ async function waitForMigration(auctionId: number) {
 
 async function getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed) {
   try {
+    //console.log("getAuctionDetails - auctionId", auctionId);
+
     // Derive PDAs
-    const [auctionData] = PublicKey.findProgramAddressSync(
-      [Buffer.from(auctionDataSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)],
-      program.programId
-    );
-    const [auctionSol] = PublicKey.findProgramAddressSync(
-      [Buffer.from(auctionSolSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)],
-      program.programId
-    );
+    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
 
     // Fetch account info for SOL balances and data lengths
     const auctionDataInfo = await connection.getAccountInfo(auctionData);
@@ -2371,6 +2398,7 @@ async function getAuctionDetails(auctionId, connection, program, auctionDataSeed
     let status = undefined;
     let isFinalized = undefined;
     let tokenMintPublicKey = undefined;
+    let clearingPrice = undefined;
 
     // If auctionData exists, fetch auction details
     if (auctionDataInfo) {
@@ -2378,6 +2406,8 @@ async function getAuctionDetails(auctionId, connection, program, auctionDataSeed
       tokenMint = auction.tokenMint;
       tokenMintPublicKey = tokenMint.toBase58();
       isFinalized = auction.isFinalized;
+      clearingPrice = auction.clearingPrice;
+
       status = Object.keys(auction.lastStatus)[0]; // Assuming lastStatus is an enum-like object
 
       // Get SOL balance and rent exemption for auctionData
@@ -2427,7 +2457,9 @@ async function getAuctionDetails(auctionId, connection, program, auctionDataSeed
       status,
       isFinalized,
       tokenMintPublicKey,
+      clearingPrice
     };
+    //console.log("getAuctionDetails - details", details);
     return details;
   } catch (error) {
     console.error(`Error fetching details for auction ID ${auctionId}:`, error);
