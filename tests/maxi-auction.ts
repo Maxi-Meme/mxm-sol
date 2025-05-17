@@ -791,7 +791,7 @@ describe("maxi-auction", () => {
   });
 
   it("claims - full supply not bid", async () => {
-    await test_create_auction_KP0(0.95, 1); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
     const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
     logger.color("magenta").log("sleeping 36s...");
@@ -815,9 +815,9 @@ describe("maxi-auction", () => {
     assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction"); // claim (refund) will reduce sol account to 0
   });
 
-  it("claims - one user claims two multiple bids", async () => {
+  it("claims - one user claims two bids failed auction", async () => {
     await test_init(10000); // 10k SOL minimum needed to move liquidity - will cause this auction to finished failed
-    await test_create_auction_KP0(0.95, 1); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
     const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
     const bidResult3 = await test_bid_auction({ fill_percent: 0.2, bidderKp: USER_KPs[2], skipLiqMoveAssumption: true }); // will finish failed
@@ -843,7 +843,7 @@ describe("maxi-auction", () => {
   });
 
   it("claims - only after auction is finished", async () => {
-    await test_create_auction_KP0(0.95, 1); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
     const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
 
@@ -865,7 +865,7 @@ describe("maxi-auction", () => {
   });
 
   it("claims - auction creator bids & claims", async () => {
-    await test_create_auction_KP0(0.95, 1); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
     const bidResult2 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
     await test_claim_auction(USER_KPs[0], true, bidResult1); // creator claims
@@ -879,7 +879,7 @@ describe("maxi-auction", () => {
     lowClearingPrice = false,
     migrateAfterClaims = false // default/mainpath is to migrate *before* claims
   } = {}) {
-    await test_create_auction_KP0(0.95, 1); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
 
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
@@ -953,6 +953,10 @@ describe("maxi-auction", () => {
 
     const clearingPrice = auctionPost.clearingPrice;
     console.log(`clearingPrice sol`, clearingPrice.toNumber() / LAMPORTS_PER_SOL);
+
+    console.log(`tokensTransferred1`, tokensTransferred1);
+    console.log(`tokensTransferred2`, tokensTransferred2);
+    console.log(`tokensTransferred3`, tokensTransferred3);  
 
     if (isLocal) {
       const expectedTotalChange = new BN(auctionPost.bids.map((bid) => {
@@ -1126,7 +1130,7 @@ describe("maxi-auction", () => {
   async function test_admin_withdraws({ n_bids = 1, withdraw_tokens = false, withdraw_sol = false, fill_auction = false }) {
 
     // Step 1: Create an auction and place bid(s) to populate the auction with SOL and tokens
-    await test_create_auction_KP0();
+    await test_create_auction_KP0({});
     for (var i = 0; i < n_bids; i++) {
       const kp = USER_KPs[i % USER_KPs.length]; ``
       await test_bid_auction({ fill_percent: 0.5 / n_bids, bidderKp: kp }); // bid up to half supply
@@ -1319,7 +1323,7 @@ describe("maxi-auction", () => {
   }
 
   async function test_create_auction_KP0({
-    auction_distribution_percent = undefined, // 0-1
+    auction_distribution_percent = undefined, // 0-1 - // TODO - drop this, overmint instead
     duration_hours_div100 = undefined }
   ) {
     const signer = USER_KPs[0];
@@ -1340,7 +1344,9 @@ describe("maxi-auction", () => {
     const symbol = TEST_TOKEN_SYMBOL;
     const uri = TEST_TOKEN_URI;
     const durationHours = new BN(duration_hours_div100 || 10); // about 5mins: unit is actually hours_div_100, or 36s 
-    const distPercent = new BN(auction_distribution_percent !== undefined ? (auction_distribution_percent * 10000) : TEST_DISTRIBTION_PERCENT); // 10000 = 100%
+
+    // TODO - drop this, overmint instead:
+    const distPercent = new BN(10000/*100%*/); // new BN(auction_distribution_percent !== undefined ? (auction_distribution_percent * 10000) : TEST_DISTRIBTION_PERCENT); // 10000 = 100%
     const delaySeconds = new BN(0);
 
     // Log balances of all signing accounts before the transaction
@@ -1702,29 +1708,52 @@ describe("maxi-auction", () => {
   it("admin - pools v3 - creates & LPs CLMM pool", async () => {
     await test_create_clmm_and_trade_v3();
   });
+  // TODO: / full range: seems to be basically a CP internally, i.e. p=s/t -- p and s are fixed, we need a dynamic t
+  // lol so why not use v2 CP :))
+  //   BACK to overmint:
+  //    1. set user lock to zero... // all tests up to moveliq need to work
+  //    2. overmint (liq tokens) - AT AUCTION FINISH TIME...; then revoke mint auth.
+  //    3.   +mint: liq_tokens = net_sol_raised / settlement_price
+  //
   async function test_create_clmm_and_trade_v3() {
     if (isLocal) return logger.color("yellow").log("Skipping pool creation on localnet");
 
     // KEY VARS
-    const INITIAL_PRICE = 0.000861112, //0.01,  // model: price can be arbitrary, but we start at ~0.1 sol/token
-      LIQ_TOKENS = 3.6531, //2,                    // model: 3.6% lock on tokens
-      LIQ_SOL = 0.084317208; // INITIAL_PRICE * 1;             // model: we raise ~1000 * price
-
-    const SUPPLY_TOKENS = 200, SUPPLY_DECIMALS = 6;
-    const txVersion = TxVersion.LEGACY, minterKp = adminKp;
-    // empircally determined min/max ticks for CLMM v3 - to create a full range position, v. important!
-    // we can 
-    const MIN_TICK = -443636, MAX_TICK = +443636;
+    const INITIAL_PRICE = 0.000861112;
+    const LIQ_TOKENS = 97.91 // == S / P
+    const LIQ_SOL = 0.084317208;
+    const SUPPLY_TOKENS = 100;
+    const SUPPLY_DECIMALS = 6;
+    const txVersion = TxVersion.LEGACY;
+    const minterKp = adminKp;
+    const MIN_TICK = -443636;
+    const MAX_TICK = 443636; 
 
     // **Initialize Raydium SDK**
-    const raydium = await Raydium.load({ connection, owner: minterKp, disableFeatureCheck: true, blockhashCommitment: 'confirmed' });
+    const raydium = await Raydium.load({
+      connection,
+      owner: minterKp,
+      disableFeatureCheck: true,
+      blockhashCommitment: 'confirmed'
+    });
     logger.color("green").log("Raydium SDK loaded");
 
-    // **Mint Token (200 tokens)**
+    // **Mint Token (100 tokens)**
     const tokenMint = await createMint(connection, minterKp, minterKp.publicKey, null, SUPPLY_DECIMALS);
     const minterTokenAccount = await getOrCreateAssociatedTokenAccount(connection, minterKp, tokenMint, minterKp.publicKey);
-    await mintTo(connection, minterKp, tokenMint, minterTokenAccount.address, minterKp, BigInt(new BN(SUPPLY_TOKENS).mul(new BN(10).pow(new BN(SUPPLY_DECIMALS))).toString()));
-    assert.equal((await connection.getTokenAccountBalance(minterTokenAccount.address)).value.uiAmount, SUPPLY_TOKENS, "Minter token balance mismatch");
+    await mintTo(
+      connection,
+      minterKp,
+      tokenMint,
+      minterTokenAccount.address,
+      minterKp,
+      BigInt(new BN(SUPPLY_TOKENS).mul(new BN(10).pow(new BN(SUPPLY_DECIMALS))).toString())
+    );
+    assert.equal(
+      (await connection.getTokenAccountBalance(minterTokenAccount.address)).value.uiAmount,
+      SUPPLY_TOKENS,
+      "Minter token balance mismatch"
+    );
     logger.color("green").log("Minted tokens");
 
     // **Wrap SOL to WSOL if needed**
@@ -1733,7 +1762,11 @@ describe("maxi-auction", () => {
     if (wsolShortfall > 0) {
       console.log('wsolShortfall', wsolShortfall);
       const wrapTx = new Transaction().add(
-        SystemProgram.transfer({ fromPubkey: minterKp.publicKey, toPubkey: minterWsolAccount.address, lamports: Math.ceil(wsolShortfall * LAMPORTS_PER_SOL) }),
+        SystemProgram.transfer({
+          fromPubkey: minterKp.publicKey,
+          toPubkey: minterWsolAccount.address,
+          lamports: Math.ceil(wsolShortfall * LAMPORTS_PER_SOL)
+        }),
         createSyncNativeInstruction(minterWsolAccount.address)
       );
       wrapTx.feePayer = minterKp.publicKey;
@@ -1744,10 +1777,35 @@ describe("maxi-auction", () => {
     // **Create CLMM Pool**
     const adminBalanceAtStart = await connection.getBalance(adminKp.publicKey);
     const ammConfig = { ...clmmDevConfigs[0], id: new PublicKey(clmmDevConfigs[0].id), fundOwner: '', description: '' };
-    const tokenInfo = { chainId: 103, address: tokenMint.toBase58(), programId: TOKEN_PROGRAM_ID.toBase58(), symbol: 'TEST', name: 'Test Token', decimals: SUPPLY_DECIMALS, tags: ['test-token'], extensions: {} };
-    const wsolInfo = { chainId: 103, address: WSOLMint.toBase58(), programId: TOKEN_PROGRAM_ID.toBase58(), symbol: 'WSOL', name: 'Wrapped SOL', decimals: 9, tags: ['wrapped', 'solana'], extensions: {} };
+    const tokenInfo = {
+      chainId: 103,
+      address: tokenMint.toBase58(),
+      programId: TOKEN_PROGRAM_ID.toBase58(),
+      symbol: 'TEST',
+      name: 'Test Token',
+      decimals: SUPPLY_DECIMALS,
+      tags: ['test-token'],
+      logoURI: '',
+      extensions: {}
+    };
+    const wsolInfo = {
+      chainId: 103,
+      address: WSOLMint.toBase58(),
+      programId: TOKEN_PROGRAM_ID.toBase58(),
+      symbol: 'WSOL',
+      name: 'Wrapped SOL',
+      decimals: 9,
+      tags: ['wrapped', 'solana'],
+      logoURI: '',
+      extensions: {}
+    };
     const { execute: execCreatePool, extInfo: poolExtInfo } = await raydium.clmm.createPool({
-      programId: DEVNET_PROGRAM_ID.CLMM, mint1: tokenInfo, mint2: wsolInfo, ammConfig, initialPrice: new Decimal(INITIAL_PRICE), txVersion
+      programId: DEVNET_PROGRAM_ID.CLMM,
+      mint1: tokenInfo,
+      mint2: wsolInfo,
+      ammConfig,
+      initialPrice: new Decimal(INITIAL_PRICE),
+      txVersion
     });
     const createPoolTx = await execCreatePool({ sendAndConfirm: true });
     await logSuccessTx(connection, createPoolTx.txId, "Pool created");
@@ -1756,21 +1814,61 @@ describe("maxi-auction", () => {
     // **Set Full Range Ticks**
     const poolInfo = await raydium.clmm.getPoolInfoFromRpc(poolId.toBase58());
     const tickSpacing = poolInfo.poolInfo.tickSpacing;
-    const tickLower = Math.ceil(MIN_TICK / tickSpacing) * tickSpacing; // Adjusted min tick
-    const tickUpper = Math.floor(MAX_TICK / tickSpacing) * tickSpacing; // Adjusted max tick
+    const tickLower = Math.ceil(MIN_TICK / tickSpacing) * tickSpacing;
+    const tickUpper = Math.floor(MAX_TICK / tickSpacing) * tickSpacing;
+    console.log(`tickLower: ${tickLower}, tickUpper: ${tickUpper}`);
 
-    // **Open Full Range Liquidity Position**
+    // **Calculate Exact Amounts**
+    const baseAmount = new BN(new Decimal(LIQ_TOKENS).mul(10 ** SUPPLY_DECIMALS).toFixed(0));
+    const otherAmountMax = new BN(new Decimal(LIQ_SOL).mul(10 ** 9).toFixed(0));
+
+    // **Open Position from Base with Exact Amounts**
     const { execute: execOpenPosition } = await raydium.clmm.openPositionFromBase({
-      poolInfo: poolInfo.poolInfo, poolKeys: poolExtInfo.address, tickLower, tickUpper, base: 'MintA', ownerInfo: { useSOLBalance: true },
-      baseAmount: new BN(LIQ_TOKENS).mul(new BN(10).pow(new BN(SUPPLY_DECIMALS))), otherAmountMax: new BN(LIQ_SOL * 10 ** 9), txVersion
+      computeBudgetConfig: {
+        units: 6000000,
+        microLamports: 46591500,
+      },
+      poolInfo: poolInfo.poolInfo,
+      poolKeys: poolExtInfo.address,
+      tickLower,
+      tickUpper,
+      base: 'MintB', // *******
+      ownerInfo: { useSOLBalance: false },
+      baseAmount,
+      otherAmountMax,
+      txVersion
     });
+
+    // **Capture Initial Balances**
+    const initialTokenBalance = new BN((await connection.getTokenAccountBalance(minterTokenAccount.address)).value.amount);
+    const initialWsolBalance = new BN((await connection.getTokenAccountBalance(minterWsolAccount.address)).value.amount);
+    const initialSolBalance = await connection.getBalance(adminKp.publicKey);
+
     const positionTx = await execOpenPosition({ sendAndConfirm: true });
     await logSuccessTx(connection, positionTx.txId, "Full range position opened");
+
+    // **Capture Final Balances and Calculate Amounts Taken**
+    const finalTokenBalance = new BN((await connection.getTokenAccountBalance(minterTokenAccount.address)).value.amount);
+    const finalWsolBalance = new BN((await connection.getTokenAccountBalance(minterWsolAccount.address)).value.amount);
+    const finalSolBalance = await connection.getBalance(adminKp.publicKey);
+
+    const tokensTaken = initialTokenBalance.sub(finalTokenBalance);
+    const wsolTaken = initialWsolBalance.sub(finalWsolBalance);
+    const solSpent = initialSolBalance - finalSolBalance;
+
+    // **Log Results**
+    console.log(`Tokens taken: ${tokensTaken.toNumber() / 10 ** SUPPLY_DECIMALS} units (exact: ${baseAmount.toNumber() / 10 ** SUPPLY_DECIMALS})`);
+    console.log(`WSOL taken: ${wsolTaken.toNumber() / LAMPORTS_PER_SOL} WSOL (max: ${otherAmountMax.toNumber() / LAMPORTS_PER_SOL})`);
+    console.log(`SOL spent (including fee): ${solSpent / LAMPORTS_PER_SOL} SOL`);
+
+    // **Validate Amounts Taken**
+    assert.ok(tokensTaken.lte(baseAmount), `Tokens taken (${tokensTaken.toString()}) exceed max (${baseAmount.toString()})`);
+    assert.ok(wsolTaken.lte(otherAmountMax), `WSOL taken (${wsolTaken.toString()}) exceed max (${otherAmountMax.toString()})`);
 
     // **Validate Position Range**
     await sleep(6);
     const adminPositions = await raydium.clmm.getOwnerPositionInfo({ programId: DEVNET_PROGRAM_ID.CLMM });
-    logObject("adminPositions", adminPositions); // 2aV3fmLhrrYAD1BZnL1VusaARin4KuvoY7LEuowQP6ij (prev)
+    //logObject("adminPositions", adminPositions);
     const position = adminPositions.find(pos => pos.poolId.toBase58() === poolId.toBase58());
     if (!position) throw new Error('Position not found');
     const priceLower = TickUtils.getTickPrice({ poolInfo: poolInfo.poolInfo, tick: position.tickLower, baseIn: true }).price.toNumber();
@@ -1786,6 +1884,10 @@ describe("maxi-auction", () => {
 
     assert.ok(Math.abs(INITIAL_PRICE - 1 / poolInfoRpc.currentPrice) < 1e-6, 'Current price mismatch');
   }
+
+
+
+
 
   //
   // Raydium - v2 AMM Pools

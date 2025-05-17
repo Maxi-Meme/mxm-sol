@@ -212,7 +212,7 @@ impl<'info> CreateAuction<'info> {
         auction_data_account.token_mint = token_mint.key();
         auction_data_account.token_supply = global_info.config.default_token_supply;
         auction_data_account.token_decimals = global_info.config.default_token_decimals;
-        auction_data_account.dist_percent = dist_percent; 
+        auction_data_account.dist_percent = 10000; //dist_percent; // TODO: drop this, we will overmint instead
         auction_data_account.bids = vec![];
         auction_data_account.bump = auction_bump;
         auction_data_account.delay_in_seconds = delay_in_seconds;

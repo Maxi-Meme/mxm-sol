@@ -249,8 +249,12 @@ async function createAndFundPool_v3_CLMM(
   const adminWsolAccount = await getOrCreateAssociatedTokenAccount(connection, adminKp, WSOLMint, adminKp.publicKey);
 
   // check balances
+  const solBalance = await connection.getBalance(adminKp.publicKey);
   const tokenBalance = (await connection.getTokenAccountBalance(adminTokenAccount.address)).value.amount;
   const wsolBalance = (await connection.getTokenAccountBalance(adminWsolAccount.address)).value.amount;
+  console.log(`createAndFundPool_v3_CLMM -> solBalance`, solBalance / LAMPORTS_PER_SOL);
+  console.log(`createAndFundPool_v3_CLMM -> tokenBalance`, Number(tokenBalance) / 10 ** tokenDecimals);
+  console.log(`createAndFundPool_v3_CLMM -> wsolBalance`, Number(wsolBalance) / LAMPORTS_PER_SOL);
   if (new BN(tokenBalance).lt(new BN(tokenAmount.toString()))) {
     console.log(`createAndFundPool_v3_CLMM -> Insufficient token balance: have ${tokenBalance}, need ${tokenAmount.toString()}`);
     throw new Error(`Insufficient token balance: have ${tokenBalance}, need ${tokenAmount.toString()}`);
@@ -337,17 +341,20 @@ async function createAndFundPool_v3_CLMM(
   const MAX_TICK = 443636;
   const tickLower = Math.ceil(MIN_TICK / tickSpacing) * tickSpacing;
   const tickUpper = Math.floor(MAX_TICK / tickSpacing) * tickSpacing;
+  console.log(`createAndFundPool_v3_CLMM -> tickLower: ${tickLower}, tickUpper: ${tickUpper}`); // want:  // tickLower: -443630, tickUpper: 443630
 
   // Open full range liquidity position
   const baseAmount = new BN(tokenAmount.toString());
   const otherAmountMax = new BN(wsolAmount.toString());
+  console.log(`createAndFundPool_v3_CLMM -> baseAmount`, Number(baseAmount.toString()) / 10 ** tokenDecimals);
+  console.log(`createAndFundPool_v3_CLMM -> otherAmountMax`, Number(otherAmountMax.toString()) / LAMPORTS_PER_SOL);
   const { execute: execOpenPosition } = await raydium.clmm.openPositionFromBase({
     poolInfo: poolInfo.poolInfo,
     poolKeys: poolExtInfo.address,
     tickLower,
     tickUpper,
     base: 'MintA', // mint1 (tokenMint) is the base token
-    ownerInfo: { useSOLBalance: true }, // only use WSOL (don't autowrap)
+    ownerInfo: { useSOLBalance: false }, 
     baseAmount,
     otherAmountMax,
     txVersion: TxVersion.LEGACY,
