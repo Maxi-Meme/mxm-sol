@@ -1,3 +1,5 @@
+import { MintLayout } from '@solana/spl-token';
+
 import * as anchor from "@coral-xyz/anchor";
 import { AnchorProvider, Program } from "@coral-xyz/anchor";
 import {
@@ -927,7 +929,6 @@ describe("maxi-auction", () => {
       await waitForMigration(auctionId);
     }
 
-
     if (assumeSuccessAuction) {
       assert.equal(solTransferred1 > 0, true, "first bidder should get change"); // first bidder should get change, & tokens
       assert.equal(tokensTransferred1 > 0, true, "first bidder should get tokens");
@@ -987,6 +988,18 @@ describe("maxi-auction", () => {
 
         assert.equal(//BigInt(auctionSolBalance) < BigInt(0.001 * LAMPORTS_PER_SOL),  // life is suffering
           auctionSolBalance <= RENT_EXEMPT_MIN, true, "should be <= RENT_EXEMPT_MIN left in the auction after liqmove and claims"); // withdraw_sol will hold back RENT_EXEMPT_MIN
+
+        // Check the mint authority was revoked
+        const mintInfo = await connection.getAccountInfo(new PublicKey(auctionPost.tokenMint));
+        if (mintInfo) {
+          const mintData = MintLayout.decode(mintInfo.data);
+          const mintAuthority = mintData.mintAuthorityOption === 1 ? new PublicKey(mintData.mintAuthority) : null;
+          console.log(`Mint Authority: ${mintAuthority ? mintAuthority.toBase58() : 'None'}`);
+          assert.equal(mintAuthority, null, "Mint authority should be revoked");
+        } else {
+          console.log(`Mint account not found`);
+          throw new Error("Mint account not found");
+        }        
       }
       else {
         // no liqmove happened, but claims did happen...
@@ -1488,7 +1501,7 @@ describe("maxi-auction", () => {
         auctionSolAccount: auctionSol,
         feeAccount: CONTRACT_CONFIG.feeAccount,
 
-        // for overmint: TODO - add to API
+        // for overmint:
         tokenMint: auctionPre.tokenMint,
         auctionTokenAccount: await getAssociatedTokenAddress(auctionPre.tokenMint, auctionSol, true),
         admin: adminKp.publicKey,

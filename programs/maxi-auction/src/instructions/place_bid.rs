@@ -218,7 +218,7 @@ impl<'info> PlaceBid<'info> {
                 let adjusted_t_units = t_units;
 
                 // Mint T_units to auction_token_account
-                auction.liquidity_overmint = adjusted_t_units; // TODO: modify tests to discount this amount of excess tokens (expected in auction token account)
+                auction.liquidity_overmint = adjusted_t_units;
                 token::mint_to(
                     CpiContext::new_with_signer(
                         self.token_program.to_account_info(),
@@ -237,7 +237,26 @@ impl<'info> PlaceBid<'info> {
                 )?;
                 msg!("Minted {} token units for liquidity", adjusted_t_units);
 
+                //  revoke mint authority
+                token::set_authority(
+                    CpiContext::new_with_signer(
+                        self.token_program.to_account_info(),
+                        token::SetAuthority {
+                            current_authority: self.auction_sol_account.to_account_info(),
+                            account_or_mint: self.token_mint.to_account_info(),
+                        },
+                        &[&[
+                            AUCTION_SOL_SEED.as_ref(),
+                            auction.id.to_le_bytes().as_ref(),
+                            &[auction.bump],
+                        ]],
+                    ),
+                    AuthorityType::MintTokens,
+                    None,
+                )?;
+
                 // todo: nicer than offchain flow -  interact directly with raydium from here...
+                //...
             }
         }
 
