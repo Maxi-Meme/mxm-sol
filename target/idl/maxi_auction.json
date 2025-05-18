@@ -1408,7 +1408,7 @@
             "type": "bool"
           },
           {
-            "name": "overmint_amount",
+            "name": "liquidity_overmint",
             "type": "u64"
           }
         ]

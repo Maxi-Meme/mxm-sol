@@ -112,11 +112,18 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
   console.log(`${wrapSig} migrateAuction => Wrapped SOL into WSOL`);
 
   // calc how many tokens to deposit into the pool
-  const feeTokens = new BN(tokensWithdrawn.toString()).div(new BN(100)); // 1% fee
-  const liquidityTokens = new BN(tokensWithdrawn.toString()).sub(feeTokens);
+  const originalTUnits = new BN(tokensWithdrawn.toString()).mul(new BN(1000)).div(new BN(1005)); // extract fee 0.5%: see place_bid.rs
+  console.log(`originalTUnits`, originalTUnits.toString());
+  const feeTokens = new BN(tokensWithdrawn.toString()).sub(originalTUnits);
+
+  // V important! For whatever reason, we can't supply tokens leaving exactly zero in our account - raydium open position fails
+  // so, move 99.9% of the ex fee amount
+  const liquidityTokens = new BN(originalTUnits.toString()).mul(new BN(999)).div(new BN(1000)); // originalTUnits; //new BN(tokensWithdrawn.toString()).sub(feeTokens);
+
   console.log(`tokensWithdrawn`, tokensWithdrawn.toString());
-  console.log(`liquidityTokens`, liquidityTokens.toString());
+  console.log(`originalTUnits`, originalTUnits.toString());
   console.log(`feeTokens`, feeTokens.toString());
+  console.log(`liquidityTokens`, liquidityTokens.toString()); // T == S / P
 
   // Create & fund a new market/pool
   // const { marketId, poolId, marketInfo, poolKeys } = await createAndFundPool_v2_AMM(
@@ -329,19 +336,19 @@ async function createAndFundPool_v3_CLMM(
   });
   const createPoolTx = await execCreatePool({ sendAndConfirm: true });
   console.log(`createAndFundPool_v3_CLMM -> ${createPoolTx.txId} createAndFundPool (${auctionId}) => Pool created`);
-  const poolId = poolExtInfo.address.poolId;
+  const poolId = (poolExtInfo.address as any)["poolId"]; //poolExtInfo.address["poolId"];
   console.log(`createAndFundPool_v3_CLMM -> poolId`, poolId.toBase58());
 
   // Fetch pool info to get tick spacing
   const poolInfo = await raydium.clmm.getPoolInfoFromRpc(poolId.toBase58());
-  const tickSpacing = poolInfo.poolInfo.tickSpacing;
+  const tickSpacing = (poolInfo.poolInfo as any)["tickSpacing"]; //const tickSpacing = poolInfo.poolInfo["tickSpacing"];
 
   // Set full range ticks
   const MIN_TICK = -443636;
   const MAX_TICK = 443636;
   const tickLower = Math.ceil(MIN_TICK / tickSpacing) * tickSpacing;
   const tickUpper = Math.floor(MAX_TICK / tickSpacing) * tickSpacing;
-  console.log(`createAndFundPool_v3_CLMM -> tickLower: ${tickLower}, tickUpper: ${tickUpper}`); // want:  // tickLower: -443630, tickUpper: 443630
+  console.log(`createAndFundPool_v3_CLMM -> tickLower: ${tickLower}, tickUpper: ${tickUpper}`); 
 
   // Open full range liquidity position
   const baseAmount = new BN(tokenAmount.toString());
@@ -349,11 +356,15 @@ async function createAndFundPool_v3_CLMM(
   console.log(`createAndFundPool_v3_CLMM -> baseAmount`, Number(baseAmount.toString()) / 10 ** tokenDecimals);
   console.log(`createAndFundPool_v3_CLMM -> otherAmountMax`, Number(otherAmountMax.toString()) / LAMPORTS_PER_SOL);
   const { execute: execOpenPosition } = await raydium.clmm.openPositionFromBase({
+    computeBudgetConfig: {
+      units: 6000000,
+      microLamports: 46591500,
+    },
     poolInfo: poolInfo.poolInfo,
     poolKeys: poolExtInfo.address,
     tickLower,
     tickUpper,
-    base: 'MintA', // mint1 (tokenMint) is the base token
+    base: 'MintB', 
     ownerInfo: { useSOLBalance: false }, 
     baseAmount,
     otherAmountMax,
@@ -363,29 +374,29 @@ async function createAndFundPool_v3_CLMM(
   console.log(`createAndFundPool_v3_CLMM -> ${positionTx.txId} createAndFundPool (${auctionId}) => Full range position opened`);
 
   // test - get position info
-  await sleep(6);
-  const adminPositions = await raydium.clmm.getOwnerPositionInfo({ programId: DEVNET_PROGRAM_ID.CLMM });
-  //logObject("createAndFundPool_v3_CLMM -> adminPositions", adminPositions);
-  const position = adminPositions.find(pos => pos.poolId.toBase58() === poolId.toBase58());
-  if (!position) {
-    console.log(`createAndFundPool_v3_CLMM -> Position not found for pool ${poolId.toBase58()}`);
-    throw new Error('Position not found');
-  }
-  const priceLower = TickUtils.getTickPrice({ poolInfo: poolInfo.poolInfo, tick: position.tickLower, baseIn: true }).price.toNumber();
-  const priceUpper = TickUtils.getTickPrice({ poolInfo: poolInfo.poolInfo, tick: position.tickUpper, baseIn: true }).price.toNumber();
-  console.log(`createAndFundPool -> priceLower: ${priceLower} / priceUpper: ${priceUpper}`);
+  // await sleep(6);
+  // const adminPositions = await raydium.clmm.getOwnerPositionInfo({ programId: DEVNET_PROGRAM_ID.CLMM });
+  // //logObject("createAndFundPool_v3_CLMM -> adminPositions", adminPositions);
+  // const position = adminPositions.find(pos => pos.poolId.toBase58() === poolId.toBase58());
+  // if (!position) {
+  //   console.log(`createAndFundPool_v3_CLMM -> Position not found for pool ${poolId.toBase58()}`);
+  //   throw new Error('Position not found');
+  // }
+  // const priceLower = TickUtils.getTickPrice({ poolInfo: poolInfo.poolInfo, tick: position.tickLower, baseIn: true }).price.toNumber();
+  // const priceUpper = TickUtils.getTickPrice({ poolInfo: poolInfo.poolInfo, tick: position.tickUpper, baseIn: true }).price.toNumber();
+  // console.log(`createAndFundPool_v3_CLMM -> priceLower: ${priceLower} / priceUpper: ${priceUpper}`);
 
   // get pool price
   const poolInfoRpc = (await raydium.clmm.getRpcClmmPoolInfos({ poolIds: [poolId] }))[poolId];
-  console.log(`poolInfoRpc.currentPrice: ${poolInfoRpc.currentPrice} `);
-  console.log(`1 / poolInfoRpc.currentPrice: ${1 / poolInfoRpc.currentPrice} `);
-  console.log(`initialPrice: ${initialPrice}`);
+  console.log(`createAndFundPool_v3_CLMM -> poolInfoRpc.currentPrice: ${poolInfoRpc.currentPrice} `);
+  console.log(`createAndFundPool_v3_CLMM -> 1 / poolInfoRpc.currentPrice: ${1 / poolInfoRpc.currentPrice} `);
+  console.log(`createAndFundPool_v3_CLMM -> initialPrice: ${initialPrice}`);
   if (Math.abs(initialPrice.toNumber() - 1 / poolInfoRpc.currentPrice) > 1e-6) {
     console.log(`createAndFundPool_v3_CLMM -> Current price mismatch`);
     throw new Error('Current price mismatch');
   }
 
-  logObject('createAndFundPool_v3_CLMM -> poolExtInfo', poolExtInfo);
+  //logObject('createAndFundPool_v3_CLMM -> poolExtInfo', poolExtInfo);
   // const poolKeys = Object.keys(poolExtInfo.address).reduce(
   //   (acc, cur) => ({ ...acc, [cur]: poolExtInfo.address[cur].toBase58() }),
   //   {}

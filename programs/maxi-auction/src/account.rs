@@ -32,5 +32,5 @@ pub struct Auction {
     pub is_sol_withdrawn: bool, // 1
     pub is_tokens_withdrawn: bool, // 1
     pub is_finalized: bool, // 1
-    pub overmint_amount: u64, // 8
+    pub liquidity_overmint: u64, // 8
 }

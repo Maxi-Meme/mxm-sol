@@ -83,13 +83,17 @@ impl<'info> WithdrawTokens<'info> {
 
         // Calculate amount to transfer
         let token_balance = self.auction_token_account.amount;
-        let withdrawable = token_balance
+        let mut withdrawable = token_balance
             .checked_mul(10000 - auction.dist_percent)
             .ok_or(CustomError::Overflow)?
             .checked_div(10000)
             .ok_or(CustomError::Overflow)?;
+
+        // add liquidity_overmint to withdrawable
+        withdrawable = withdrawable.checked_add(auction.liquidity_overmint).ok_or(CustomError::Overflow)?; // TODO: GET THIS WORKING WITH LIQMOVE....
             
         msg!("withdrawable {}", withdrawable);
+        msg!("liquidity_overmint {}", auction.liquidity_overmint);
         token::transfer(
             CpiContext::new_with_signer(
                 self.token_program.to_account_info(),

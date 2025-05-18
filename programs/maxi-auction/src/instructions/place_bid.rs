@@ -209,11 +209,16 @@ impl<'info> PlaceBid<'info> {
                 msg!("place_bid final - token_decimals: {}", token_decimals);
                 msg!("place_bid final - T - t_units: {}", t_units);
 
-                // TODO: round up to a vanity trailing #, e.g. pad to ...8888 - to make market cap always end ...88888
-                // the padded delta we can retain when funding the pool... (tip/fee)
+                // +0.5%
+                let adjusted_t_units = (t_units as u128)
+                    .checked_mul(1005)
+                    .and_then(|x| x.checked_div(1000))
+                    .ok_or(CustomError::Overflow)? as u64;
+
+                let adjusted_t_units = t_units;
 
                 // Mint T_units to auction_token_account
-                auction.overmint_amount = t_units; // TODO: modify tests to discount this amount of excess tokens (expected in auction token account)
+                auction.liquidity_overmint = adjusted_t_units; // TODO: modify tests to discount this amount of excess tokens (expected in auction token account)
                 token::mint_to(
                     CpiContext::new_with_signer(
                         self.token_program.to_account_info(),
@@ -228,9 +233,9 @@ impl<'info> PlaceBid<'info> {
                             &[auction.bump],
                         ]],
                     ),
-                    t_units,
+                    adjusted_t_units,
                 )?;
-                msg!("Minted {} token units for liquidity", t_units);
+                msg!("Minted {} token units for liquidity", adjusted_t_units);
 
                 // todo: nicer than offchain flow -  interact directly with raydium from here...
             }
@@ -250,3 +255,12 @@ impl<'info> PlaceBid<'info> {
     }
 }
 
+// Function to count trailing zeros in a u64
+fn count_trailing_zeros(mut num: u64) -> u32 {
+    let mut count = 0;
+    while num > 0 && num % 10 == 0 {
+        count += 1;
+        num /= 10;
+    }
+    count
+}
