@@ -479,10 +479,11 @@ describe("maxi-auction", () => {
   });
 
   it("admin - withdraws after auction with 2 distinct bids", async () => {
-    MOVELIQ_DISABLE = true; // STOP MAIN LIQMOVE HANDLER: it conflicts with this, as we will exercise the admin withdraw flow (a subsystem of moveliq)
+    MOVELIQ_DISABLE = true; // STOP MAIN LIQMOVE HANDLER: it conflicts with this
 
-    await test_admin_withdraws({ n_bids: 2, withdraw_tokens: false, withdraw_sol: true, fill_auction: true }); // fill auction to set conditions for withdraws
-    await test_admin_withdraws({ n_bids: 2, withdraw_tokens: true, withdraw_sol: false, fill_auction: true });
+    await test_admin_withdraws({ n_bids: 2, withdraw_tokens: true, withdraw_sol: true, fill_auction: true }); // fill auction to set conditions for withdraws
+    //await test_admin_withdraws({ n_bids: 2, withdraw_tokens: false, withdraw_sol: true, fill_auction: true }); 
+    //await test_admin_withdraws({ n_bids: 2, withdraw_tokens: true, withdraw_sol: false, fill_auction: true });
   });
 
   it("admin - list auctions & pools", async () => {
@@ -1157,65 +1158,70 @@ describe("maxi-auction", () => {
     const auctionTokenBefore = BigInt(auctionTokenBalanceBefore.value.amount); // Use integer amount for precision
     const adminTokenBalanceBefore = await connection.getTokenAccountBalance(adminTokenAccount.address);
     const adminTokenBefore = BigInt(adminTokenBalanceBefore.value.amount); // Use integer amount for precision
-    const distPercent = auctionDataFetched.distPercent.toNumber(); // Convert BN to number (1 to 1000)
-    const amountToWithdraw = (auctionTokenBefore * BigInt(distPercent)) / BigInt(1000); // Calculate tokens to withdraw
-    const expectedAuctionTokenAfter = auctionTokenBefore - amountToWithdraw; // Remaining tokens in auction
-    const expectedAdminTokenAfter = adminTokenBefore + amountToWithdraw; // Admin's new balance
+    const distPercent = auctionDataFetched.distPercent.toNumber(); // Convert BN to number (1 to 10000)
+    const amountToWithdraw = (Number(auctionTokenBefore) * (1 - (distPercent / 10000))); // Calculate tokens to withdraw
+    const expectedAuctionTokenAfter = Number(auctionTokenBefore) - amountToWithdraw; // Remaining tokens in auction
+    const expectedAdminTokenAfter = Number(adminTokenBefore) + amountToWithdraw; // Admin's new balance
     console.log(`distPercent: ${distPercent}`);
     console.log(`amountToWithdraw: ${amountToWithdraw.toString()}`);
     console.log(`expectedAuctionTokenAfter: ${expectedAuctionTokenAfter.toString()}`);
     console.log(`expectedAdminTokenAfter: ${expectedAdminTokenAfter.toString()}`);
-  
+    console.log(`auctionSolBefore: ${auctionSolBefore.toString()}`);
+
     // Step 4: Withdraw SOL
     const callAs = adminKp;
-    try {
-      logger.color("magenta").log("Admin is withdrawing sol...");
-      const txSol = await program.methods
-        .withdrawSol()
-        .accounts({
-          admin: callAs.publicKey,
-          auctionDataAccount: auctionData,
-          auctionSolAccount: auctionSol,
-        })
-        .signers([callAs])
-        .rpc();
-      await logSuccessTx(connection, txSol, "withdrawSol");
-    } catch (err) {
-      if (!fill_auction) {
-        console.log("Expected Error: ", err);
-        assert.equal(err.toString().includes("AuctionNotFinished"), true, "admin should not be able to withdraw before auction ends");
-      }
-      else {
-        console.error(err.toString());
-        console.error("logs:", await err.getLogs());
-        throw err;
+    if (withdraw_sol) {
+      try {
+        logger.color("magenta").log("Admin is withdrawing sol...");
+        const txSol = await program.methods
+          .withdrawSol()
+          .accounts({
+            admin: callAs.publicKey,
+            auctionDataAccount: auctionData,
+            auctionSolAccount: auctionSol,
+          })
+          .signers([callAs])
+          .rpc();
+        await logSuccessTx(connection, txSol, "withdrawSol");
+      } catch (err) {
+        if (!fill_auction) {
+          console.log("Expected Error: ", err);
+          assert.equal(err.toString().includes("AuctionNotFinished"), true, "admin should not be able to withdraw before auction ends");
+        }
+        else {
+          console.error(err.toString());
+          console.error("logs:", await err.getLogs());
+          throw err;
+        }
       }
     }
   
     // Step 5: Withdraw Tokens
-    try {
-      logger.color("magenta").log("Admin is withdrawing tokens...");
-      const txTokens = await program.methods
-        .withdrawTokens()
-        .accounts({
-          admin: callAs.publicKey,
-          auctionDataAccount: auctionData,
-          auctionSolAccount: auctionSol,
-          auctionTokenAccount: auctionTokenAccount,
-          adminTokenAccount: adminTokenAccount.address,
-        })
-        .signers([callAs])
-        .rpc();
-      await logSuccessTx(connection, txTokens, "txTokens");
-    } catch (err) {
-      if (!fill_auction) {
-        console.log("Expected Error: ", err);
-        assert.equal(err.toString().includes("AuctionNotFinished"), true, "admin should not be able to withdraw before auction ends");
-      }
-      else {
-        console.error(err.toString());
-        console.error("logs:", await err.getLogs());
-        throw err;
+    if (withdraw_tokens) {
+      try {
+        logger.color("magenta").log("Admin is withdrawing tokens...");
+        const txTokens = await program.methods
+          .withdrawTokens()
+          .accounts({
+            admin: callAs.publicKey,
+            auctionDataAccount: auctionData,
+            auctionSolAccount: auctionSol,
+            auctionTokenAccount: auctionTokenAccount,
+            adminTokenAccount: adminTokenAccount.address,
+          })
+          .signers([callAs])
+          .rpc();
+        await logSuccessTx(connection, txTokens, "txTokens");
+      } catch (err) {
+        if (!fill_auction) {
+          console.log("Expected Error: ", err);
+          assert.equal(err.toString().includes("AuctionNotFinished"), true, "admin should not be able to withdraw before auction ends");
+        }
+        else {
+          console.error(err.toString());
+          console.error("logs:", await err.getLogs());
+          throw err;
+        }
       }
     }
 
@@ -1232,20 +1238,20 @@ describe("maxi-auction", () => {
 
       // Step 7: Log balances for debugging
       console.log("Balances before withdrawal:");
-      console.log(`Admin SOL: ${(adminSolBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-      console.log(`Auction SOL: ${(auctionSolBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-      console.log(`Auction Tokens: ${auctionTokenBefore.toString()} tokens`);
-      console.log(`Admin Tokens: ${adminTokenBefore.toString()} tokens`);
+      console.log(`  Admin SOL: ${(adminSolBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+      console.log(`  Auction SOL: ${(auctionSolBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+      console.log(`  Auction Tokens: ${auctionTokenBefore.toString()} tokens`);
+      console.log(`  Admin Tokens: ${adminTokenBefore.toString()} tokens`);
 
       console.log("Balances after withdrawal:");
-      console.log(`Admin SOL: ${(adminSolAfter / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-      console.log(`Auction SOL: ${(auctionSolAfter / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-      console.log(`Auction Tokens: ${auctionTokenAfter.toString()} tokens`);
-      console.log(`Admin Tokens: ${adminTokenAfter.toString()} tokens`);
+      console.log(`  Admin SOL: ${(adminSolAfter / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+      console.log(`  Auction SOL: ${(auctionSolAfter / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+      console.log(`  Auction Tokens: ${auctionTokenAfter.toString()} tokens`);
+      console.log(`  Admin Tokens: ${adminTokenAfter.toString()} tokens`);
 
       // Step 8: Assertions
-      // SOL assertions remain unchanged
-      assert.ok(auctionSolAfter >= 890880, "Auction SOL account should retain at least rent-exempt minimum");
+      //assert.ok(auctionSolAfter >= 890880, "Auction SOL account should retain at least rent-exempt minimum");
+      assert.ok(auctionSolAfter == 0, "Auction SOL account should not require rent exempt minimum to be retained");
       assert.equal(adminSolAfter > adminSolBefore, true, "Admin SOL should increase after withdrawal");
 
       // Token assertions updated for partial withdrawal
@@ -1347,6 +1353,8 @@ describe("maxi-auction", () => {
 
     // TODO - drop this, overmint instead:
     const distPercent = new BN(10000/*100%*/); // new BN(auction_distribution_percent !== undefined ? (auction_distribution_percent * 10000) : TEST_DISTRIBTION_PERCENT); // 10000 = 100%
+    //const distPercent = new BN(auction_distribution_percent !== undefined ? (auction_distribution_percent * 10000) : TEST_DISTRIBTION_PERCENT); // 10000 = 100%
+
     const delaySeconds = new BN(0);
 
     // Log balances of all signing accounts before the transaction
@@ -1475,12 +1483,18 @@ describe("maxi-auction", () => {
         bidder: signer.publicKey,
         auctionDataAccount: auctionData,
         auctionSolAccount: auctionSol,
-        feeAccount: CONTRACT_CONFIG.feeAccount
+        feeAccount: CONTRACT_CONFIG.feeAccount,
+
+        // for overmint:
+        tokenMint: auctionPre.tokenMint,
+        auctionTokenAccount: await getAssociatedTokenAddress(auctionPre.tokenMint, auctionSol, true),
+        admin: adminKp.publicKey,
       })
       .transaction();
     tx.feePayer = signer.publicKey;
     tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
     const sig = await sendAndConfirmTransaction(connection, tx, [adminKp, signer]).catch(err => {
+      console.error("Error during transaction signing or confirmation:", err);
       console.error("logs:", err.getLogs());
       throw err;
     });
@@ -1708,7 +1722,7 @@ describe("maxi-auction", () => {
   it("admin - pools v3 - creates & LPs CLMM pool", async () => {
     await test_create_clmm_and_trade_v3();
   });
-  // TODO: / full range: seems to be basically a CP internally, i.e. p=s/t -- p and s are fixed, we need a dynamic t
+  // TODO: / full range: seems to be basically a CP internally, i.e. p = s / t -- p and s are fixed, we need a dynamic t; t = s / p
   // lol so why not use v2 CP :))
   //   BACK to overmint:
   //    1. set user lock to zero... // all tests up to moveliq need to work

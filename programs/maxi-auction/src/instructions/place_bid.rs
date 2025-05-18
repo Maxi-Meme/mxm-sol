@@ -1,12 +1,18 @@
 use crate::{
     account::{Auction, GlobalInfo},
-    constants::{GLOBAL_INFO_SEED, MAX_BIDS},
+    constants::{GLOBAL_INFO_SEED, MAX_BIDS, AUCTION_DATA_SEED, AUCTION_SOL_SEED},
     errors::CustomError,
+    states::AuctionStatus,
     events::{AuctionFilled, NewBid},
-    helper::{get_current_price, get_remaining_tokens},
+    helper::{get_current_price, get_remaining_tokens, get_net_sol_raised},
     helper::{get_status_and_clearing_price},
     processor::sol_transfer_user,
     states::Bid,
+};
+use anchor_spl::{
+    associated_token::{self, AssociatedToken},
+    metadata::{self, mpl_token_metadata::types::DataV2, Metadata},
+    token::{self, spl_token::instruction::AuthorityType, Mint, Token, TokenAccount},
 };
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::sysvar::rent::Rent;
@@ -43,8 +49,19 @@ pub struct PlaceBid<'info> {
     )]
     pub fee_account: AccountInfo<'info>,    
 
+    // vvvvv TODO: add to callers' accounts lists...
+    #[account(mut)] // Use existing mint, no `init`
+    pub token_mint: Account<'info, Mint>,
+
+    /// CHECK: The auction's token account (PDA) that will hold the auctioned tokens
+    #[account(mut)] // Use existing token account, no `init`
+    pub auction_token_account: Account<'info, TokenAccount>,
+
     #[account(address = anchor_lang::system_program::ID)]
-    pub system_program: Program<'info, System>,
+    system_program: Program<'info, System>,
+
+    #[account(address = token::ID)]
+    token_program: Program<'info, Token>,
 }
 
 impl<'info> PlaceBid<'info> {
@@ -81,10 +98,9 @@ impl<'info> PlaceBid<'info> {
 
         // Adjust total_cost if auction_amount is below min_rent
         if auction_amount < min_rent {
-            // All hail Grok
-            let mut low = total_cost;
+            let mut low = total_cost; 
             let mut high = u64::MAX;
-            while low < high {
+            while low < high { // All hail Grok
                 let mid = low + (high - low) / 2;
                 let f = mid / 100;
                 let a = mid - f;
@@ -158,6 +174,66 @@ impl<'info> PlaceBid<'info> {
             emit!(AuctionFilled {
                 auction_id: auction.id,
             });
+
+            //
+            // calculate the # of liquidity tokens T that need to be minted, in order to satisy:
+            //  T = S / P
+            //  where S is the net SOL raised, and P is the settlement price. 
+            //  e.g. for S = 0.084317208, P = 0.000861112, T = 97.91
+            //
+            // Calculate S and mint T when auction succeeds
+            let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(
+                auction,
+                clock.unix_timestamp,
+                self.global_info.config.min_total_sol,
+            );
+            if auction_status == AuctionStatus::Succeeded {
+                let clearing_price = clearing_price_wrapped.unwrap_or(0);
+                if clearing_price == 0 {
+                    return err!(CustomError::InvalidClearingPrice);
+                }
+
+                // Calculate S in lamports
+                let s_lamports = get_net_sol_raised(auction, clearing_price, 0, self.auction_sol_account.lamports())?;
+
+                // Calculate T_units: T = S / P, adjusted for decimals
+                let token_decimals = auction.token_decimals as u32;
+                let t_units = ((s_lamports as u128)
+                    .checked_mul(10u128.pow(token_decimals))
+                    .ok_or(CustomError::Overflow)?  // Check multiplication overflow
+                    / (clearing_price as u128))     // Perform division directly
+                    as u64;                         // Cast to u64
+              
+                msg!("place_bid final - P - clearing_price: {}", clearing_price);
+                msg!("place_bid final - S - s_lamports: {}", s_lamports);
+                msg!("place_bid final - token_decimals: {}", token_decimals);
+                msg!("place_bid final - T - t_units: {}", t_units);
+
+                // TODO: round up to a vanity trailing #, e.g. pad to ...8888 - to make market cap always end ...88888
+                // the padded delta we can retain when funding the pool... (tip/fee)
+
+                // Mint T_units to auction_token_account
+                auction.overmint_amount = t_units; // TODO: modify tests to discount this amount of excess tokens (expected in auction token account)
+                token::mint_to(
+                    CpiContext::new_with_signer(
+                        self.token_program.to_account_info(),
+                        token::MintTo {
+                            mint: self.token_mint.to_account_info(),
+                            to: self.auction_token_account.to_account_info(),
+                            authority: self.auction_sol_account.to_account_info(),
+                        },
+                        &[&[
+                            AUCTION_SOL_SEED.as_ref(),
+                            auction.id.to_le_bytes().as_ref(),
+                            &[auction.bump],
+                        ]],
+                    ),
+                    t_units,
+                )?;
+                msg!("Minted {} token units for liquidity", t_units);
+
+                // todo: nicer than offchain flow -  interact directly with raydium from here...
+            }
         }
 
         // Update status & clearing price

@@ -23,6 +23,9 @@ pub enum CustomError {
     #[msg("Overflow.")]
     Overflow,
 
+    #[msg("Underflow.")]
+    Underflow,
+
     #[msg("Not enough tokens left.")]
     NotEnoughTokensLeft,
 

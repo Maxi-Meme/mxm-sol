@@ -2,7 +2,7 @@ use crate::{
     account::Auction, constants::AUCTION_SOL_SEED, errors::CustomError,
     account::GlobalInfo, constants::GLOBAL_INFO_SEED, 
     states::AuctionStatus,
-    helper::get_status_and_clearing_price,
+    helper::{get_status_and_clearing_price, get_net_sol_raised},
 };
 use anchor_lang::{prelude::*, solana_program, system_program};
 use solana_program::{
@@ -68,7 +68,7 @@ impl<'info> WithdrawSol<'info> {
         msg!("updated auction_status: {:?}", auction.last_status);
 
         // Calculate total unclaimed refunds
-        let mut total_unclaimed_refunds = 0u64;
+        /*let mut total_unclaimed_refunds = 0u64;
         for bid in auction.bids.iter() {
             if !bid.is_claimed {
                 let paid = bid.bid_qty * bid.bid_sol - bid.bid_fee;
@@ -77,18 +77,19 @@ impl<'info> WithdrawSol<'info> {
                 total_unclaimed_refunds += owed;
             }
         }
-
         // Calculate withdrawable amount with rent exemption
         let rent = Rent::get()?;
         let rent_exempt_minimum = rent.minimum_balance(0); // 0 data size for auction_sol_account
         let balance = self.auction_sol_account.lamports();
         let base_withdrawable = balance.saturating_sub(total_unclaimed_refunds);
-        let amount_to_transfer = base_withdrawable.saturating_sub(rent_exempt_minimum); // empty would be nicer...
-        msg!("auction_sol_account balance: {}", balance);
-        msg!("Total unclaimed refunds: {}", total_unclaimed_refunds);
-        msg!("Rent exempt minimum: {}", rent_exempt_minimum);
-        msg!("Withdrawable amount: {}", amount_to_transfer);
+        let amount_to_transfer = base_withdrawable.saturating_sub(rent_exempt_minimum);
+        // msg!("auction_sol_account balance: {}", balance);
+        // msg!("Total unclaimed refunds: {}", total_unclaimed_refunds);
+        // msg!("Rent exempt minimum: {}", rent_exempt_minimum);
+        // msg!("Withdrawable amount: {}", amount_to_transfer);*/
 
+        let amount_to_transfer = get_net_sol_raised(auction, clearing_price, 0, self.auction_sol_account.lamports())?;
+        
         // Perform transfer if amount is positive
         if amount_to_transfer > 0 {
             let transfer_instruction = solana_program::system_instruction::transfer(

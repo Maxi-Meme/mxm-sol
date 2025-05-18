@@ -2,7 +2,44 @@
 use crate::account::Auction;
 use crate::states::AuctionStatus;
 use anchor_lang::{prelude::*};
-//use crate::errors::CustomError;
+use crate::errors::CustomError;
+
+pub fn get_net_sol_raised(
+    auction: &Auction,
+    clearing_price: u64,
+    rent_exempt_minimum: u64,
+    balance: u64,
+) -> Result<u64> { // Fixed: Only one generic argument
+    // Calculate total refunds owed for unclaimed bids
+    let total_unclaimed_refunds = auction.bids.iter()
+        .filter(|bid| !bid.is_claimed) // Only unclaimed bids
+        .try_fold(0u64, |acc, bid| {
+            let paid = bid.bid_qty
+                .checked_mul(bid.bid_sol)              // total_cost = qty * sol
+                .and_then(|total_cost| total_cost.checked_sub(bid.bid_fee)) // paid = total_cost - fee
+                .ok_or(CustomError::Overflow)?;    // No type conversion needed
+            let exact = bid.bid_qty
+                .checked_mul(clearing_price)
+                .ok_or(CustomError::Overflow)?;    // No type conversion needed
+            let refund = paid.saturating_sub(exact); // Refund if paid > exact
+            acc.checked_add(refund)
+                .ok_or(CustomError::Overflow)      // No type conversion needed
+        })?;
+
+    // Calculate net SOL raised (withdrawable amount)
+    let net_sol_raised = balance
+        .checked_sub(total_unclaimed_refunds)
+        .and_then(|net| net.checked_sub(rent_exempt_minimum))
+        .ok_or(CustomError::Underflow)?;           // Fixed: No into() needed
+
+    // Log the requested values
+    msg!("balance: {}", balance);
+    msg!("total_unclaimed_refunds: {}", total_unclaimed_refunds);
+    msg!("rent_exempt_minimum: {}", rent_exempt_minimum);
+    msg!("net_sol_raised: {}", net_sol_raised);
+
+    Ok(net_sol_raised)
+}
 
 pub(crate) fn get_remaining_tokens(auction: &Auction) -> u64 { // integer token units (not lamports
     let token_qty = auction

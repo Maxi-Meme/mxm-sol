@@ -839,8 +839,20 @@
           "writable": true
         },
         {
+          "name": "token_mint",
+          "writable": true
+        },
+        {
+          "name": "auction_token_account",
+          "writable": true
+        },
+        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }
       ],
       "args": [
@@ -1185,111 +1197,116 @@
     },
     {
       "code": 6006,
+      "name": "Underflow",
+      "msg": "Underflow."
+    },
+    {
+      "code": 6007,
       "name": "NotEnoughTokensLeft",
       "msg": "Not enough tokens left."
     },
     {
-      "code": 6007,
+      "code": 6008,
       "name": "MaxBidsReached",
       "msg": "Max number of bids reached."
     },
     {
-      "code": 6008,
+      "code": 6009,
       "name": "AuctionStillLive",
       "msg": "Auction is still live."
     },
     {
-      "code": 6009,
+      "code": 6010,
       "name": "AuctionEnded",
       "msg": "Auction is ended."
     },
     {
-      "code": 6010,
+      "code": 6011,
       "name": "AuctionNotFinished",
       "msg": "Auction is not finished."
     },
     {
-      "code": 6011,
+      "code": 6012,
       "name": "NoBidFoundForCaller",
       "msg": "No bid found for caller."
     },
     {
-      "code": 6012,
+      "code": 6013,
       "name": "InvalidClearingPrice",
       "msg": "Invalid clearing price."
     },
     {
-      "code": 6013,
+      "code": 6014,
       "name": "InvalidRemainingAccounts",
       "msg": "Invalid length of remaining accounts."
     },
     {
-      "code": 6014,
+      "code": 6015,
       "name": "InvalidUserAccount",
       "msg": "Invalid user account."
     },
     {
-      "code": 6015,
+      "code": 6016,
       "name": "InvalidUserTokenAccount",
       "msg": "Invalid user's token account."
     },
     {
-      "code": 6016,
+      "code": 6017,
       "name": "BidAlreadyClaimed",
       "msg": "Bid already claimed."
     },
     {
-      "code": 6017,
+      "code": 6018,
       "name": "AuctionNotStarted",
       "msg": "Auction not started."
     },
     {
-      "code": 6018,
+      "code": 6019,
       "name": "InvalidBidQuantity",
       "msg": "Invalid bid quantity."
     },
     {
-      "code": 6019,
+      "code": 6020,
       "name": "InvalidPDA",
       "msg": "Invalid PDA."
     },
     {
-      "code": 6020,
+      "code": 6021,
       "name": "InvalidDistPercent",
       "msg": "Invalid distribution percent."
     },
     {
-      "code": 6021,
+      "code": 6022,
       "name": "AuctionLiquidityMoved",
       "msg": "Auction liquidity already moved."
     },
     {
-      "code": 6022,
+      "code": 6023,
       "name": "InternalError",
       "msg": "Iternal Error."
     },
     {
-      "code": 6023,
+      "code": 6024,
       "name": "InvalidState",
       "msg": "Invalid State."
     },
     {
-      "code": 6024,
+      "code": 6025,
       "name": "SolAlreadyWithdrawn",
       "msg": "SOL already withdrawn."
     },
     {
-      "code": 6025,
+      "code": 6026,
       "name": "TokensAlreadyWithdrawn",
       "msg": "Tokens already withdrawn."
     },
     {
-      "code": 6026,
+      "code": 6027,
       "name": "MinNotReached",
       "msg": "Min total sol not reached."
     },
     {
-      "code": 6027,
+      "code": 6028,
       "name": "AuctionAlreadyFinalized",
       "msg": "Auction already finalized."
     }
@@ -1389,6 +1406,10 @@
           {
             "name": "is_finalized",
             "type": "bool"
+          },
+          {
+            "name": "overmint_amount",
+            "type": "u64"
           }
         ]
       }
