@@ -25,6 +25,8 @@ impl<'info> Initialize<'info> {
         msg!("Calling initialize...");
 
         self.global_info.deployer = self.signer.key();
+
+        msg!("Supplied config.min_total_sol: {:?}", config.min_total_sol);
         self.global_info.config = config;
 
         Ok(())

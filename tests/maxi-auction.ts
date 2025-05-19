@@ -210,11 +210,13 @@ describe("maxi-auction", () => {
       }
 
       // Process migration and resolve the promise
+      let migrationResult = { success: true, error: null };
       migrateAuction(program, isMainnet, auctionId, adminKp, connection)
         .catch((err) => {
           logObject('auction migration error', err);
           logger.color("red").error(`auction ${auctionId} migration complete - catch`, err);
-          throw err;
+          migrationResult = { success: false, error: err };
+          //throw err;
         })
         .finally(async () => {
           console.log(`auction ${auctionId} migration complete - finally`);
@@ -222,10 +224,15 @@ describe("maxi-auction", () => {
           console.log(`auction ${auctionId} migration complete - looking for resolver`);
           if (resolve) {
             console.log(`auction ${auctionId} migration complete - resolving promise`);
-            resolve();
+            resolve(migrationResult);
             auctionFilledPromises.delete(auctionId.toString()); // Use toString() for consistency
           } else {
             console.error(`No resolver found for auctionId: ${auctionId} after timeout`);
+            const resolveFallback = auctionFilledPromises.get(auctionId.toString()); // Optionally resolve with failure if no resolver is found
+            if (resolveFallback) {
+              resolveFallback({ success: false, error: new Error("Timeout waiting for resolver") });
+              auctionFilledPromises.delete(auctionId.toString());
+            }            
           }
         });
     }
@@ -726,10 +733,36 @@ describe("maxi-auction", () => {
     }
   });
 
-  it("claims - min total sol not reached", async () => {
+  it("claims - full supply not bid", async () => {
+    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
+    const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
+    const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
+    logger.color("magenta").log("sleeping 36s...");
+    await sleep(36);
+
+    // claim 1/2 - check status updated
+    await test_claim_auction(USER_KPs[0], false, bidResult1); // should update auction status to "failedNotFullyAllocated"
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
+    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const auctionPost = await program.account.auction.fetch(auctionData); // last status (set on bid) was "live..."
+    assert.deepEqual(auctionPost.lastStatus, { failedNotFullyAllocated: {} }, "expected failedNotFullyAllocated");
+    //logObject("auctionPost", auctionPost);
+
+    // claim 2/2 - check no sol left in the auction - returned in full
+    await test_claim_auction(USER_KPs[1], false, bidResult2);
+    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const auctionSolBalance = await connection.getBalance(auctionSol);
+    console.log("auctionSolBalance", auctionSolBalance.toString() / LAMPORTS_PER_SOL);
+    assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction"); // claim (refund) will reduce sol account to 0
+  });
+
+
+  it("claims - failedMinNotReached", async () => {
     await test_init(10000); // 10k SOL minimum needed to move liquidity - will cause this auction to finished failed
 
-    await test_create_auction_KP0(0.95, 1); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
 
     // Derive auction-related accounts after creating the auction
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
@@ -793,32 +826,7 @@ describe("maxi-auction", () => {
     assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction"); // claim (refund) will reduce sol account to 0
   });
 
-  it("claims - full supply not bid", async () => {
-    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
-    const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
-    const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
-    logger.color("magenta").log("sleeping 36s...");
-    await sleep(36);
-
-    // claim 1/2 - check status updated
-    await test_claim_auction(USER_KPs[0], false, bidResult1); // should update auction status to "failedNotFullyAllocated"
-    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
-    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
-    const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
-    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
-    const auctionPost = await program.account.auction.fetch(auctionData); // last status (set on bid) was "live..."
-    assert.deepEqual(auctionPost.lastStatus, { failedNotFullyAllocated: {} }, "expected failedNotFullyAllocated");
-    //logObject("auctionPost", auctionPost);
-
-    // claim 2/2 - check no sol left in the auction - returned in full
-    await test_claim_auction(USER_KPs[1], false, bidResult2);
-    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
-    const auctionSolBalance = await connection.getBalance(auctionSol);
-    console.log("auctionSolBalance", auctionSolBalance.toString() / LAMPORTS_PER_SOL);
-    assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction"); // claim (refund) will reduce sol account to 0
-  });
-
-  it("claims - one user claims two bids failed auction", async () => {
+  it("claims - failedMinNotReached (two bids)", async () => {
     await test_init(10000); // 10k SOL minimum needed to move liquidity - will cause this auction to finished failed
     await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
@@ -868,7 +876,7 @@ describe("maxi-auction", () => {
   });
 
   it("claims - auction creator bids & claims", async () => {
-    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0({ auction_distribution_percent: 0.9631, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
     const bidResult2 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
     await test_claim_auction(USER_KPs[0], true, bidResult1); // creator claims
@@ -882,7 +890,7 @@ describe("maxi-auction", () => {
     lowClearingPrice = false,
     migrateAfterClaims = false // default/mainpath is to migrate *before* claims
   } = {}) {
-    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0({ auction_distribution_percent: 0.9631, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
 
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
@@ -926,7 +934,9 @@ describe("maxi-auction", () => {
     if (migrateAfterClaims) {
       logger.color("yellow").log("migrateAfterClaims - releasing moveliq...");
       MOVELIQ_PAUSE = false;
-      await waitForMigration(auctionId);
+      const migrationResult = await waitForMigration(auctionId);
+      logObject("migrationResult", migrationResult);
+      assert.ok(migrationResult.error == null, "migration should succeed");
     }
 
     if (assumeSuccessAuction) {
@@ -1032,6 +1042,24 @@ describe("maxi-auction", () => {
     const callerTokenAccount = await getAssociatedTokenAddress(tokenMint, bidderKp.publicKey);
     const auctionTokenAccount = await getAssociatedTokenAddress(tokenMint, auctionSol, true); // Allow off-curve owner
 
+    // **Sum expected net tokens to be transferred**
+    const distPercent = auctionPre.distPercent;
+    console.log(`claim - testing distPercent, %`, distPercent.toNumber() / 100); // 10000 = 100%
+    const tokenDecimals = auctionPre.tokenDecimals;
+    let expectedTotalNetTokensToBidder = new BN(0);
+    if (assumeSuccessAuction) {
+      for (const bid of unclaimedBids) {
+        const bidQtyBN = bid.bidQty; // BN in whole tokens
+        const tokensPerBid = bidQtyBN
+          .mul(distPercent)
+          .div(new BN(10000))
+          .mul(new BN(10).pow(new BN(tokenDecimals)));
+        expectedTotalNetTokensToBidder = expectedTotalNetTokensToBidder.add(tokensPerBid);
+      }
+    } else {
+      expectedTotalNetTokensToBidder = new BN(0);
+    }
+
     // **Get pre-claim balances**
     const bidderSolBefore = await connection.getBalance(bidderKp.publicKey);
     let bidderTokenBefore = 0;
@@ -1099,6 +1127,12 @@ describe("maxi-auction", () => {
     const tokensTransferredFromAuction = parseInt(auctionTokenBefore) - parseInt(auctionTokenAfter);
     //console.log(`solTransferredToBidder: ${(solTransferredToBidder / LAMPORTS_PER_SOL).toFixed(6)}, Tokens to bidder: ${tokensTransferredToBidder}`);
     //console.log(`solTransferredFromAuction: ${(solTransferredFromAuction / LAMPORTS_PER_SOL).toFixed(6)}, Tokens from auction: ${tokensTransferredFromAuction}`);
+
+    // **Check correct # of net tokens transferred to bidder**
+    assert.ok(new BN(tokensTransferredToBidder).eq(expectedTotalNetTokensToBidder),
+      `Tokens transferred to bidder should match expected net tokens (expected: ${expectedTotalNetTokensToBidder.toString()}, actual: ${tokensTransferredToBidder})`);
+    console.log(`expectedTotalNetTokensToBidder`, expectedTotalNetTokensToBidder.toString());
+    console.log(`tokensTransferredToBidder`, tokensTransferredToBidder);
 
     // **Validate transfers based on assumeSuccessAuction**
     if (assumeSuccessAuction) {
@@ -1172,9 +1206,11 @@ describe("maxi-auction", () => {
     const adminTokenBalanceBefore = await connection.getTokenAccountBalance(adminTokenAccount.address);
     const adminTokenBefore = BigInt(adminTokenBalanceBefore.value.amount); // Use integer amount for precision
     const distPercent = auctionDataFetched.distPercent.toNumber(); // Convert BN to number (1 to 10000)
+
     const expectedTokenAmountToWithdraw = // Calculate tokens to withdraw
       (Number(auctionTokenBefore) * (1 - (distPercent / 10000))   // old mechanism
         + Number(auctionDataFetched.liquidityOvermint.toNumber())); // new mechanism
+
     const expectedAuctionTokenAfter = Number(auctionTokenBefore) - expectedTokenAmountToWithdraw; // Remaining tokens in auction
     const expectedAdminTokenAfter = Number(adminTokenBefore) + expectedTokenAmountToWithdraw; // Admin's new balance
     console.log(`distPercent: ${distPercent}`);
@@ -1332,6 +1368,7 @@ describe("maxi-auction", () => {
         const sig = await sendAndConfirmTransaction(connection, tx, [signer]);
         await logSuccessTx(connection, sig, "initialize");
         CONTRACT_CONFIG = newConfig;
+        logObject("CONTRACT_CONFIG", CONTRACT_CONFIG);
       } catch (err) {
         logger.color("red").log("sendAndConfirmTransaction failed:", err.getLogs ? err.getLogs() : err);
         throw err;
@@ -1367,9 +1404,8 @@ describe("maxi-auction", () => {
     const uri = TEST_TOKEN_URI;
     const durationHours = new BN(duration_hours_div100 || 10); // about 5mins: unit is actually hours_div_100, or 36s 
 
-    // TODO - drop this, overmint instead:
-    const distPercent = new BN(10000/*100%*/); // new BN(auction_distribution_percent !== undefined ? (auction_distribution_percent * 10000) : TEST_DISTRIBTION_PERCENT); // 10000 = 100%
-    //const distPercent = new BN(auction_distribution_percent !== undefined ? (auction_distribution_percent * 10000) : TEST_DISTRIBTION_PERCENT); // 10000 = 100%
+    const distPercent = new BN(auction_distribution_percent !== undefined ? (auction_distribution_percent * 10000) : TEST_DISTRIBTION_PERCENT); // 10000 = 100%
+    //const distPercent = new BN(10000/*100%*/); // overmint
 
     const delaySeconds = new BN(0);
 
@@ -1521,7 +1557,9 @@ describe("maxi-auction", () => {
     if (isFinalBid) {
       if (!isLocal) {
         if (!skipMigrationWait) {
-          await waitForMigration(auctionId);
+          const migrationResult = await waitForMigration(auctionId);
+          logObject("migrationResult", migrationResult);
+          assert.ok(migrationResult.error == null, "migration should succeed");
         }
         else {
           console.log("Final Bid - skipping migration wait as requested...");
@@ -2509,18 +2547,25 @@ async function setupFeeAccount(connection: Connection, adminKp: Keypair, feeAcco
   }
 }
 
-async function waitForMigration(auctionId: number) {
+async function waitForMigration(auctionId: number): Promise<{ success: boolean, error?: any }> {
   if (isLocal) {
     console.log("waitForMigration - local: NOP, no raydium here...");
+    return { success: true }; // Assume success for local environment
   }
-  else {
-    console.log(`waitForMigration - waiting for auction migration ${auctionId.toString()}...`);
-    const auctionFilledPromise = new Promise((resolve) => {
-      auctionFilledPromises.set(auctionId.toString(), resolve);
-    });
-    await auctionFilledPromise; // Wait for the event listener to resolve the promise
-    console.log("waitForMigration -  migration completed for auction ID:", auctionId);
-  }
+
+  console.log(`waitForMigration - waiting for auction migration ${auctionId.toString()}...`);
+  const auctionFilledPromise = new Promise<{ success: boolean, error?: any }>((resolve) => {
+    auctionFilledPromises.set(auctionId.toString(), resolve);
+  });
+
+  // Add a timeout to prevent hanging
+  const timeoutPromise = new Promise<{ success: boolean, error?: any }>((_, reject) => {
+    setTimeout(() => reject(new Error(`Timeout waiting for migration of auction ID ${auctionId}`)), 30000);
+  });
+
+  const result = await Promise.race([auctionFilledPromise, timeoutPromise]);
+  console.log("waitForMigration - migration completed for auction ID:", auctionId);
+  return result;
 }
 
 async function getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed) {

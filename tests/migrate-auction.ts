@@ -48,124 +48,146 @@ const DB_CONFIG: sql.config = {
 // https://github.com/raydium-io/raydium-sdk-V2-demo/tree/master/src/amm
 export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: boolean, auctionId: number, adminKp: Keypair, connection: Connection) => {
 
-  // abort if min sol is not reached - user's will claim back their sol in full
-  const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(AUCTION_DATA_SEED), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
-  const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(AUCTION_SOL_SEED), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
-  const auctionDataFetched = await program.account.auction.fetch(auctionData);
-  if (auctionDataFetched.lastStatus?.failedMinNotReached) {
-    throw new Error('failedMinNotReached');
+  try {
+    // abort if min sol is not reached - user's will claim back their sol in full
+    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(AUCTION_DATA_SEED), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(AUCTION_SOL_SEED), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const auctionDataFetched = await program.account.auction.fetch(auctionData);
+    if (auctionDataFetched.lastStatus?.failedMinNotReached) {
+      throw new Error('failedMinNotReached');
+    }
+    if (auctionDataFetched.clearingPrice.lte(new BN(0))) {
+      throw new Error('invalid clearing price');
+    }
+    //console.log(`auctionDataFetched`, auctionDataFetched); // how to get status?
+
+    // need to make sure config.TEST_MIN_TOTAL_SOL > FIXED_MIN_SOL_LIQ, so that test above will fail and bidders cant then claim back their tokens
+    const FIXED_MIN_SOL_LIQ = isMainnet
+      ? new BN(10.00 * LAMPORTS_PER_SOL)  // TODO: test/tune thereshold for prod, e.g. (1b + 6 decimals)
+      : new BN(0.001 * LAMPORTS_PER_SOL); // assumes avg. 50 base tokens supplied with 3 decimals, i.e. test case setup
+
+    // and we have a min total sol bid threshold, so we can cover raydium setup costs
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(GLOBAL_INFO_SEED)], program.programId);
+    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const CONFIG_MIN_TOTAL_SOL = globalInfoAccount.config.minTotalSol;
+
+    // ### this MUST MATCH the fixed amount in place_bid's calculation of acution.liquidity_underfund ###
+    // TEST LOW VALUE FOR DEVNET...
+    const FIXED_SOL_RAYDIUM_COSTS = new BN(0.000025 * LAMPORTS_PER_SOL); // todo: should be ~0.25 sol on mainnet...
+    // isMainnet
+    // ? new BN(4.0 * LAMPORTS_PER_SOL)       // prod ~4 sol for raydium setup costs
+    // : new BN(0.000042 * LAMPORTS_PER_SOL); // don't care on devnet
+    console.log(`MIN_SOL_LIQ`, FIXED_MIN_SOL_LIQ.toString());
+    console.log(`CONFIG_MIN_TOTAL_SOL`, CONFIG_MIN_TOTAL_SOL.toString());
+    console.log(`FIXED_SOL_RAYDIUM_COSTS`, FIXED_SOL_RAYDIUM_COSTS.toString());
+    // if (FIXED_SOL_RAYDIUM_COSTS.mul(new BN(2)).gt(CONFIG_MIN_TOTAL_SOL)) { // sanitize config vs. actual costs
+    //   throw new Error('CONFIG_MIN_TOTAL_SOL is too low');
+    // }
+    if (CONFIG_MIN_TOTAL_SOL.lt(FIXED_SOL_RAYDIUM_COSTS.mul(new BN(2)))) { // sanity check
+      console.log(`CONFIG_MIN_TOTAL_SOL is too low: ${CONFIG_MIN_TOTAL_SOL.toString()} < ${FIXED_SOL_RAYDIUM_COSTS.mul(new BN(2)).toString()}`);
+      throw new Error('CONFIG_MIN_TOTAL_SOL is too low');
+    }
+
+    // validate min sol bid thresholds
+    const { solAmount: solWithdrawn, tokenAmount: tokensWithdrawn, tokenMint, adminTokenAccount } = await withdrawFunds(program, isMainnet, auctionId, adminKp, connection);
+    const mintAccount = await getMint(connection, tokenMint);
+    console.log(`migrateAuction => Withdrawn ${solWithdrawn.toString()} lamports and ${tokensWithdrawn.toString()} tokens`);
+    console.log(`solWithdrawn`, solWithdrawn.toString());
+    if (new BN(solWithdrawn.toString()).lt(new BN(FIXED_MIN_SOL_LIQ.toString()))) {    // to satsify raydium fixed product 
+      throw new Error('solWithdrawn is too low: MIN_SOL_LIQ');
+    }
+    if (new BN(solWithdrawn.toString()).lt(new BN(CONFIG_MIN_TOTAL_SOL.toString()))) { // to cover our costs 
+      throw new Error('solWithdrawn is too low: CONFIG_MIN_TOTAL_SOL #### SHOULD NOT HAPPEN! auction state should be failed, and admin withdraw not allowed #####');
+    }
+
+    //
+    // calc how much sol to wrap - we keep setup costs in sol
+    //
+    const liquidityWSol = new BN(solWithdrawn.toString()).sub(FIXED_SOL_RAYDIUM_COSTS);
+    if (liquidityWSol.lte(new BN(0))) throw new Error('liquidityWSol is too low');
+    console.log(`liquidityWSol`, liquidityWSol.toString()); // check: should be exactly == computed s_lamports in place_bid.rs...
+
+    // Wrap admin's withdrawn sol, less fixed raydium costs
+    const adminWsolAccount = await getOrCreateAssociatedTokenAccount(connection, adminKp, new PublicKey(TOKEN_WSOL.address), adminKp.publicKey);
+    const wrapTx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: adminKp.publicKey,
+        toPubkey: adminWsolAccount.address,
+        lamports: BigInt(liquidityWSol.toString()),
+      }),
+      createSyncNativeInstruction(adminWsolAccount.address)
+    );
+    wrapTx.feePayer = adminKp.publicKey;
+    wrapTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+    const wrapSig = await sendAndConfirmTransaction(connection, wrapTx, [adminKp]);
+    console.log(`${wrapSig} migrateAuction => Wrapped SOL into WSOL`);
+
+    //
+    // calc how many tokens to deposit into the pool
+    //
+    // Option 1 ("underfund") / we use all the locked tokens
+    const liquidityTokens = new BN(tokensWithdrawn.toString());
+    const feeTokens = new BN(0); // TODO: extract same fee % for both tokens & sol (keep ratio unchanged for price)
+
+    // Option 2 ("overmint") / V important! For whatever reason, we can't supply tokens leaving exactly zero in our account - raydium open position fails
+    // so, move 99.9% of the ex fee amount
+    // const originalTUnits = new BN(tokensWithdrawn.toString()).mul(new BN(1000)).div(new BN(1005)); // extract fee 0.5%: see place_bid.rs
+    // console.log(`originalTUnits`, originalTUnits.toString());
+    // const feeTokens = new BN(tokensWithdrawn.toString()).sub(originalTUnits);
+    // const liquidityTokens = new BN(originalTUnits.toString()).mul(new BN(999)).div(new BN(1000)); // originalTUnits; //new BN(tokensWithdrawn.toString()).sub(feeTokens);
+    // console.log(`tokensWithdrawn`, tokensWithdrawn.toString());
+    // console.log(`originalTUnits`, originalTUnits.toString());
+    // console.log(`feeTokens`, feeTokens.toString());
+    // console.log(`liquidityTokens`, liquidityTokens.toString()); // T == S / P
+
+    // Create & fund a new market/pool
+    // const { marketId, poolId, marketInfo, poolKeys } = await createAndFundPool_v2_AMM(
+    //   program, isMainnet, auctionId, tokenMint,
+    //   BigInt(liquidityTokens.toString()),
+    //   BigInt(liquidityWSol.toString()),
+    //   adminKp, connection);
+    const { poolId, poolKeys } = await createAndFundPool_v3_CLMM(
+      program, isMainnet, auctionId, tokenMint,
+      BigInt(liquidityTokens.toString()),
+      BigInt(liquidityWSol.toString()),
+      adminKp, connection, auctionDataFetched.clearingPrice.toNumber());
+
+    console.log(`migrateAuction => OK!`);
+    console.log(`tokenMint: ${tokenMint.toBase58()}`);
+    console.log(`liquidityTokens: ${liquidityTokens.toString()}`);
+    console.log(`liquidityWSol: ${liquidityWSol.toString()}`);
+    //console.log(`marketInfo:`, marketInfo);
+    //console.log(`marketId: ${marketId.toBase58()}`);
+    console.log(`poolId: ${poolId.toBase58()}`);
+    console.log(`poolKeys:`, poolKeys);
+
+    // update DB
+    await updateKeyPairPoolInfo(tokenMint, null /*marketInfo*/, poolKeys, null /*marketId*/, poolId);
+
+    // Send fee tokens to the revenue wallet
+    if (feeTokens.gt(new BN(0))) {
+      const feeAccount = globalInfoAccount.config.feeAccount;
+      const feeAccountTokenAccount = getAssociatedTokenAddressSync(tokenMint, feeAccount, true);
+      const feeTx = new Transaction().add(
+        createAssociatedTokenAccountIdempotentInstruction(adminKp.publicKey, feeAccountTokenAccount, feeAccount, tokenMint, TOKEN_PROGRAM_ID),
+        createTransferInstruction(
+          adminTokenAccount,            // Source (admin's token account)
+          feeAccountTokenAccount,       // Destination (feeAccount's ATA)
+          adminKp.publicKey,            // Authority (admin)
+          BigInt(feeTokens.toString()), // Amount (converted from BN to number)
+          [],
+          TOKEN_PROGRAM_ID
+        ));
+      feeTx.feePayer = adminKp.publicKey;
+      feeTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      const feeSig = await sendAndConfirmTransaction(connection, feeTx, [adminKp]);
+      await logSuccessTx(connection, feeSig, `migrateAuction (${auctionId}) => Sent fee tokens to the revenue wallet`);
+    }
   }
-  if (auctionDataFetched.clearingPrice.lte(new BN(0))) {
-    throw new Error('invalid clearing price');
+  catch (error) {
+    console.error(`migrateAuction (${auctionId}) => Error: ${error}`);
+    throw error;
   }
-  //console.log(`auctionDataFetched`, auctionDataFetched); // how to get status?
-
-  // need to make sure config.TEST_MIN_TOTAL_SOL > FIXED_MIN_SOL_LIQ, so that test above will fail and bidders cant then claim back their tokens
-  const FIXED_MIN_SOL_LIQ = isMainnet
-    ? new BN(10.00 * LAMPORTS_PER_SOL)  // TODO: test/tune thereshold for prod, e.g. (1b + 6 decimals)
-    : new BN(0.001 * LAMPORTS_PER_SOL); // assumes avg. 50 base tokens supplied with 3 decimals, i.e. test case setup
-
-  // and we have a min total sol bid threshold, so we can cover raydium setup costs
-  const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(GLOBAL_INFO_SEED)], program.programId);
-  const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
-  const CONFIG_MIN_TOTAL_SOL = globalInfoAccount.config.minTotalSol;
-  const FIXED_SOL_RAYDIUM_COSTS = isMainnet
-    ? new BN(4.0 * LAMPORTS_PER_SOL)       // prod ~4 sol for raydium setup costs                      
-    : new BN(0.000042 * LAMPORTS_PER_SOL); // don't care on devnet
-  console.log(`MIN_SOL_LIQ`, FIXED_MIN_SOL_LIQ.toString());
-  console.log(`CONFIG_MIN_TOTAL_SOL`, CONFIG_MIN_TOTAL_SOL.toString());
-  console.log(`FIXED_SOL_RAYDIUM_COSTS`, FIXED_SOL_RAYDIUM_COSTS.toString());
-  if (FIXED_SOL_RAYDIUM_COSTS.mul(new BN(2)).gt(CONFIG_MIN_TOTAL_SOL)) { // sanitize config vs. actual costs
-    throw new Error('CONFIG_MIN_TOTAL_SOL is too low');
-  }
-
-  // validate min sol bid thresholds
-  const { solAmount: solWithdrawn, tokenAmount: tokensWithdrawn, tokenMint, adminTokenAccount } = await withdrawFunds(program, isMainnet, auctionId, adminKp, connection);
-  const mintAccount = await getMint(connection, tokenMint);
-  console.log(`migrateAuction => Withdrawn ${solWithdrawn.toString()} lamports and ${tokensWithdrawn.toString()} tokens`);
-  console.log(`solWithdrawn`, solWithdrawn.toString());
-  if (new BN(solWithdrawn.toString()).lt(new BN(FIXED_MIN_SOL_LIQ.toString()))) {    // to satsify raydium fixed product 
-    throw new Error('solWithdrawn is too low: MIN_SOL_LIQ');
-  }
-  if (new BN(solWithdrawn.toString()).lt(new BN(CONFIG_MIN_TOTAL_SOL.toString()))) { // to cover our costs 
-    throw new Error('solWithdrawn is too low: CONFIG_MIN_TOTAL_SOL #### SHOULD NOT HAPPEN! auction state should be failed, and admin withdraw not allowed #####');
-  }
-
-  // calc how much sol to wrap - we keep setup costs in sol
-  const liquidityWSol = new BN(solWithdrawn.toString()).sub(FIXED_SOL_RAYDIUM_COSTS);
-  if (liquidityWSol.lte(new BN(0))) throw new Error('liquidityWSol is too low');
-  console.log(`liquidityWSol`, liquidityWSol.toString());
-
-  // Wrap admin's withdrawn sol, less fixed raydium costs
-  const adminWsolAccount = await getOrCreateAssociatedTokenAccount(connection, adminKp, new PublicKey(TOKEN_WSOL.address), adminKp.publicKey);
-  const wrapTx = new Transaction().add(
-    SystemProgram.transfer({
-      fromPubkey: adminKp.publicKey,
-      toPubkey: adminWsolAccount.address,
-      lamports: BigInt(liquidityWSol.toString()),
-    }),
-    createSyncNativeInstruction(adminWsolAccount.address)
-  );
-  wrapTx.feePayer = adminKp.publicKey;
-  wrapTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-  const wrapSig = await sendAndConfirmTransaction(connection, wrapTx, [adminKp]);
-  console.log(`${wrapSig} migrateAuction => Wrapped SOL into WSOL`);
-
-  // calc how many tokens to deposit into the pool
-  const originalTUnits = new BN(tokensWithdrawn.toString()).mul(new BN(1000)).div(new BN(1005)); // extract fee 0.5%: see place_bid.rs
-  console.log(`originalTUnits`, originalTUnits.toString());
-  const feeTokens = new BN(tokensWithdrawn.toString()).sub(originalTUnits);
-
-  // V important! For whatever reason, we can't supply tokens leaving exactly zero in our account - raydium open position fails
-  // so, move 99.9% of the ex fee amount
-  const liquidityTokens = new BN(originalTUnits.toString()).mul(new BN(999)).div(new BN(1000)); // originalTUnits; //new BN(tokensWithdrawn.toString()).sub(feeTokens);
-
-  console.log(`tokensWithdrawn`, tokensWithdrawn.toString());
-  console.log(`originalTUnits`, originalTUnits.toString());
-  console.log(`feeTokens`, feeTokens.toString());
-  console.log(`liquidityTokens`, liquidityTokens.toString()); // T == S / P
-
-  // Create & fund a new market/pool
-  // const { marketId, poolId, marketInfo, poolKeys } = await createAndFundPool_v2_AMM(
-  //   program, isMainnet, auctionId, tokenMint,
-  //   BigInt(liquidityTokens.toString()),
-  //   BigInt(liquidityWSol.toString()),
-  //   adminKp, connection);
-  const { poolId, poolKeys } = await createAndFundPool_v3_CLMM(
-    program, isMainnet, auctionId, tokenMint,
-    BigInt(liquidityTokens.toString()),
-    BigInt(liquidityWSol.toString()),
-    adminKp, connection, auctionDataFetched.clearingPrice.toNumber());
-
-  console.log(`migrateAuction => OK!`);
-  console.log(`tokenMint: ${tokenMint.toBase58()}`);
-  console.log(`liquidityTokens: ${liquidityTokens.toString()}`);
-  console.log(`liquidityWSol: ${liquidityWSol.toString()}`);
-  //console.log(`marketInfo:`, marketInfo);
-  //console.log(`marketId: ${marketId.toBase58()}`);
-  console.log(`poolId: ${poolId.toBase58()}`);
-  console.log(`poolKeys:`, poolKeys);
-
-  // update DB
-  await updateKeyPairPoolInfo(tokenMint, null /*marketInfo*/, poolKeys, null /*marketId*/, poolId);
-
-  // Send fee tokens to the revenue wallet
-  const feeAccount = globalInfoAccount.config.feeAccount;
-  const feeAccountTokenAccount = getAssociatedTokenAddressSync(tokenMint, feeAccount, true);
-  const feeTx = new Transaction().add(
-    createAssociatedTokenAccountIdempotentInstruction(adminKp.publicKey, feeAccountTokenAccount, feeAccount, tokenMint, TOKEN_PROGRAM_ID),
-    createTransferInstruction(
-      adminTokenAccount,            // Source (admin's token account)
-      feeAccountTokenAccount,       // Destination (feeAccount's ATA)
-      adminKp.publicKey,            // Authority (admin)
-      BigInt(feeTokens.toString()), // Amount (converted from BN to number)
-      [],
-      TOKEN_PROGRAM_ID
-    ));
-  feeTx.feePayer = adminKp.publicKey;
-  feeTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-  const feeSig = await sendAndConfirmTransaction(connection, feeTx, [adminKp]);
-  await logSuccessTx(connection, feeSig, `migrateAuction (${auctionId}) => Sent fee tokens to the revenue wallet`);
 };
 
 async function withdrawFunds(program: Program<MaxiAuction>, isMainnet: boolean, auctionId: number, adminKp: Keypair, connection: Connection): Promise<{

@@ -89,11 +89,11 @@ impl<'info> WithdrawTokens<'info> {
             .checked_div(10000)
             .ok_or(CustomError::Overflow)?;
 
-        // add liquidity_overmint to withdrawable
-        withdrawable = withdrawable.checked_add(auction.liquidity_overmint).ok_or(CustomError::Overflow)?; // TODO: GET THIS WORKING WITH LIQMOVE....
+        // overmint - add liquidity_overmint to withdrawable
+        //withdrawable = withdrawable.checked_add(auction.liquidity_overmint).ok_or(CustomError::Overflow)?;
             
         msg!("withdrawable {}", withdrawable);
-        msg!("liquidity_overmint {}", auction.liquidity_overmint);
+        //msg!("liquidity_overmint {}", auction.liquidity_overmint);
         token::transfer(
             CpiContext::new_with_signer(
                 self.token_program.to_account_info(),

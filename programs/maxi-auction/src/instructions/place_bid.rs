@@ -176,12 +176,10 @@ impl<'info> PlaceBid<'info> {
             });
 
             //
-            // calculate the # of liquidity tokens T that need to be minted, in order to satisy:
-            //  T = S / P
-            //  where S is the net SOL raised, and P is the settlement price. 
-            //  e.g. for S = 0.084317208, P = 0.000861112, T = 97.91
+            // Auction succeeds if:
+            //   1. All tokens are sold;
+            //   2. and by implication, clearing price > 0
             //
-            // Calculate S and mint T when auction succeeds
             let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(
                 auction,
                 clock.unix_timestamp,
@@ -193,12 +191,56 @@ impl<'info> PlaceBid<'info> {
                     return err!(CustomError::InvalidClearingPrice);
                 }
 
-                // Calculate S in lamports
-                let s_lamports = get_net_sol_raised(auction, clearing_price, 0, self.auction_sol_account.lamports())?;
+                //
+                // Option (2) calculate what fraction of the net SOL raised has to be put in the liquidity pool, to achieve the given clearing price.
+                //
+                //  S = P * T
+                //    where S is amount of SOL to put in the pool, and P is the settlement price, 
+                //     and T is the amount of liquidity tokens already locked.
+                //    e.g. for T = 3, P = 0.000861112: S = 0.002583336
+                //
+                let token_balance = self.auction_token_account.amount; // smallest token units
+                let dist_percent = auction.dist_percent; // 0 to 10000
+                let token_decimals = auction.token_decimals as u32;
+                let net_sol_raised = get_net_sol_raised(auction, clearing_price, 0, self.auction_sol_account.lamports())?;      
+
+                // Calculate T (locked tokens) as in WithdrawTokens
+                let locked_tokens = token_balance
+                    .checked_mul(10000 - dist_percent)
+                    .ok_or(CustomError::Overflow)?
+                    .checked_div(10000)
+                    .ok_or(CustomError::Overflow)?;
+
+                // Calculate S = (P * T) / 10^token_decimals
+                let s_lamports = (clearing_price as u128)
+                    .checked_mul(locked_tokens as u128)
+                    .ok_or(CustomError::Overflow)?
+                    .checked_div(10u128.pow(token_decimals))
+                    .ok_or(CustomError::Overflow)?
+                    as u64;
+
+                // ### this MUST MATCH the fixed amount in migrate-auction.ts!
+                let FIXED_SOL_RAYDIUM_COSTS = 25000 /* test low devenet value */; //250000000 /* mainnet value ~0.25 sol */;
+                auction.liquidity_underfund = s_lamports + FIXED_SOL_RAYDIUM_COSTS;
+                msg!("place_bid final - P (lamports per whole token): {}", clearing_price);
+                msg!("place_bid final - T (smallest token units): {}", locked_tokens);
+                msg!("place_bid final - S (lamports): {}", s_lamports);
+                msg!("place_bid final - (vs get_net_sol_raised): {}", net_sol_raised);
+                msg!("place_bid final - FIXED_SOL_RAYDIUM_COSTS: {}", FIXED_SOL_RAYDIUM_COSTS);
+                msg!("place_bid final - liquidity_underfund: {}", auction.liquidity_underfund);
+
+                //
+                // Option (1) "overmint" -- mint more tokens, so all SOL raised can be put into the liquidity pool, to achieve the given clearing price. 
+                //
+                //  T = S / P
+                //    where S is the net SOL raised, and P is the settlement price. 
+                //    e.g. for S = 0.084317208, P = 0.000861112: T = 97.91
+                //
+                /*let s_lamports = get_net_sol_raised(auction, clearing_price, 0, self.auction_sol_account.lamports())?; // S
 
                 // Calculate T_units: T = S / P, adjusted for decimals
                 let token_decimals = auction.token_decimals as u32;
-                let t_units = ((s_lamports as u128)
+                let t_units = ((s_lamports as u128) // T
                     .checked_mul(10u128.pow(token_decimals))
                     .ok_or(CustomError::Overflow)?  // Check multiplication overflow
                     / (clearing_price as u128))     // Perform division directly
@@ -253,7 +295,7 @@ impl<'info> PlaceBid<'info> {
                     ),
                     AuthorityType::MintTokens,
                     None,
-                )?;
+                )?;*/
 
                 // todo: nicer than offchain flow -  interact directly with raydium from here...
                 //...

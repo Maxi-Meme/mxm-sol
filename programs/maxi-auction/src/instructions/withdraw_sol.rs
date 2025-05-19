@@ -67,28 +67,13 @@ impl<'info> WithdrawSol<'info> {
         auction.clearing_price = clearing_price;
         msg!("updated auction_status: {:?}", auction.last_status);
 
-        // Calculate total unclaimed refunds
-        /*let mut total_unclaimed_refunds = 0u64;
-        for bid in auction.bids.iter() {
-            if !bid.is_claimed {
-                let paid = bid.bid_qty * bid.bid_sol - bid.bid_fee;
-                let exact = bid.bid_qty * clearing_price;
-                let owed = paid.saturating_sub(exact);
-                total_unclaimed_refunds += owed;
-            }
-        }
-        // Calculate withdrawable amount with rent exemption
-        let rent = Rent::get()?;
-        let rent_exempt_minimum = rent.minimum_balance(0); // 0 data size for auction_sol_account
-        let balance = self.auction_sol_account.lamports();
-        let base_withdrawable = balance.saturating_sub(total_unclaimed_refunds);
-        let amount_to_transfer = base_withdrawable.saturating_sub(rent_exempt_minimum);
-        // msg!("auction_sol_account balance: {}", balance);
-        // msg!("Total unclaimed refunds: {}", total_unclaimed_refunds);
-        // msg!("Rent exempt minimum: {}", rent_exempt_minimum);
-        // msg!("Withdrawable amount: {}", amount_to_transfer);*/
-
-        let amount_to_transfer = get_net_sol_raised(auction, clearing_price, 0, self.auction_sol_account.lamports())?;
+        //
+        // liq underfund - withdraw the fraction of net sol raised to yield pool starting price = the auction clearing price
+        // retain the rest of the sol in the auction > TODO: add this excess sol amount to claim()...
+        //
+        require!(auction.liquidity_underfund > 0, CustomError::InvalidState);
+        let amount_to_transfer = auction.liquidity_underfund;
+        //let amount_to_transfer = get_net_sol_raised(auction, clearing_price, 0, self.auction_sol_account.lamports())?;
         
         // Perform transfer if amount is positive
         if amount_to_transfer > 0 {
