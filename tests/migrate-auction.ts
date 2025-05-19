@@ -376,7 +376,10 @@ async function createAndFundPool_v3_CLMM(
 
   // Open full range liquidity position
   const baseAmount = new BN(tokenAmount.toString());
-  const otherAmountMax = new BN(wsolAmount.toString());
+  const buffer = new BN(10); // Add a 10-lamport buffer: intermittent Program Error: "Instruction #3 Failed - custom program error: 6021 | Price slippage check"
+  const otherAmountMax = new BN(wsolAmount.toString()).add(buffer);
+  //const otherAmountMax = new BN(wsolAmount.toString());
+
   console.log(`createAndFundPool_v3_CLMM -> baseAmount`, Number(baseAmount.toString()) / 10 ** tokenDecimals);
   console.log(`createAndFundPool_v3_CLMM -> otherAmountMax`, Number(otherAmountMax.toString()) / LAMPORTS_PER_SOL);
   const { execute: execOpenPosition } = await raydium.clmm.openPositionFromBase({

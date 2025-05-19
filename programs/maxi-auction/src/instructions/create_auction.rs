@@ -178,8 +178,8 @@ impl<'info> CreateAuction<'info> {
             None,
         )?;
 
-        //  revoke mint authority
-        /*token::set_authority(
+        // revoke mint authority
+        token::set_authority(
             CpiContext::new_with_signer(
                 self.token_program.to_account_info(),
                 token::SetAuthority {
@@ -194,7 +194,7 @@ impl<'info> CreateAuction<'info> {
             ),
             AuthorityType::MintTokens,
             None,
-        )?;*/
+        )?;
 
         // Current time
         let clock: Clock = Clock::get()?;
@@ -213,7 +213,7 @@ impl<'info> CreateAuction<'info> {
         auction_data_account.token_supply = global_info.config.default_token_supply;
         auction_data_account.token_decimals = global_info.config.default_token_decimals;
         
-        //auction_data_account.dist_percent = 10000; //dist_percent;  // overmint
+        //auction_data_account.dist_percent = 10000; //dist_percent;  // overmint - old, method 1
         auction_data_account.dist_percent = dist_percent;
         
         auction_data_account.bids = vec![];

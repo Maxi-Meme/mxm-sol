@@ -1001,8 +1001,24 @@ describe("maxi-auction", () => {
         // liqmove happened *and* claims happened...
         console.log(`auctionSolBalance`, auctionSolBalance.toString() / LAMPORTS_PER_SOL);
 
-        assert.equal(//BigInt(auctionSolBalance) < BigInt(0.001 * LAMPORTS_PER_SOL),  // life is suffering
-          auctionSolBalance <= RENT_EXEMPT_MIN, true, "should be <= RENT_EXEMPT_MIN left in the auction after liqmove and claims"); // withdraw_sol will hold back RENT_EXEMPT_MIN
+        // OLD: Method 1
+        // withdraw_sol will hold back RENT_EXEMPT_MIN
+        //assert.equal(//BigInt(auctionSolBalance) < BigInt(0.001 * LAMPORTS_PER_SOL),  // life is suffering
+        //  auctionSolBalance <= RENT_EXEMPT_MIN, true, "should be <= RENT_EXEMPT_MIN left in the auction after liqmove and claims");
+
+        // Method 2: Check that remaining SOL in the auction account is netSolRaised - liquiditySol
+        const netSolRaised = auctionPost.netSolRaised; // BN from Anchor
+        const liquiditySol = auctionPost.liquiditySol; // BN from Anchor
+        const expectedRemaining = netSolRaised.sub(liquiditySol); // BN subtraction
+        const actualRemaining = new BN(auctionSolBalance); // Convert number to BN
+        console.log(`netSolRaised: ${netSolRaised.toString()} lamports`);
+        console.log(`liquiditySol: ${liquiditySol.toString()} lamports`);
+        console.log(`expectedRemaining: ${expectedRemaining.toString()} lamports`);
+        console.log(`actualRemaining: ${actualRemaining.toString()} lamports`);
+        assert.ok(
+          expectedRemaining.eq(actualRemaining),
+          `Remaining SOL should be ${expectedRemaining.toString()} lamports, but got ${actualRemaining.toString()} lamports`
+        );
 
         // Check the mint authority was revoked
         const mintInfo = await connection.getAccountInfo(new PublicKey(auctionPost.tokenMint));
