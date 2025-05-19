@@ -8,6 +8,7 @@ pub struct Config {
     pub default_token_decimals: u8,
     pub default_start_price_lamports: u64,
     pub fee_account: Pubkey,
+    pub dao_account: Pubkey,
     pub min_total_sol: u64,
 }
 

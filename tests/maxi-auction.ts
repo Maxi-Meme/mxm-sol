@@ -95,6 +95,7 @@ var isDevnet = false;
 var isMainnet = false;
 
 const TEST_FEE_ACCOUNT = Keypair.fromSecretKey(bs58.decode("4hbfT4t6HZtcBVUq983nHXnXs7KdQXxrNUdkCVPaNYT82qSd3hH7eVJkgVicHX9MtatidQuEi3E5nXJ5UbE9ExHp")); // 12MhCcaTUtiG86K5ahiAmYSZ4Z9VCsxUKSTcAQjimaxi
+const TEST_DAO_ACCOUNT = Keypair.fromSecretKey(bs58.decode("5eGYNKTZty4AWiDXXkEmM9D4dwGTAZoYxBLHd8XWsGkF3Q32yesom9ituWQERMAQHBa41wXHzHYgEDEnaskMgQmx")); // VgzE1W2szAaKkH6ynnqM8wPHtd4Kf8MTjPJP5HRmaxi
 const DEVNET_USER_KEYPAIRS = [
   Keypair.fromSecretKey(bs58.decode("4kbfHLgTTVT23ezNackE3a6m3BCQg3vYmEqZNbHLvZbWs8Dd68FqM7QmbH1w2r7BZHrb6bAjevB1dwpfgz9Psdw8")), // 1246q8oDCgE77wEbJx5XxAPkw51YesEGqUkRGbZ3maxi
   Keypair.fromSecretKey(bs58.decode("2rAK3bLbA2VeR5sFFVYhamZ7Muhz2TgkG7RBAnDVXwvhXmsiZwwL8ohZNiqWCzZcBDgL4PhRvTuKZMxoJSVxWwGW")), // 124N6YAiiKRi8ze2aDBhVo4h5ratuczB321xrU3Cmaxi
@@ -1350,6 +1351,7 @@ describe("maxi-auction", () => {
       defaultTokenDecimals: TEST_TOKEN_DECIMALS,
       defaultStartPriceLamports: new BN(TEST_STARTPRICE_SOL * LAMPORTS_PER_SOL),
       feeAccount: TEST_FEE_ACCOUNT.publicKey,
+      daoAccount: TEST_DAO_ACCOUNT.publicKey,
       minTotalSol: new BN((mintotal_sol || TEST_MIN_TOTAL_SOL) * LAMPORTS_PER_SOL),
     };
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
@@ -1370,6 +1372,7 @@ describe("maxi-auction", () => {
         configA.defaultTokenDecimals === configB.defaultTokenDecimals &&
         configA.defaultStartPriceLamports.eq(configB.defaultStartPriceLamports) &&
         configA.feeAccount.equals(configB.feeAccount) &&
+        configA.daoAccount.equals(configB.daoAccount) &&
         configA.minTotalSol.eq(configB.minTotalSol)
       );
     };
@@ -1395,7 +1398,8 @@ describe("maxi-auction", () => {
         throw err;
       }
 
-      await setupFeeAccount(connection, adminKp, newConfig.feeAccount);
+      await setupAccount(connection, adminKp, newConfig.feeAccount);
+      await setupAccount(connection, adminKp, newConfig.daoAccount);
     } else {
       CONTRACT_CONFIG = currentConfig;
       console.log("Configuration is already up to date. No initialization needed.");
@@ -2546,16 +2550,16 @@ const VALID_PROGRAM_ID = new Set([
 ]);
 const isValidAmm = (id: string) => VALID_PROGRAM_ID.has(id);
 
-async function setupFeeAccount(connection: Connection, adminKp: Keypair, feeAccountPubkey: PublicKey) {
-  const feeBalance = await connection.getBalance(feeAccountPubkey);
+async function setupAccount(connection: Connection, adminKp: Keypair, setupAccountPubKey: PublicKey) {
+  const feeBalance = await connection.getBalance(setupAccountPubKey);
   const minBalance = await connection.getMinimumBalanceForRentExemption(0); // 0 bytes for a basic system account
   if (feeBalance < minBalance) {
-    console.log("Funding fee account...");
+    console.log("Funding account...", setupAccountPubKey.toBase58());
     const lamportsToFund = minBalance - feeBalance;
 
     const transferIx = SystemProgram.transfer({
       fromPubkey: adminKp.publicKey,
-      toPubkey: feeAccountPubkey,
+      toPubkey: setupAccountPubKey,
       lamports: lamportsToFund
     });
 
@@ -2564,9 +2568,9 @@ async function setupFeeAccount(connection: Connection, adminKp: Keypair, feeAcco
     tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
 
     const sig = await sendAndConfirmTransaction(connection, tx, [adminKp]);
-    await logSuccessTx(connection, sig, "Funding fee account");
+    await logSuccessTx(connection, sig, "setupAccount " + setupAccountPubKey.toBase58());
   } else {
-    console.log(`Fee account already has sufficient balance for rent exemption.`);
+    console.log(`account ${setupAccountPubKey.toBase58()} already has sufficient balance for rent exemption.`);
   }
 }
 

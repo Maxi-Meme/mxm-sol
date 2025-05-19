@@ -272,7 +272,6 @@ impl<'info> PlaceBid<'info> {
                     msg!("place_bid final - no unlocked tokens, buyback_price set to 0");
                 }
                 //
-                // TODO: auction param % fee - "fee discount 50% share on x"
                 // TODO: buyback() method - only for bidders... send tokens rec'd to DAO wallet... 
                 // TODO: DAO access method - admin method to access unused sol after n days... time limit on buyback... auction param.
                 //
