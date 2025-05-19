@@ -71,12 +71,14 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
     const CONFIG_MIN_TOTAL_SOL = globalInfoAccount.config.minTotalSol;
 
-    // ### this MUST MATCH the fixed amount in place_bid's calculation of acution.liquidity_underfund ###
+    // ### this MUST MATCH the fixed amount in place_bid's calculation of acution.liquidity_sol ###
     // TEST LOW VALUE FOR DEVNET...
     const FIXED_SOL_RAYDIUM_COSTS = new BN(0.000025 * LAMPORTS_PER_SOL); // todo: should be ~0.25 sol on mainnet...
+    //const FIXED_SOL_RAYDIUM_COSTS = new BN(0); // testing zero fees
     // isMainnet
     // ? new BN(4.0 * LAMPORTS_PER_SOL)       // prod ~4 sol for raydium setup costs
     // : new BN(0.000042 * LAMPORTS_PER_SOL); // don't care on devnet
+
     console.log(`MIN_SOL_LIQ`, FIXED_MIN_SOL_LIQ.toString());
     console.log(`CONFIG_MIN_TOTAL_SOL`, CONFIG_MIN_TOTAL_SOL.toString());
     console.log(`FIXED_SOL_RAYDIUM_COSTS`, FIXED_SOL_RAYDIUM_COSTS.toString());

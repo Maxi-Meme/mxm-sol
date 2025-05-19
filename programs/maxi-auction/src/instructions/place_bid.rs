@@ -49,12 +49,11 @@ pub struct PlaceBid<'info> {
     )]
     pub fee_account: AccountInfo<'info>,    
 
-    // vvvvv TODO: add to callers' accounts lists...
-    #[account(mut)] // Use existing mint, no `init`
+    #[account(mut)] 
     pub token_mint: Account<'info, Mint>,
 
-    /// CHECK: The auction's token account (PDA) that will hold the auctioned tokens
-    #[account(mut)] // Use existing token account, no `init`
+    /// CHECK: The auction's token account (PDA) that holds the auctioned tokens
+    #[account(mut)] 
     pub auction_token_account: Account<'info, TokenAccount>,
 
     #[account(address = anchor_lang::system_program::ID)]
@@ -65,13 +64,15 @@ pub struct PlaceBid<'info> {
 }
 
 impl<'info> PlaceBid<'info> {
-    pub fn process(&mut self, bid_quantity: u64, x_id: u64) -> Result<()> {
+    pub fn process(&mut self, bid_quantity: u64, x_id: u64, fee_perc: u64) -> Result<()> {
         let rent = Rent::get()?;
         let min_rent = rent.minimum_balance(0);
 
         let auction = &mut self.auction_data_account;
         let default_start_price = self.global_info.config.default_start_price_lamports;
         require!(!auction.is_finalized, CustomError::AuctionAlreadyFinalized);
+
+        
         
         // Validate bid and auction state
         require!(auction.bids.len() < MAX_BIDS, CustomError::MaxBidsReached);
@@ -93,7 +94,9 @@ impl<'info> PlaceBid<'info> {
 
         // Calculate initial total cost
         let mut total_cost = bid_quantity.checked_mul(current_price).ok_or(CustomError::Overflow)?;
-        let mut fee = total_cost / 100; // 1% fee, integer division
+        require!(fee_perc < 10000, CustomError::InvalidFeePercentage);
+        let mut fee = ((total_cost as u128 * fee_perc as u128) / 10000) as u64;
+        // let mut fee = 0; // testing zero fees
         let mut auction_amount = total_cost - fee;
 
         // Adjust total_cost if auction_amount is below min_rent
@@ -102,7 +105,7 @@ impl<'info> PlaceBid<'info> {
             let mut high = u64::MAX;
             while low < high { // All hail Grok
                 let mid = low + (high - low) / 2;
-                let f = mid / 100;
+                let f = ((mid as u128 * fee_perc as u128) / 10000) as u64;
                 let a = mid - f;
                 if a >= min_rent {
                     high = mid;
@@ -118,7 +121,7 @@ impl<'info> PlaceBid<'info> {
 
             // Recalculate total_cost, fee, and auction_amount with adjusted current_price
             total_cost = bid_quantity.checked_mul(current_price).ok_or(CustomError::Overflow)?;
-            fee = total_cost / 100;
+            fee = ((total_cost as u128 * fee_perc as u128) / 10000) as u64;
             auction_amount = total_cost - fee;
         }
 
@@ -128,6 +131,7 @@ impl<'info> PlaceBid<'info> {
         msg!("place_bid - remaining_tokens: {}", remaining_tokens);
         msg!("place_bid - total_cost: {}", total_cost);
         msg!("place_bid - auction_amount: {}", auction_amount);
+        msg!("place_bid - fee_perc: {}", fee_perc);
         msg!("place_bid - fee: {}", fee);
         msg!("place_bid - min_rent: {}", min_rent);
 
@@ -191,8 +195,20 @@ impl<'info> PlaceBid<'info> {
                     return err!(CustomError::InvalidClearingPrice);
                 }
 
+                auction.net_sol_raised = get_net_sol_raised(auction, clearing_price, 0, self.auction_sol_account.lamports())?;
+
                 //
-                // Option (2) calculate what fraction of the net SOL raised has to be put in the liquidity pool, to achieve the given clearing price.
+                // Method (3) -- todo??
+                //   Combine 1 & 2
+                //      Mint a (*fixed* this time) amount of tokens at auction end, and use that (instead of 1-dist_percent)
+                //      to calculate what fraction of net SOL raised needs to go into the pool to yield the clearing price.
+                //
+                //  Then we can set dist_percent to 100%, for a cleaner user experience (1 token bid = 1 token received)
+                //
+                //...
+
+                //
+                // Method (2) calculate what fraction of the net SOL raised has to be put in the liquidity pool, to achieve the given clearing price.
                 //
                 //  S = P * T
                 //    where S is amount of SOL to put in the pool, and P is the settlement price, 
@@ -202,7 +218,6 @@ impl<'info> PlaceBid<'info> {
                 let token_balance = self.auction_token_account.amount; // smallest token units
                 let dist_percent = auction.dist_percent; // 0 to 10000
                 let token_decimals = auction.token_decimals as u32;
-                let net_sol_raised = get_net_sol_raised(auction, clearing_price, 0, self.auction_sol_account.lamports())?;      
 
                 // Calculate T (locked tokens) as in WithdrawTokens
                 let locked_tokens = token_balance
@@ -210,6 +225,7 @@ impl<'info> PlaceBid<'info> {
                     .ok_or(CustomError::Overflow)?
                     .checked_div(10000)
                     .ok_or(CustomError::Overflow)?;
+
 
                 // Calculate S = (P * T) / 10^token_decimals
                 let s_lamports = (clearing_price as u128)
@@ -220,17 +236,49 @@ impl<'info> PlaceBid<'info> {
                     as u64;
 
                 // ### this MUST MATCH the fixed amount in migrate-auction.ts!
-                let FIXED_SOL_RAYDIUM_COSTS = 25000 /* test low devenet value */; //250000000 /* mainnet value ~0.25 sol */;
-                auction.liquidity_underfund = s_lamports + FIXED_SOL_RAYDIUM_COSTS;
-                msg!("place_bid final - P (lamports per whole token): {}", clearing_price);
-                msg!("place_bid final - T (smallest token units): {}", locked_tokens);
-                msg!("place_bid final - S (lamports): {}", s_lamports);
-                msg!("place_bid final - (vs get_net_sol_raised): {}", net_sol_raised);
+                let FIXED_SOL_RAYDIUM_COSTS = 25000; // test low devenet value - ~250000000 for mainnet value ~0.25 sol
+                //let FIXED_SOL_RAYDIUM_COSTS = 0; // testing zero fees
+                auction.liquidity_sol = s_lamports + FIXED_SOL_RAYDIUM_COSTS;
+                
+                msg!("place_bid final - P (lamports per whole token [clearing_price]): {}", clearing_price);
+                msg!("place_bid final - T (smallest token units [locked_tokens]): {}", locked_tokens);
+                msg!("place_bid final - S (lamports [base sol for liquidity - s_lamports]): {}", s_lamports);
+                msg!("place_bid final - (vs get_net_sol_raised): {}", auction.net_sol_raised);
                 msg!("place_bid final - FIXED_SOL_RAYDIUM_COSTS: {}", FIXED_SOL_RAYDIUM_COSTS);
-                msg!("place_bid final - liquidity_underfund: {}", auction.liquidity_underfund);
+                msg!("place_bid final - liquidity_sol [base sol for liquidity + fixed raydium costs]: {}", auction.liquidity_sol);
+
+                // calculate buyback price for bidders - we buy back from unused raised sol (sol raised but not used for liquidity)
+                let unlocked_tokens = token_balance.checked_sub(locked_tokens).ok_or(CustomError::Underflow)?;
+                msg!("place_bid final - unlocked_tokens: {}", unlocked_tokens);
+                if unlocked_tokens > 0 {
+                    let diff = auction.net_sol_raised
+                        .checked_sub(auction.liquidity_sol)
+                        .ok_or(CustomError::Underflow)?;
+                    if diff > 0 {
+                        let buyback_price = (diff as u128)
+                            .checked_mul(10u128.pow(auction.token_decimals as u32))
+                            .ok_or(CustomError::Overflow)?
+                            .checked_div(unlocked_tokens as u128)
+                            .ok_or(CustomError::Overflow)?
+                            as u64;
+                        auction.buyback_price = buyback_price;
+                        msg!("place_bid final - adjusted buyback_price (lamports per whole token): {}", buyback_price);
+                    } else {
+                        auction.buyback_price = 0;
+                        msg!("place_bid final - no SOL left for buyback, buyback_price set to 0");
+                    }
+                } else {
+                    auction.buyback_price = 0;
+                    msg!("place_bid final - no unlocked tokens, buyback_price set to 0");
+                }
+                //
+                // TODO: auction param % fee - "fee discount 50% share on x"
+                // TODO: buyback() method - only for bidders... send tokens rec'd to DAO wallet... 
+                // TODO: DAO access method - admin method to access unused sol after n days... time limit on buyback... auction param.
+                //
 
                 //
-                // Option (1) "overmint" -- mint more tokens, so all SOL raised can be put into the liquidity pool, to achieve the given clearing price. 
+                // Method (1) "overmint" -- mint more tokens, so all SOL raised can be put into the liquidity pool, to achieve the given clearing price. 
                 //
                 //  T = S / P
                 //    where S is the net SOL raised, and P is the settlement price. 

@@ -863,6 +863,10 @@
         {
           "name": "x_id",
           "type": "u64"
+        },
+        {
+          "name": "fee_perc",
+          "type": "u64"
         }
       ]
     },
@@ -1212,101 +1216,106 @@
     },
     {
       "code": 6009,
+      "name": "InvalidFeePercentage",
+      "msg": "Invalid fee percentage."
+    },
+    {
+      "code": 6010,
       "name": "AuctionStillLive",
       "msg": "Auction is still live."
     },
     {
-      "code": 6010,
+      "code": 6011,
       "name": "AuctionEnded",
       "msg": "Auction is ended."
     },
     {
-      "code": 6011,
+      "code": 6012,
       "name": "AuctionNotFinished",
       "msg": "Auction is not finished."
     },
     {
-      "code": 6012,
+      "code": 6013,
       "name": "NoBidFoundForCaller",
       "msg": "No bid found for caller."
     },
     {
-      "code": 6013,
+      "code": 6014,
       "name": "InvalidClearingPrice",
       "msg": "Invalid clearing price."
     },
     {
-      "code": 6014,
+      "code": 6015,
       "name": "InvalidRemainingAccounts",
       "msg": "Invalid length of remaining accounts."
     },
     {
-      "code": 6015,
+      "code": 6016,
       "name": "InvalidUserAccount",
       "msg": "Invalid user account."
     },
     {
-      "code": 6016,
+      "code": 6017,
       "name": "InvalidUserTokenAccount",
       "msg": "Invalid user's token account."
     },
     {
-      "code": 6017,
+      "code": 6018,
       "name": "BidAlreadyClaimed",
       "msg": "Bid already claimed."
     },
     {
-      "code": 6018,
+      "code": 6019,
       "name": "AuctionNotStarted",
       "msg": "Auction not started."
     },
     {
-      "code": 6019,
+      "code": 6020,
       "name": "InvalidBidQuantity",
       "msg": "Invalid bid quantity."
     },
     {
-      "code": 6020,
+      "code": 6021,
       "name": "InvalidPDA",
       "msg": "Invalid PDA."
     },
     {
-      "code": 6021,
+      "code": 6022,
       "name": "InvalidDistPercent",
       "msg": "Invalid distribution percent."
     },
     {
-      "code": 6022,
+      "code": 6023,
       "name": "AuctionLiquidityMoved",
       "msg": "Auction liquidity already moved."
     },
     {
-      "code": 6023,
+      "code": 6024,
       "name": "InternalError",
       "msg": "Iternal Error."
     },
     {
-      "code": 6024,
+      "code": 6025,
       "name": "InvalidState",
       "msg": "Invalid State."
     },
     {
-      "code": 6025,
+      "code": 6026,
       "name": "SolAlreadyWithdrawn",
       "msg": "SOL already withdrawn."
     },
     {
-      "code": 6026,
+      "code": 6027,
       "name": "TokensAlreadyWithdrawn",
       "msg": "Tokens already withdrawn."
     },
     {
-      "code": 6027,
+      "code": 6028,
       "name": "MinNotReached",
       "msg": "Min total sol not reached."
     },
     {
-      "code": 6028,
+      "code": 6029,
       "name": "AuctionAlreadyFinalized",
       "msg": "Auction already finalized."
     }
@@ -1412,7 +1421,15 @@
             "type": "u64"
           },
           {
-            "name": "liquidity_underfund",
+            "name": "net_sol_raised",
+            "type": "u64"
+          },
+          {
+            "name": "liquidity_sol",
+            "type": "u64"
+          },
+          {
+            "name": "buyback_price",
             "type": "u64"
           }
         ]

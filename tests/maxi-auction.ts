@@ -364,8 +364,13 @@ describe("maxi-auction", () => {
     await test_bid_auction({ fill_percent: 0.1 });
   });
 
+  it("base - places a bid with 0.5% fee", async () => {
+    await test_create_auction_KP0({});
+    await test_bid_auction({ fill_percent: 0.1, fee_perc: 0.005 });
+  });
+
   it("base - user 1 fills & claims auction", async () => {
-    await test_create_auction_KP0({ auction_distribution_percent: 0.9631, duration_hours_div100: 1 }); // 3.69% token lock, 36s
+    await test_create_auction_KP0({ auction_distribution_percent: /*0.9631*/0.8, duration_hours_div100: 1 }); // 3.69% token lock, 36s
     const bidResult = await test_bid_auction({ fill_percent: 1.0, bidderKp: USER_KPs[0] });
     await test_claim_auction(USER_KPs[0], true, bidResult);
   });
@@ -1486,7 +1491,8 @@ describe("maxi-auction", () => {
     bidderKp = USER_KPs[1],
     useAuctionId = undefined,
     skipMigrationWait = false,
-    skipLiqMoveAssumption = false
+    skipLiqMoveAssumption = false,
+    fee_perc = 0.01 // 0-1
   }) {
     logger.color("magenta").log(`${bidderKp.publicKey} is bidding...`);
 
@@ -1530,7 +1536,7 @@ describe("maxi-auction", () => {
     const newBidListener = program.addEventListener("newBid", (event) => {
       actualBidFeeBN = new BN(event.bidFee);
     });
-    const tx = await program.methods.placeBid(bidQty, new BN(42))
+    const tx = await program.methods.placeBid(bidQty, new BN(42), new BN(fee_perc * 100 * 100)) // 0-1 => 0-10000
       .accounts({
         bidder: signer.publicKey,
         auctionDataAccount: auctionData,
@@ -1608,14 +1614,15 @@ describe("maxi-auction", () => {
 
     // Calculate fee increase
     const feeIncreaseBN = feeAccountBalanceAfterBN.sub(feeAccountBalanceBeforeBN);
-    //console.log(`Fee account increase: ${(feeIncreaseBN.toNumber() / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
 
-    // Calculate minimum expected fee (1% of bidAmountBN)
-    const minExpectedFeeBN = bidAmountBN.mul(new BN(1)).div(new BN(100)); // 1% of bid amount
-    //console.log(`Minimum expected fee (1% of bid): ${(minExpectedFeeBN.toNumber() / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
+    // Calculate minimum expected fee (% of bidAmountBN)
+    const minExpectedFeeBN = bidAmountBN.mul(new BN(fee_perc * 1000)).div(new BN(1000)); // % of bid amount
+    console.log("bidAmountBN", bidAmountBN.toString());
+    console.log("minExpectedFeeBN", minExpectedFeeBN.toString());
+    console.log("feeIncreaseBN", feeIncreaseBN.toString());
 
     // **Validate that feeAccount increases by at least 1% of the SOL paid (excluding network fee)**
-    assert.ok(feeIncreaseBN.gte(minExpectedFeeBN), `Fee account should increase by at least 1% of the bid amount. Actual increase: ${feeIncreaseBN.toString()}, Minimum expected: ${minExpectedFeeBN.toString()}`);
+    assert.ok(feeIncreaseBN.eq(minExpectedFeeBN), `Fee account should increase by ${fee_perc * 100}% of the bid amount. Actual increase: ${feeIncreaseBN.toString()}, Minimum expected: ${minExpectedFeeBN.toString()}`);
 
     // Validate based on bid type
     if (isFinalBid) {

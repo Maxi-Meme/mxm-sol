@@ -52,8 +52,8 @@ pub mod maxi_auction {
         )
     }
 
-    pub fn place_bid(ctx: Context<PlaceBid>, bid_qty: u64, x_id: u64) -> Result<()> {
-        ctx.accounts.process(bid_qty, x_id)
+    pub fn place_bid(ctx: Context<PlaceBid>, bid_qty: u64, x_id: u64, fee_perc: u64) -> Result<()> {
+        ctx.accounts.process(bid_qty, x_id, fee_perc)
     }
 
     pub fn cancel_bid(ctx: Context<CancelBid>) -> Result<()> {

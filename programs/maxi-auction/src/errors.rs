@@ -32,6 +32,9 @@ pub enum CustomError {
     #[msg("Max number of bids reached.")]
     MaxBidsReached,
 
+    #[msg("Invalid fee percentage.")]
+    InvalidFeePercentage,
+
     #[msg("Auction is still live.")]
     AuctionStillLive,
 
