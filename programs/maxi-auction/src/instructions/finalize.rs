@@ -36,12 +36,7 @@ pub struct Finalize<'info> {
     pub auction_data_account: Box<Account<'info, Auction>>,
 
     // Added Bids account and closed it to reclaim rent
-    #[account(
-        mut,
-        close = admin,
-        seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()],
-        bump
-    )]
+    #[account(mut, close = admin, seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()], bump)]
     pub bids_account: Account<'info, Bids>,
 
     /// CHECK: admin knows what he's passing in
@@ -53,6 +48,7 @@ pub struct Finalize<'info> {
 
     #[account(mut)]
     pub admin_token_account: Account<'info, TokenAccount>,
+
 
     #[account(address = token::ID)]
     pub token_program: Program<'info, Token>,

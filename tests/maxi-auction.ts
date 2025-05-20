@@ -33,7 +33,7 @@ import {
   //connection,
   globalInfoSeed,
   auctionSolSeed,
-  auctionDataSeed, bidsSeed,
+  auctionDataSeed, auctionBidsSeed,
 
   TEST_DISTRIBTION_PERCENT,
   TEST_STARTPRICE_SOL,
@@ -510,7 +510,7 @@ describe("maxi-auction", () => {
     console.log(`Total auctions: ${totalAuctions}`);
     const auctionIds = Array.from({ length: totalAuctions }, (_, i) => i);
     const promises = auctionIds.map(auctionId =>
-      getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed)
+      getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed, auctionBidsSeed)
     );
     const results = await Promise.all(promises);
     const auctions = results.filter(result => result !== null);
@@ -523,8 +523,8 @@ describe("maxi-auction", () => {
     // logObject("poolPpcInfosMapv3", poolPpcInfosMapv3);  
 
     // Log
-    const detailPromises = auctions.map(async (x, index) => {
-      logAuctionInfo(poolDbInfos, index, poolPpcInfosMapv2, poolPpcInfosMapv3, x);
+    const detailPromises = auctions.map(async (auction, index) => {
+      logAuctionInfo(poolDbInfos, index, poolPpcInfosMapv2, poolPpcInfosMapv3, auction);
     });
     await Promise.all(detailPromises);
   });
@@ -537,7 +537,7 @@ describe("maxi-auction", () => {
     console.log(`Total auctions: ${totalAuctions}`);
     const auctionIds = Array.from({ length: totalAuctions }, (_, i) => i); // [2]
     const promises = auctionIds.map(auctionId =>
-      getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed)
+      getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed, auctionBidsSeed)
     );
     const results = await Promise.all(promises);
     const auctions = results.filter(result => result !== null);
@@ -555,7 +555,7 @@ describe("maxi-auction", () => {
         await finalizeAuction(x.auctionId); 
 
           console.log("AFTER:")
-          const refreshed = await getAuctionDetails(x.auctionId, connection, program, auctionDataSeed, auctionSolSeed);
+        const refreshed = await getAuctionDetails(x.auctionId, connection, program, auctionDataSeed, auctionSolSeed, auctionBidsSeed);
           x = { ...x, ...refreshed };
         logAuctionInfo(poolDbInfos, index, poolPpcInfosMapv2, poolPpcInfosMapv3, x);
         //}
@@ -581,7 +581,7 @@ describe("maxi-auction", () => {
 
     // Fetch auction details in parallel
     const promises = auctionIds.map(auctionId =>
-      getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed)
+      getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed, auctionBidsSeed)
     );
     const results = await Promise.all(promises);
     const auctions = results.filter(result => result !== null);
@@ -1440,7 +1440,7 @@ describe("maxi-auction", () => {
       program.programId
     );
     const [bidsAccount] = PublicKey.findProgramAddressSync(
-      [Buffer.from(bidsSeed), new BN(nextAuctionId).toArrayLike(Buffer, "le", 8)],
+      [Buffer.from(auctionBidsSeed), new BN(nextAuctionId).toArrayLike(Buffer, "le", 8)],
       program.programId
     );
     const [auctionSolAccount] = PublicKey.findProgramAddressSync(
@@ -1573,7 +1573,7 @@ describe("maxi-auction", () => {
     console.log('isFinalBid:', isFinalBid);
 
     // get new bids account lamports - before the bid
-    const [bidsPda] = PublicKey.findProgramAddressSync([Buffer.from(bidsSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const [bidsPda] = PublicKey.findProgramAddressSync([Buffer.from(auctionBidsSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
     const bidsAccountInfoBefore = await connection.getAccountInfo(bidsPda);
     console.log('bidsAccountInfoBefore:', bidsAccountInfoBefore);
     const bidsLamportsBefore = bidsAccountInfoBefore ? bidsAccountInfoBefore.lamports : 0;
@@ -2402,6 +2402,9 @@ async function logAuctionInfo(
     isFinalized: any;
     tokenMintPublicKey: any;
     clearingPrice: any;
+    solBalanceAuctionBids: any;
+    rentExemptionAuctionBids: any;
+    bidCountAuctionBids: any;
   }) {
   try {
     const poolDbInfo = poolDbInfos[index];
@@ -2420,14 +2423,16 @@ async function logAuctionInfo(
     // }
     console.log(
       `ID: ${x.auctionId.toString().padEnd(3)}, [${(x.status ?? "-").padEnd(25)}], ` +
-      `AD: ${(x.solBalanceAuctionData ?? "-").padEnd(12)} (${(x.rentExemptionAuctionData ?? " ").padEnd(12)}), ` +
-      `AS: ${(x.solBalanceAuctionSol ?? "-").padEnd(12)} (${(x.rentExemptionAuctionSol ?? " ").padEnd(12)}), ` +
-      `AT: ${(x.solBalanceAuctionTokenAccount ?? "-").padEnd(12)} (${(x.rentExemptionAuctionTokenAccount ?? " ").padEnd(12)}), ` +
+      `AD: ${(x.solBalanceAuctionData ?? "-").padEnd(12)} ` + //(${(x.rentExemptionAuctionData ?? " ").padEnd(12)}), ` +
+      `AS: ${(x.solBalanceAuctionSol ?? "-").padEnd(12)} ` + //(${(x.rentExemptionAuctionSol ?? " ").padEnd(12)}), ` +
+      `AT: ${(x.solBalanceAuctionTokenAccount ?? "-").padEnd(12)} ` + //(${(x.rentExemptionAuctionTokenAccount ?? " ").padEnd(12)}), ` +
+      `AB(${x.bidCountAuctionBids || 0}): ${(x.solBalanceAuctionBids ?? "-").padEnd(12)} ` + //(${(x.rentExemptionAuctionBids ?? " ").padEnd(12)}), ` +
+
       `Tokens: ${x.tokenBalance.padEnd(12)}, ` +
       `Mint: ${x.tokenMintPublicKey} ` +
       `CP: ${(x.clearingPrice ? (x.clearingPrice.toNumber() / LAMPORTS_PER_SOL).toFixed(10) : "-").padEnd(12)} ` +
       (poolPpcInfov2 || poolPpcInfov3
-        ? (`> PRICE: ${poolPrice.toFixed(10)} ` +
+        ? (`> PRICE: ${(1 / poolPrice).toFixed(10)} ` +
           (baseReserve && quoteReserve
             ? `LIQv2: [${baseReserve.toString()} T - lamports, ${(Number(quoteReserve.toString()) / LAMPORTS_PER_SOL).toFixed(9)} WSOL]` //LP Providers: [${lpProviders}]`
             : 'LIQv3: TBC'))
@@ -2629,17 +2634,19 @@ async function waitForMigration(auctionId: number): Promise<{ success: boolean, 
   return result;
 }
 
-async function getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed) {
+async function getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed, auctionBidsSeed) {
   try {
     //console.log("getAuctionDetails - auctionId", auctionId);
 
     // Derive PDAs
     const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
     const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const [auctionBids] = PublicKey.findProgramAddressSync([Buffer.from(auctionBidsSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
 
     // Fetch account info for SOL balances and data lengths
     const auctionDataInfo = await connection.getAccountInfo(auctionData);
     const auctionSolInfo = await connection.getAccountInfo(auctionSol);
+    const auctionBidsInfo = await connection.getAccountInfo(auctionBids);
 
     // Initialize variables to undefined
     let auction = undefined;
@@ -2657,6 +2664,10 @@ async function getAuctionDetails(auctionId, connection, program, auctionDataSeed
     let isFinalized = undefined;
     let tokenMintPublicKey = undefined;
     let clearingPrice = undefined;
+
+    let solBalanceAuctionBids = undefined;
+    let rentExemptionAuctionBids = undefined;
+    let bidCountAuctionBids = undefined;
 
     // If auctionData exists, fetch auction details
     if (auctionDataInfo) {
@@ -2677,6 +2688,14 @@ async function getAuctionDetails(auctionId, connection, program, auctionDataSeed
         auctionTokenAccount = await getAssociatedTokenAddress(tokenMint, auctionSol, true);
         auctionTokenAccountInfo = await connection.getAccountInfo(auctionTokenAccount);
       }
+    }
+
+    // if auction bids account exists, get its bid count & SOL balance and rent exemption
+    if (auctionBidsInfo) {
+      solBalanceAuctionBids = auctionBidsInfo.lamports / LAMPORTS_PER_SOL;
+      rentExemptionAuctionBids = await connection.getMinimumBalanceForRentExemption(auctionBidsInfo.data.length) / LAMPORTS_PER_SOL;
+      const auctionBidsAccount = await program.account.bids.fetch(auctionBids);
+      bidCountAuctionBids = auctionBidsAccount?.bids.length;
     }
 
     // If auctionSol exists, get its SOL balance and rent exemption
@@ -2715,7 +2734,10 @@ async function getAuctionDetails(auctionId, connection, program, auctionDataSeed
       status,
       isFinalized,
       tokenMintPublicKey,
-      clearingPrice
+      clearingPrice,
+      solBalanceAuctionBids: solBalanceAuctionBids !== undefined ? solBalanceAuctionBids.toFixed(9) : undefined,
+      rentExemptionAuctionBids: rentExemptionAuctionBids !== undefined ? rentExemptionAuctionBids.toFixed(9) : undefined,
+      bidCountAuctionBids: bidCountAuctionBids !== undefined ? bidCountAuctionBids.toString() : undefined,
     };
     //console.log("getAuctionDetails - details", details);
     return details;
@@ -2877,7 +2899,7 @@ export const clmmDevConfigs = [
 
 // **Helper function to get bids from separate account**
 async function getBids(program: Program<MaxiAuction>, auctionId: number) {
-  const [bidsPda] = PublicKey.findProgramAddressSync([Buffer.from(bidsSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+  const [bidsPda] = PublicKey.findProgramAddressSync([Buffer.from(auctionBidsSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
   const accountInfo = await program.provider.connection.getAccountInfo(bidsPda);
   if (accountInfo === null) {
     console.log(`getBids - no bids! bidsPda: ${bidsPda}, auctionId:`, auctionId);
