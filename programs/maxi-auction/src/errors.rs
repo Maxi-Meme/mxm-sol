@@ -94,4 +94,7 @@ pub enum CustomError {
 
     #[msg("Auction already finalized.")]
     AuctionAlreadyFinalized,
+
+    #[msg("Insufficient funds.")]
+    InsufficientFunds,
 }

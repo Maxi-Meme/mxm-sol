@@ -6,7 +6,14 @@ use anchor_lang::prelude::*;
 pub struct GlobalInfo {
     pub deployer: Pubkey,
     pub auctions_num: u64,
-    pub config: Config, // Reuse the Config struct for common configuration fields.
+    pub config: Config,
+}
+
+/// Account to store bids for an auction.
+#[account]
+pub struct Bids {
+    pub auction_id: u64, // Links this account to a specific auction
+    pub bids: Vec<Bid>,  // Vector to store bids, allowing dynamic growth
 }
 
 #[account]
@@ -24,18 +31,17 @@ pub struct Auction {
     pub token_decimals: u8,   // 1
     pub dist_percent: u64,    // 8: 10000 = 100%
     pub bump: u8,             // 1
-    pub delay_in_seconds: u64, // 8
-    pub bids: Vec<Bid>,       // 73 * max_bid
+    pub delay_in_seconds: u64,// 8
     pub start_price: u64,     // 8
     pub clearing_price: u64,  // 8
     pub last_status: AuctionStatus, // 1
     pub is_sol_withdrawn: bool, // 1
     pub is_tokens_withdrawn: bool, // 1
-    pub is_finalized: bool, // 1
+    pub is_finalized: bool,   // 1
     pub liquidity_overmint: u64, // 8
-    
-    pub net_sol_raised: u64, // 8
-    pub liquidity_sol: u64, // 8
-    pub buyback_price: u64, // 8
-    //pub overraise_amount == net_sol_raised - liquidity_sol
+    pub net_sol_raised: u64,  // 8
+    pub liquidity_sol: u64,   // 8
+    pub buyback_price: u64,   // 8
+    pub buyback_period_days: u16, // 2
+    pub is_dao_claimed: bool, // 1
 }

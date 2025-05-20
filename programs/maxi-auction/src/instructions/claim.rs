@@ -1,6 +1,6 @@
 use crate::{
-    account::{Auction, GlobalInfo},
-    constants::{AUCTION_SOL_SEED, GLOBAL_INFO_SEED},
+    account::{Auction, GlobalInfo, Bids},
+    constants::{AUCTION_SOL_SEED, GLOBAL_INFO_SEED, BIDS_SEED},
     errors::CustomError,
     events::Claimed,
     helper::get_status_and_clearing_price,
@@ -46,6 +46,14 @@ pub struct Claim<'info> {
     #[account(mut)]
     pub auction_token_account: Account<'info, TokenAccount>,
 
+    // Added Bids account to access bids
+    #[account(
+        mut,
+        seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub bids_account: Account<'info, Bids>,
+
     /// CHECK: Safe. The SPL token program.
     pub token_program: Program<'info, Token>,
 
@@ -59,6 +67,7 @@ pub struct Claim<'info> {
 impl<'info> Claim<'info> {
     pub fn process(&mut self) -> Result<()> {
         let auction = &mut self.auction_data_account;
+        let bids = &mut self.bids_account.bids; // Updated to use bids_account.bids
         let auction_id = auction.id;
         let token_decimals = auction.token_decimals;
         let auction_bump = auction.bump;
@@ -72,7 +81,7 @@ impl<'info> Claim<'info> {
 
         // Get and log auction status and clearing price
         let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(
-            auction,
+            auction, bids,
             Clock::get()?.unix_timestamp,
             min_total_sol,
         );
@@ -95,7 +104,7 @@ impl<'info> Claim<'info> {
         let mut processed_bids: u32 = 0;
 
         // Process all unclaimed bids for the caller
-        for (index, bid) in auction.bids.iter_mut().enumerate() {
+        for (index, bid) in bids.iter_mut().enumerate() {
             if bid.bidder == self.caller.key() && !bid.is_claimed {
                 // Log bid details
                 msg!("claim - Processing bid index: {}", index);

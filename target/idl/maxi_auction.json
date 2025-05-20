@@ -1,5 +1,5 @@
 {
-  "address": "C6XgmmirRAmFkWazyGoaZLpFoKtjARLzdiZmgr2j9AnU",
+  "address": "CrjEgbBuLB9HssfnErcGHXKPsfaBHi4dLLdqyMwzkX4k",
   "metadata": {
     "name": "maxi_auction",
     "version": "0.2.0",
@@ -61,6 +61,33 @@
         {
           "name": "auction_data_account",
           "writable": true
+        },
+        {
+          "name": "bids_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  105,
+                  100,
+                  115,
+                  95,
+                  115,
+                  101,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "auction_data_account.id",
+                "account": "Auction"
+              }
+            ]
+          }
         },
         {
           "name": "system_program",
@@ -220,6 +247,33 @@
         {
           "name": "auction_token_account",
           "writable": true
+        },
+        {
+          "name": "bids_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  105,
+                  100,
+                  115,
+                  95,
+                  115,
+                  101,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "auction_data_account.id",
+                "account": "Auction"
+              }
+            ]
+          }
         },
         {
           "name": "token_program",
@@ -551,12 +605,12 @@
           }
         },
         {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        },
-        {
           "name": "sysvar_rent",
           "address": "SysvarRent111111111111111111111111111111111"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
         },
         {
           "name": "token_program",
@@ -599,6 +653,10 @@
         {
           "name": "delay_in_seconds",
           "type": "u64"
+        },
+        {
+          "name": "buyback_period_days",
+          "type": "u16"
         }
       ]
     },
@@ -617,9 +675,6 @@
       "accounts": [
         {
           "name": "global_info",
-          "docs": [
-            "The global info account containing configuration details like admin and fee account addresses."
-          ],
           "pda": {
             "seeds": [
               {
@@ -648,62 +703,159 @@
         },
         {
           "name": "admin",
-          "docs": [
-            "The admin account, must be a signer and match the admin address in global_info."
-          ],
           "writable": true,
           "signer": true
         },
         {
           "name": "fee_account",
-          "docs": [
-            "The fee account, must be a signer and match the fee account address in global_info."
-          ],
           "writable": true,
           "signer": true
         },
         {
           "name": "auction_data_account",
-          "docs": [
-            "CLOSE DATA ACCOUNT!",
-            "The auction data account, mutable and SET TO CLOSE, transferring lamports to admin."
-          ],
           "writable": true
         },
         {
+          "name": "bids_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  105,
+                  100,
+                  115,
+                  95,
+                  115,
+                  101,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "auction_data_account.id",
+                "account": "Auction"
+              }
+            ]
+          }
+        },
+        {
           "name": "auction_sol_account",
-          "docs": [
-            "The auction SOL account (PDA), manually verified, holds the SOL to be withdrawn."
-          ],
           "writable": true
         },
         {
           "name": "auction_token_account",
-          "docs": [
-            "The token account holding the auction's tokens, mutable for withdrawal."
-          ],
           "writable": true
         },
         {
           "name": "admin_token_account",
-          "docs": [
-            "The admin's token account to receive the tokens, mutable for deposit."
-          ],
           "writable": true
         },
         {
           "name": "token_program",
-          "docs": [
-            "The SPL Token program for token transfers."
-          ],
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         },
         {
           "name": "system_program",
-          "docs": [
-            "The System program for SOL transfers."
-          ],
           "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "init_auction_bids",
+      "discriminator": [
+        143,
+        178,
+        54,
+        94,
+        70,
+        33,
+        124,
+        181
+      ],
+      "accounts": [
+        {
+          "name": "global_info",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  105,
+                  110,
+                  102,
+                  111,
+                  95,
+                  115,
+                  101,
+                  101,
+                  100
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "auction_data_account"
+          ]
+        },
+        {
+          "name": "admin",
+          "signer": true
+        },
+        {
+          "name": "auction_data_account",
+          "writable": true
+        },
+        {
+          "name": "bids_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  105,
+                  100,
+                  115,
+                  95,
+                  115,
+                  101,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "auction_data_account.id",
+                "account": "Auction"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
         }
       ],
       "args": []
@@ -847,12 +999,39 @@
           "writable": true
         },
         {
+          "name": "bids_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  105,
+                  100,
+                  115,
+                  95,
+                  115,
+                  101,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "auction_data_account.id",
+                "account": "Auction"
+              }
+            ]
+          }
+        },
+        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         },
         {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
         }
       ],
       "args": [
@@ -984,6 +1163,33 @@
           "writable": true
         },
         {
+          "name": "bids_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  105,
+                  100,
+                  115,
+                  95,
+                  115,
+                  101,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "auction_data_account.id",
+                "account": "Auction"
+              }
+            ]
+          }
+        },
+        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         }
@@ -1053,6 +1259,33 @@
           "writable": true
         },
         {
+          "name": "bids_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  105,
+                  100,
+                  115,
+                  95,
+                  115,
+                  101,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "auction_data_account.id",
+                "account": "Auction"
+              }
+            ]
+          }
+        },
+        {
           "name": "token_program",
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }
@@ -1072,6 +1305,19 @@
         233,
         131,
         81
+      ]
+    },
+    {
+      "name": "Bids",
+      "discriminator": [
+        30,
+        218,
+        18,
+        49,
+        39,
+        51,
+        67,
+        2
       ]
     },
     {
@@ -1318,6 +1564,11 @@
       "code": 6029,
       "name": "AuctionAlreadyFinalized",
       "msg": "Auction already finalized."
+    },
+    {
+      "code": 6030,
+      "name": "InsufficientFunds",
+      "msg": "Insufficient funds."
     }
   ],
   "types": [
@@ -1379,16 +1630,6 @@
             "type": "u64"
           },
           {
-            "name": "bids",
-            "type": {
-              "vec": {
-                "defined": {
-                  "name": "Bid"
-                }
-              }
-            }
-          },
-          {
             "name": "start_price",
             "type": "u64"
           },
@@ -1431,6 +1672,14 @@
           {
             "name": "buyback_price",
             "type": "u64"
+          },
+          {
+            "name": "buyback_period_days",
+            "type": "u16"
+          },
+          {
+            "name": "is_dao_claimed",
+            "type": "bool"
           }
         ]
       }
@@ -1561,6 +1810,31 @@
           {
             "name": "bidder",
             "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Bids",
+      "docs": [
+        "Account to store bids for an auction."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "auction_id",
+            "type": "u64"
+          },
+          {
+            "name": "bids",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "Bid"
+                }
+              }
+            }
           }
         ]
       }

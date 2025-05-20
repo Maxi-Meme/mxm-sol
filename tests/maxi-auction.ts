@@ -1,4 +1,4 @@
-import { MintLayout } from '@solana/spl-token';
+import { createAssociatedTokenAccountIdempotentInstructionWithDerivation, MintLayout } from '@solana/spl-token';
 
 import * as anchor from "@coral-xyz/anchor";
 import { AnchorProvider, Program } from "@coral-xyz/anchor";
@@ -33,7 +33,7 @@ import {
   //connection,
   globalInfoSeed,
   auctionSolSeed,
-  auctionDataSeed,
+  auctionDataSeed, bidsSeed,
 
   TEST_DISTRIBTION_PERCENT,
   TEST_STARTPRICE_SOL,
@@ -68,6 +68,7 @@ import { migrateAuction } from "./migrate-auction"
 import { bs58 } from "@coral-xyz/anchor/dist/cjs/utils/bytes";
 import "dotenv/config";
 import * as sql from "mssql";
+import { e } from '@raydium-io/raydium-sdk-v2/lib/api-6a529105';
 //import { program } from "@coral-xyz/anchor/dist/cjs/native/system";
 
 const RENT_EXEMPT_MIN = 890880; // devnet 
@@ -926,7 +927,7 @@ describe("maxi-auction", () => {
     // log state
     var auctionPost = await program.account.auction.fetch(auctionData);
     var auctionSolBalance = await connection.getBalance(auctionSol);
-    auctionPost.bids.forEach((bid) => {
+    (await getBids(program, auctionId)).forEach((bid) => { //auctionPost.bids.forEach((bid) => {
       console.log("bid", bid.bidder.toBase58(), `qty`, bid.bidQty.toNumber(), `price sol`, bid.bidSol.toNumber() / LAMPORTS_PER_SOL, `fee sol`, bid.bidFee.toNumber() / LAMPORTS_PER_SOL, `isClaimed`, bid.isClaimed);
     });
 
@@ -964,8 +965,9 @@ describe("maxi-auction", () => {
 
     // check correct amount of sol is left in the auction...
     auctionPost = await program.account.auction.fetch(auctionData);
+    const auctionPostBids = await getBids(program, auctionId);
     auctionSolBalance = await connection.getBalance(auctionSol);
-    auctionPost.bids.forEach((bid) => {
+    auctionPostBids.forEach((bid) => { //auctionPost.bids.forEach((bid) => {
       console.log("bid", bid.bidder.toBase58(), `qty`, bid.bidQty.toNumber(), `price sol`, bid.bidSol.toNumber() / LAMPORTS_PER_SOL, `fee sol`, bid.bidFee.toNumber() / LAMPORTS_PER_SOL, `isClaimed`, bid.isClaimed);
     });
 
@@ -977,7 +979,7 @@ describe("maxi-auction", () => {
     console.log(`tokensTransferred3`, tokensTransferred3);  
 
     if (isLocal) {
-      const expectedTotalChange = new BN(auctionPost.bids.map((bid) => {
+      const expectedTotalChange = new BN((await getBids(program, auctionId)).map((bid) => { //auctionPost.bids.map((bid) => {
         // if no liqmove took place
         // expected in auction: is sum(clearing price * total qty) [change was returned] - sum(bid fees) [was taken at bid time]
         if (bid.bidSol.gt(clearingPrice)) {
@@ -989,8 +991,8 @@ describe("maxi-auction", () => {
         return new BN(0);
       }).reduce((a, b) => a.add(b), new BN(0)));
       console.log(`expectedTotalChange`, expectedTotalChange.toNumber() / LAMPORTS_PER_SOL);
-      const expectedSolInAuction =
-        new BN(auctionPost.bids.map((bid) => bid.bidSol.toNumber() * bid.bidQty.toNumber() - bid.bidFee.toNumber()).reduce((a, b) => a + b, 0)) // net ins
+      const expectedSolInAuction = 
+        new BN(/*auctionPost.bids*/ auctionPostBids.map((bid) => bid.bidSol.toNumber() * bid.bidQty.toNumber() - bid.bidFee.toNumber()).reduce((a, b) => a + b, 0)) // net ins
           .sub(expectedTotalChange);
       console.log(`expectedSolInAuction`, expectedSolInAuction.toNumber() / LAMPORTS_PER_SOL);
 
@@ -1050,12 +1052,12 @@ describe("maxi-auction", () => {
     const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
     const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
     const auctionPre = await program.account.auction.fetch(auctionData);
-    auctionPre.bids.forEach((bid) => {
+    (await getBids(program, auctionId)).forEach((bid) => { //auctionPre.bids.forEach((bid) => {
       console.log("bid", bid.bidder.toBase58(), `qty`, bid.bidQty.toNumber(), `price sol`, bid.bidSol.toNumber() / LAMPORTS_PER_SOL, `fee sol`, bid.bidFee.toNumber() / LAMPORTS_PER_SOL, `isClaimed`, bid.isClaimed);
     });
 
     // **Find all unclaimed bids for the bidder**
-    const unclaimedBids = auctionPre.bids.filter((b: any) => b.bidder.equals(bidderKp.publicKey) && !b.isClaimed);
+    const unclaimedBids = (await getBids(program, auctionId)).filter((b: any) => b.bidder.equals(bidderKp.publicKey) && !b.isClaimed); //auctionPre.bids.filter((b: any) => b.bidder.equals(bidderKp.publicKey) && !b.isClaimed);
     assert.equal(unclaimedBids.length > 0, true, "No unclaimed bids found for bidder");
 
     // **Set up accounts for claim**
@@ -1187,7 +1189,7 @@ describe("maxi-auction", () => {
 
     // **Verify all unclaimed bids are marked as claimed**
     const auctionPost = await program.account.auction.fetch(auctionData);
-    const remainingUnclaimedBids = auctionPost.bids.filter((b: any) => b.bidder.equals(bidderKp.publicKey) && !b.isClaimed);
+    const remainingUnclaimedBids = (await getBids(program, auctionId)).filter((b: any) => b.bidder.equals(bidderKp.publicKey) && !b.isClaimed); //auctionPost.bids.filter((b: any) => b.bidder.equals(bidderKp.publicKey) && !b.isClaimed);
     assert.equal(remainingUnclaimedBids.length, 0, "All unclaimed bids should be marked as claimed");
 
     // **Return totals**
@@ -1407,34 +1409,47 @@ describe("maxi-auction", () => {
   }
 
   async function test_create_auction_KP0({
-    auction_distribution_percent = undefined, // 0-1 - // TODO - drop this, overmint instead
-    duration_hours_div100 = undefined }
-  ) {
+    auction_distribution_percent = undefined,
+    duration_hours_div100 = undefined
+  }) {
     const signer = USER_KPs[0];
-
     logger.color("magenta").log(`${signer.publicKey.toBase58()} is creating auction...`);
 
+    // Fetch globalInfo to get the next auction ID
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
-    const globalInfoTest = await program.account.globalInfo.fetchNullable(globalInfo);
-    if (!globalInfoTest) throw ("Global Info not initialized!");
+    const globalInfoFetched = await program.account.globalInfo.fetchNullable(globalInfo);
+    if (!globalInfoFetched) throw new Error("Global Info not initialized!");
 
-    // use a real ...maxi keypair if we're running e2e on devnet/mainnet
     const tokenKp1 = isLocal ? Keypair.generate() : Keypair.fromSecretKey(bs58.decode(await getAndLockMaxiPrivKey()));
     const token = tokenKp1;
 
-    // test auction data
+    // Test auction data
     const xId = new BN(42);
     const name = TEST_TOKEN_NAME + ` ${Date.now() / 1000}`;
     const symbol = TEST_TOKEN_SYMBOL;
     const uri = TEST_TOKEN_URI;
-    const durationHours = new BN(duration_hours_div100 || 10); // about 5mins: unit is actually hours_div_100, or 36s 
-
-    const distPercent = new BN(auction_distribution_percent !== undefined ? (auction_distribution_percent * 10000) : TEST_DISTRIBTION_PERCENT); // 10000 = 100%
-    //const distPercent = new BN(10000/*100%*/); // overmint
-
+    const durationHours = new BN(duration_hours_div100 || 10);
+    const distPercent = new BN(auction_distribution_percent !== undefined ? (auction_distribution_percent * 10000) : TEST_DISTRIBTION_PERCENT);
     const delaySeconds = new BN(0);
+    const buybackPeriodDays = 30;
 
-    // Log balances of all signing accounts before the transaction
+    // Derive PDAs using nextAuctionId
+    const nextAuctionId = globalInfoFetched.auctionsNum;
+    const [auctionDataAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from(auctionDataSeed), new BN(nextAuctionId).toArrayLike(Buffer, "le", 8)],
+      program.programId
+    );
+    const [bidsAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from(bidsSeed), new BN(nextAuctionId).toArrayLike(Buffer, "le", 8)],
+      program.programId
+    );
+    const [auctionSolAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from(auctionSolSeed), new BN(nextAuctionId).toArrayLike(Buffer, "le", 8)],
+      program.programId
+    );
+    const auctionTokenAccount = await getAssociatedTokenAddress(token.publicKey, auctionSolAccount, true);
+
+    // Log balances before transaction
     const [adminBalance, signerBalance, tokenBalance] = await Promise.all([
       connection.getBalance(adminKp.publicKey),
       connection.getBalance(signer.publicKey),
@@ -1447,63 +1462,66 @@ describe("maxi-auction", () => {
     console.log(`distPercent: ${distPercent} = ${distPercent.toNumber() / 100}%`);
     console.log('durationHours', durationHours.toNumber());
 
-    const tx = await program.methods
-      .createAuction(xId, name, symbol, uri, durationHours, distPercent, delaySeconds)
+    // Create instruction for createAuction
+    const createAuctionIx = await program.methods
+      .createAuction(xId, name, symbol, uri, durationHours, distPercent, delaySeconds, buybackPeriodDays) // TODO: change in web
       .accounts({
+        globalInfo: globalInfo,
         creator: signer.publicKey,
         admin: adminKp.publicKey,
         tokenMint: token.publicKey,
+        // auctionSolAccount: auctionSolAccount,
+        // auctionDataAccount: auctionDataAccount,
+        // auctionTokenAccount: auctionTokenAccount,
+        //sysvarRent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        //systemProgram: anchor.web3.SystemProgram.programId,
+        //tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        //associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
       })
-      .transaction();
+      .instruction();
+
+    // Create instruction for initAuctionBids
+    const initAuctionBidsIx = await program.methods
+      .initAuctionBids()
+      .accounts({
+        globalInfo: globalInfo,
+        creator: signer.publicKey,
+        admin: adminKp.publicKey,
+        auctionDataAccount: auctionDataAccount,
+        bidsAccount: bidsAccount,
+    //systemProgram: anchor.web3.SystemProgram.programId,
+    //rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      })
+      .instruction();
+
+    // Build and send transaction
+    const tx = new anchor.web3.Transaction()
+      .add(createAuctionIx)
+      .add(initAuctionBidsIx);
     tx.feePayer = signer.publicKey;
     tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
 
-    //try {
-    //  console.log("*** simulateTransaction createAuction", await connection.simulateTransaction(tx));
-    //}
-    //catch (error) {
-    //  console.error("Error during transaction signing or confirmation:", error);
-    //  if (error instanceof Error && "getLogs" in error) {
-    //    const logs = await error.getLogs;
-    //    console.error("Simulation logs:", logs);
-    //  }
-    //  throw error;
-    //}
-
     try {
       const sig = await sendAndConfirmTransaction(connection, tx, [adminKp, signer, token]);
-      await logSuccessTx(connection, sig, "createAuction");
-    }
-    catch (err) {
-      console.error("Error during transaction signing or confirmation:", err);
-      if (err instanceof Error && "getLogs" in err) {
-        const logs = await err.getLogs;
-        console.error("logs:", logs);
-      }
+      await logSuccessTx(connection, sig, "createAuction and initAuctionBids");
+    } catch (err) {
+      console.error("Error during transaction:", err);
+      if (err.logs) console.error("Transaction logs:", err.logs);
       throw err;
     }
 
-    await markMaxiKeyUsed(token.publicKey.toBase58());
-
+    // Post-transaction validation
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
     const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
     console.log("auctionId", auctionId);
 
-    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8),], program.programId);
-    //console.log("auctionData", auctionData);
-
-    const auctionDataFetched = await program.account.auction.fetch(auctionData);
-    //logObject("auctionDataFetched", auctionDataFetched);
-
-    // auction num
-    //assert.equal(globalInfoAccount.auctionsNum, 1);
-
-    // auction states
+    const auctionDataFetched = await program.account.auction.fetch(auctionDataAccount);
     assert.equal(parseFloat(auctionDataFetched.id.toString()), auctionId);
     assert.equal(auctionDataFetched.isFinished, false);
     assert.equal(auctionDataFetched.creator, signer.publicKey.toBase58());
-
     assert.equal(auctionDataFetched.tokenMint, token.publicKey.toBase58(), "tokenMint comparison");
+
+    await markMaxiKeyUsed(token.publicKey.toBase58());
   }
 
   async function test_bid_auction({
@@ -1526,7 +1544,10 @@ describe("maxi-auction", () => {
 
     // Fetch pre-bid auction data
     const auctionPre = await program.account.auction.fetch(auctionData);
-    //logObject("auctionPre", auctionPre);
+    console.log("auctionPre", auctionPre);
+
+    const auctionPreBids = await getBids(program, auctionId);
+    console.log("auctionPreBids", auctionPreBids);
 
     // Set up bidder and bid quantity
     const signer = bidderKp;
@@ -1541,7 +1562,7 @@ describe("maxi-auction", () => {
     //console.log(`Balances before bid: Bidder (${signer.publicKey.toBase58()}): ${(bidderBalanceBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL, Auction (${auctionSol.toBase58()}): ${(auctionSolBalanceBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL, Fee Account: ${(feeAccountBalanceBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
 
     // Check if bid fills auction
-    const totalBidTokens = auctionPre.bids.reduce((acc, bid) => {
+    const totalBidTokens = (await getBids(program, auctionId)).reduce((acc, bid) => {  //auctionPre.bids.reduce((acc, bid) => {
       return acc.add(bid.bidQty.mul(new BN(Math.pow(10, auctionPre.tokenDecimals))));
     }, new BN(0));
     const remainingTokens = auctionPre.tokenSupply.sub(totalBidTokens);
@@ -1550,6 +1571,13 @@ describe("maxi-auction", () => {
     //console.log('remainingTokens:', remainingTokens.toString());
     //console.log('bidQtyLamports:', bidQtyLamports.toString());
     console.log('isFinalBid:', isFinalBid);
+
+    // get new bids account lamports - before the bid
+    const [bidsPda] = PublicKey.findProgramAddressSync([Buffer.from(bidsSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const bidsAccountInfoBefore = await connection.getAccountInfo(bidsPda);
+    console.log('bidsAccountInfoBefore:', bidsAccountInfoBefore);
+    const bidsLamportsBefore = bidsAccountInfoBefore ? bidsAccountInfoBefore.lamports : 0;
+    console.log('bidsLamportsBefore', bidsLamportsBefore);
 
     // Place bid transaction
     let actualBidFeeBN;
@@ -1578,6 +1606,13 @@ describe("maxi-auction", () => {
     });
     await logSuccessTx(connection, sig, "placeBid");
     await program.removeEventListener(newBidListener);
+
+    // get new bids account lamports - after the bid
+    const bidsAccountInfoAfter = await connection.getAccountInfo(bidsPda);
+    const bidsLamportsAfter = bidsAccountInfoAfter ? bidsAccountInfoAfter.lamports : 0;
+    console.log('bidsAccountInfoAfter:', bidsAccountInfoAfter);
+    const bidsAccountRentPaidByBidder = bidsLamportsAfter - bidsLamportsBefore;
+    console.log('bidsAccountRentPaidByBidder', bidsAccountRentPaidByBidder);
 
     // Handle final bid with a promise-based semaphore
     if (isFinalBid) {
@@ -1612,12 +1647,15 @@ describe("maxi-auction", () => {
     const auctionSolBalanceAfter = await connection.getBalance(auctionSol);
     const feeAccountBalanceAfter = await connection.getBalance(CONTRACT_CONFIG.feeAccount); // Final fee account balance
     const auctionPost = await program.account.auction.fetch(auctionData);
+    const auctionPostBids = await getBids(program, auctionId);
     const txDetails = await getTransactionDetailsWithRetry(connection, sig);
     const networkFee = txDetails.meta.fee; // Network transaction fee
     logObject("test_bid_auction - auctionPost.liquidityOvermint", auctionPost.liquidityOvermint);
 
     // Calculate bid amount and use actual fee from event
-    const lastBid = auctionPost.bids[auctionPost.bids.length - 1];
+    const bids = await getBids(program, auctionId);
+    console.log("bids", bids);
+    const lastBid = bids[bids.length - 1]; //auctionPost.bids[auctionPost.bids.length - 1];
     const bidAmountBN = lastBid.bidQty.mul(lastBid.bidSol); // Total SOL paid by bidder (excluding network fee)
     const expectedAuctionSolIncreaseBN = bidAmountBN.sub(actualBidFeeBN); // Auction receives bid amount minus fee
 
@@ -1684,7 +1722,8 @@ describe("maxi-auction", () => {
       }
     } else {
       // Standard bid checks
-      assert.equal(auctionPost.bids.length - 1, auctionPre.bids.length, "Bid length should increase by 1");
+      //assert.equal(auctionPost.bids.length - 1, auctionPre.bids.length, "Bid length should increase by 1");
+      assert.equal(auctionPostBids.length - 1, auctionPreBids.length, "Bid length should increase by 1");
       assert.equal(
         auctionSolBalanceAfterBN.sub(auctionSolBalanceBeforeBN).eq(expectedAuctionSolIncreaseBN),
         true,
@@ -1699,13 +1738,13 @@ describe("maxi-auction", () => {
       console.log("networkFeeBN", networkFeeBN.toString());
 
       const actualDecreaseBN = bidderBalanceBeforeBN.sub(bidderBalanceAfterBN);
-      const expectedDecreaseBN = bidAmountBN.add(networkFeeBN);
+      const expectedDecreaseBN = bidAmountBN.add(networkFeeBN).add(new BN(bidsAccountRentPaidByBidder));
       console.log("actualDecreaseBN", actualDecreaseBN.toString());
       console.log("expectedDecreaseBN", expectedDecreaseBN.toString());
       const tolerance = new BN(51);// observed (intermittantly): 50 lamport diff..., even grok doesn't get it. life is short.
       assert.ok(
         actualDecreaseBN.sub(expectedDecreaseBN).abs().lte(tolerance),
-        `Bidder SOL decrease should approximately match bid amount plus network fee. Actual: ${actualDecreaseBN.toString()}, Expected: ${expectedDecreaseBN.toString()}`
+        `Bidder SOL decrease should approximately match bid amount plus network fee plus bids account rent paid. Actual: ${actualDecreaseBN.toString()}, Expected: ${expectedDecreaseBN.toString()}`
       );
     }
 
@@ -1738,9 +1777,10 @@ describe("maxi-auction", () => {
 
     // Fetch auction data before cancellation
     const auctionDataBefore = await program.account.auction.fetch(auctionData);
+    const auctionDataBeforeBids = await getBids(program, auctionId);
 
     // Find all bids from the caller
-    const callerBids = auctionDataBefore.bids.filter(b => b.bidder.equals(bidderKp.publicKey));
+    const callerBids = auctionDataBeforeBids.filter(b => b.bidder.equals(bidderKp.publicKey));
     assert.strictEqual(callerBids.length > 0, true, "Bids should exist before cancellation");
     //console.log(`Found ${callerBids.length} bids from bidder ${bidderKp.publicKey.toBase58()}`);
 
@@ -1789,7 +1829,7 @@ describe("maxi-auction", () => {
 
     // Fetch auction data after cancellation
     const auctionDataAfter = await program.account.auction.fetch(auctionData);
-
+    const auctionDataAfterBids = await getBids(program, auctionId);
     // Capture the bidder's balance after cancellation
     const balanceAfter = await connection.getBalance(bidderKp.publicKey);
 
@@ -1806,7 +1846,7 @@ describe("maxi-auction", () => {
     );
 
     // Verify all caller's bids are removed
-    const remainingBids = auctionDataAfter.bids.filter(b => b.bidder.equals(bidderKp.publicKey));
+    const remainingBids = auctionDataAfterBids.filter(b => b.bidder.equals(bidderKp.publicKey));
     assert.equal(remainingBids.length, 0, "All bids from the caller should be removed");
 
     return { auctionDataAfter, balanceAfter, balanceBefore, totalRefund, networkFee, auctionSol };
@@ -1818,13 +1858,7 @@ describe("maxi-auction", () => {
   it("admin - pools v3 - creates & LPs CLMM pool", async () => {
     await test_create_clmm_and_trade_v3();
   });
-  // TODO: / full range: seems to be basically a CP internally, i.e. p = s / t -- p and s are fixed, we need a dynamic t; t = s / p
-  // lol so why not use v2 CP :))
-  //   BACK to overmint:
-  //    1. set user lock to zero... // all tests up to moveliq need to work
-  //    2. overmint (liq tokens) - AT AUCTION FINISH TIME...; then revoke mint auth.
-  //    3.   +mint: liq_tokens = net_sol_raised / settlement_price
-  //
+
   async function test_create_clmm_and_trade_v3() {
     if (isLocal) return logger.color("yellow").log("Skipping pool creation on localnet");
 
@@ -2840,3 +2874,15 @@ export const clmmDevConfigs = [
     defaultRangePoint: [0.01, 0.05, 0.1, 0.2, 0.5],
   },
 ]
+
+// **Helper function to get bids from separate account**
+async function getBids(program: Program<MaxiAuction>, auctionId: number) {
+  const [bidsPda] = PublicKey.findProgramAddressSync([Buffer.from(bidsSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+  const accountInfo = await program.provider.connection.getAccountInfo(bidsPda);
+  if (accountInfo === null) {
+    console.log(`getBids - no bids! bidsPda: ${bidsPda}, auctionId:`, auctionId);
+    return [];  // no first bid yet; the bids account isn't created
+  }
+  const bidsAccount = await program.account.bids.fetch(bidsPda);
+  return bidsAccount.bids;
+}

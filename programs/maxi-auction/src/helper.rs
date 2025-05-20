@@ -3,15 +3,17 @@ use crate::account::Auction;
 use crate::states::AuctionStatus;
 use anchor_lang::{prelude::*};
 use crate::errors::CustomError;
+use crate::states::Bid;
 
 pub fn get_net_sol_raised(
     auction: &Auction,
+    bids: &[Bid],
     clearing_price: u64,
     rent_exempt_minimum: u64,
     balance: u64,
 ) -> Result<u64> { // Fixed: Only one generic argument
     // Calculate total refunds owed for unclaimed bids
-    let total_unclaimed_refunds = auction.bids.iter()
+    let total_unclaimed_refunds = bids.iter()
         .filter(|bid| !bid.is_claimed) // Only unclaimed bids
         .try_fold(0u64, |acc, bid| {
             let paid = bid.bid_qty
@@ -41,12 +43,12 @@ pub fn get_net_sol_raised(
     Ok(net_sol_raised)
 }
 
-pub(crate) fn get_remaining_tokens(auction: &Auction) -> u64 { // integer token units (not lamports
+pub(crate) fn get_remaining_tokens(auction: &Auction, bids: &[Bid]) -> u64 { // integer token units (not lamports
     let token_qty = auction
         .token_supply // token lamports
       .saturating_div(10u64.pow(auction.token_decimals as u32));
 
-    let allocated: u64 = auction.bids.iter().map(|b| b.bid_qty).sum();
+    let allocated: u64 = bids.iter().map(|b| b.bid_qty).sum();
     token_qty.saturating_sub(allocated)
 }
 
@@ -83,12 +85,13 @@ pub(crate) fn get_current_price(
 
 pub(crate) fn get_status_and_clearing_price(
     auction: &Auction,
+    bids: &[Bid],
     current_time: i64,
     min_total_sol: u64,
 ) -> (AuctionStatus, Option<u64>) {
     // Calculate total allocated (bid) tokens and sol
-    let allocated_qty_opt: Option<u64> = auction.bids.iter().try_fold(0u64, |acc, b| acc.checked_add(b.bid_qty));
-    let total_sol_after_fees_opt: Option<u64> = auction.bids.iter().try_fold(0u64, |acc, b| {
+    let allocated_qty_opt: Option<u64> = bids.iter().try_fold(0u64, |acc, b| acc.checked_add(b.bid_qty));
+    let total_sol_after_fees_opt: Option<u64> = bids.iter().try_fold(0u64, |acc, b| {
         b.bid_qty
             .checked_mul(b.bid_sol)
             .and_then(|product| product.checked_sub(b.bid_fee))
@@ -100,12 +103,12 @@ pub(crate) fn get_status_and_clearing_price(
     // Calculate total unclaimed refunds
     let mut total_change = 0u64;
     let clearing_price_tmp; // our best guess at the clearing price
-    if auction.bids.is_empty() {
+    if bids.is_empty() {
         clearing_price_tmp = 0; // no bids yet, no clearing price
     } else {
-        clearing_price_tmp = auction.bids.last().unwrap().bid_sol; // use the last bid as the price
+        clearing_price_tmp = bids.last().unwrap().bid_sol; // use the last bid as the price
     }
-    for bid in auction.bids.iter() {
+    for bid in bids.iter() {
         //if !bid.is_claimed {
             let paid = bid.bid_qty * bid.bid_sol - bid.bid_fee;
             let exact = if clearing_price_tmp == 0 {
@@ -127,10 +130,6 @@ pub(crate) fn get_status_and_clearing_price(
 
     // Subtract rent exemption to get final net_sol_raised
     let net_sol_raised = net_sol_raised_before_rent.saturating_sub(rent_exempt_minimum); // empty would be nicer...
-
-    //
-    // ##### THIS IS STILL A PROBLEM... WE NEED TO MAINTAIN RENT_MIN UNTIL ALL LIQ IS MOVED AND/OR ALL CLAIMS ARE MOVED .... else account can be detailed by runtime!
-    //
 
     // Determine the auction status
     let supply_qty = auction.token_supply.saturating_div(10u64.pow(auction.token_decimals as u32));
@@ -161,14 +160,14 @@ pub(crate) fn get_status_and_clearing_price(
     let clearing_price = match status {
         AuctionStatus::Pending => None,
         AuctionStatus::Live => {
-            if auction.bids.is_empty() {
+            if bids.is_empty() {
                 None
             } else {
-                let last_bid = auction.bids.last().unwrap();
+                let last_bid = bids.last().unwrap();
                 Some(last_bid.bid_sol)
             }
         }
-        AuctionStatus::Succeeded => get_clearing_price(auction),
+        AuctionStatus::Succeeded => get_clearing_price(auction, bids),
         AuctionStatus::FailedMinNotReached => None,
         AuctionStatus::FailedNotFullyAllocated => None,
         AuctionStatus::Finalized => None,
@@ -177,9 +176,9 @@ pub(crate) fn get_status_and_clearing_price(
     (status, clearing_price)
 }
 
-fn get_clearing_price(auction: &Auction) -> Option<u64> {
+fn get_clearing_price(auction: &Auction, bids: &[Bid]) -> Option<u64> {
     let mut cumulative_qty = 0u64;
-    for bid in &auction.bids {
+    for bid in bids {
         cumulative_qty += bid.bid_qty.saturating_mul(10u64.pow(auction.token_decimals as u32));
         if cumulative_qty == auction.token_supply { // Happy path: bids are exact match for token supply
             return Some(bid.bid_sol);

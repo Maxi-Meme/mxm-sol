@@ -1,12 +1,12 @@
 use crate::{
-    account::Auction, constants::AUCTION_SOL_SEED, errors::CustomError,
-    account::GlobalInfo, constants::GLOBAL_INFO_SEED, 
+    account::{ Auction, GlobalInfo, Bids }, 
+    constants::{ GLOBAL_INFO_SEED, AUCTION_SOL_SEED, BIDS_SEED },
+    errors::CustomError,
     states::AuctionStatus,
     helper::{get_status_and_clearing_price, get_net_sol_raised},
 };
 use anchor_lang::{prelude::*, solana_program, system_program};
 use solana_program::{
-    //entrypoint::ProgramResult,
     program::{invoke_signed},
 };
 
@@ -30,6 +30,13 @@ pub struct WithdrawSol<'info> {
     /// CHECK: This account is manually verified
     #[account(mut)]
     pub auction_sol_account: AccountInfo<'info>,
+     
+    #[account(
+        mut,
+        seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub bids_account: Account<'info, Bids>,
 
     #[account(address = system_program::ID)]
     pub system_program: Program<'info, System>,
@@ -38,6 +45,7 @@ pub struct WithdrawSol<'info> {
 impl<'info> WithdrawSol<'info> {
     pub fn process(&mut self) -> Result<()> {
         let auction = &mut self.auction_data_account;
+        let bids = &mut self.bids_account.bids;
         let auction_id = auction.id;
         let bump = auction.bump;
 
@@ -50,7 +58,7 @@ impl<'info> WithdrawSol<'info> {
 
         // Auction status and checks
         let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(
-            auction,
+            auction, bids,
             Clock::get()?.unix_timestamp,
             self.global_info.config.min_total_sol,
         );
@@ -73,7 +81,7 @@ impl<'info> WithdrawSol<'info> {
         //
         require!(auction.liquidity_sol > 0, CustomError::InvalidState);
         let amount_to_transfer = auction.liquidity_sol; // method 2
-        //let amount_to_transfer = get_net_sol_raised(auction, clearing_price, 0, self.auction_sol_account.lamports())?; // method 1
+        //let amount_to_transfer = get_net_sol_raised(auction, bids, clearing_price, 0, self.auction_sol_account.lamports())?; // method 1
 
         // Perform transfer if amount is positive
         if amount_to_transfer > 0 {

@@ -1,7 +1,7 @@
 use crate::{
-    account::Auction, constants::AUCTION_SOL_SEED, errors::CustomError, events::BidCancelled,
-    constants::{GLOBAL_INFO_SEED,},
-    account::{GlobalInfo},
+    account::{ Auction, GlobalInfo, Bids },
+    constants::AUCTION_SOL_SEED, errors::CustomError, events::BidCancelled,
+    constants::{ GLOBAL_INFO_SEED, BIDS_SEED },
     helper::get_status_and_clearing_price,
     processor::sol_transfer_with_signer,
 };
@@ -27,6 +27,14 @@ pub struct CancelBid<'info> {
     #[account(mut)]
     pub auction_data_account: Box<Account<'info, Auction>>,
 
+    // Added Bids account to access bids
+    #[account(
+        mut,
+        seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub bids_account: Account<'info, Bids>,
+
     #[account(address = anchor_lang::system_program::ID)]
     pub system_program: Program<'info, System>,
 }
@@ -34,6 +42,7 @@ pub struct CancelBid<'info> {
 impl<'info> CancelBid<'info> {
     pub fn process(&mut self) -> Result<()> {
         let auction = &mut self.auction_data_account;
+        let bids = &mut self.bids_account.bids; // Updated to use bids_account.bids
         let caller = self.caller.key();
         require!(!auction.is_finalized, CustomError::AuctionAlreadyFinalized);
 
@@ -48,7 +57,7 @@ impl<'info> CancelBid<'info> {
 
         // Abort if liquidity has already been moved
         require!(
-            !(auction.bids.len() > 0 && self.auction_sol_account.lamports() == 0),
+            !(bids.len() > 0 && self.auction_sol_account.lamports() == 0),
             CustomError::AuctionLiquidityMoved
         );
 
@@ -57,9 +66,9 @@ impl<'info> CancelBid<'info> {
         let mut i = 0;
 
         // Iterate through the bids and remove all bids from the caller
-        while i < auction.bids.len() {
-            if auction.bids[i].bidder == caller {
-                let bid = auction.bids.remove(i);
+        while i < bids.len() {
+            if bids[i].bidder == caller {
+                let bid = bids.remove(i);
                 // Calculate refund: (quantity * price) - fee
                 let product = bid.bid_qty
                     .checked_mul(bid.bid_sol)
@@ -103,7 +112,7 @@ impl<'info> CancelBid<'info> {
 
         // Update auction status and clearing price based on remaining bids
         let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(
-            auction,
+            auction, bids,
             Clock::get().unwrap().unix_timestamp,
             self.global_info.config.min_total_sol,
         );

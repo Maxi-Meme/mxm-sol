@@ -1,6 +1,7 @@
 use crate::{
-    account::Auction, constants::AUCTION_SOL_SEED, errors::CustomError,
-    account::GlobalInfo, constants::GLOBAL_INFO_SEED, 
+    account::{ Auction, GlobalInfo, Bids }, 
+    constants::{ GLOBAL_INFO_SEED, AUCTION_SOL_SEED, BIDS_SEED },
+    errors::CustomError,
     //states::Config,
     states::AuctionStatus,
     helper::get_status_and_clearing_price,
@@ -30,23 +31,18 @@ pub struct WithdrawTokens<'info> {
     #[account(mut)]
     pub auction_sol_account: AccountInfo<'info>,
 
-    // #[account(
-    //     mut,
-    //     associated_token::mint = auction_data_account.token_mint,
-    //     associated_token::authority = auction_sol_account
-    // )]
-    //pub auction_token_account: Box<Account<'info, TokenAccount>>,
     #[account(mut)]
     pub auction_token_account: Account<'info, TokenAccount>,
 
-    // #[account(
-    //     mut,
-    //     associated_token::mint = auction_data_account.token_mint,
-    //     associated_token::authority = admin
-    // )]
     #[account(mut)]
     pub admin_token_account: Account<'info, TokenAccount>,
-    //pub admin_token_account: Box<Account<'info, TokenAccount>>,
+
+     #[account(
+        mut,
+        seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub bids_account: Account<'info, Bids>,
 
     #[account(address = token::ID)]
     pub token_program: Program<'info, Token>,
@@ -55,6 +51,7 @@ pub struct WithdrawTokens<'info> {
 impl<'info> WithdrawTokens<'info> {
     pub fn process(&mut self) -> Result<()> {
         let auction = &mut self.auction_data_account;
+        let bids = &mut self.bids_account.bids;
         let auction_id = auction.id;
         let bump = auction.bump;
 
@@ -75,7 +72,7 @@ impl<'info> WithdrawTokens<'info> {
         require!(!auction.is_tokens_withdrawn, CustomError::TokensAlreadyWithdrawn);
 
         // only proceed if auction is successful
-        let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(auction, Clock::get().unwrap().unix_timestamp, self.global_info.config.min_total_sol);
+        let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(auction, bids, Clock::get().unwrap().unix_timestamp, self.global_info.config.min_total_sol);
         require!(auction_status == AuctionStatus::Succeeded, CustomError::InvalidState);
         auction.last_status = auction_status;
         auction.clearing_price = clearing_price_wrapped.unwrap_or(0);

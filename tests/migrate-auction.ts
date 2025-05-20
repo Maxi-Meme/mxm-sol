@@ -48,6 +48,8 @@ const DB_CONFIG: sql.config = {
 // https://github.com/raydium-io/raydium-sdk-V2-demo/tree/master/src/amm
 export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: boolean, auctionId: number, adminKp: Keypair, connection: Connection) => {
 
+  const LIQ_FEE_PERCENT = 69; // 0.69%, 10000 = 100%
+
   try {
     // abort if min sol is not reached - user's will claim back their sol in full
     const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(AUCTION_DATA_SEED), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
@@ -63,7 +65,7 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
 
     // need to make sure config.TEST_MIN_TOTAL_SOL > FIXED_MIN_SOL_LIQ, so that test above will fail and bidders cant then claim back their tokens
     const FIXED_MIN_SOL_LIQ = isMainnet
-      ? new BN(10.00 * LAMPORTS_PER_SOL)  // TODO: test/tune thereshold for prod, e.g. (1b + 6 decimals)
+      ? new BN(10.00 * LAMPORTS_PER_SOL)  // todo: test/tune thereshold for prod, e.g. (1b + 6 decimals)
       : new BN(0.001 * LAMPORTS_PER_SOL); // assumes avg. 50 base tokens supplied with 3 decimals, i.e. test case setup
 
     // and we have a min total sol bid threshold, so we can cover raydium setup costs
@@ -105,7 +107,7 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
     //
     // calc how much sol to wrap - we keep setup costs in sol
     //
-    const liquidityWSol = new BN(solWithdrawn.toString()).sub(FIXED_SOL_RAYDIUM_COSTS);
+    var liquidityWSol = new BN(solWithdrawn.toString()).sub(FIXED_SOL_RAYDIUM_COSTS);
     if (liquidityWSol.lte(new BN(0))) throw new Error('liquidityWSol is too low');
     console.log(`liquidityWSol`, liquidityWSol.toString()); // check: should be exactly == computed s_lamports in place_bid.rs...
 
@@ -127,11 +129,11 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
     //
     // calc how many tokens to deposit into the pool
     //
-    // Option 1 ("underfund") / we use all the locked tokens
-    const liquidityTokens = new BN(tokensWithdrawn.toString());
-    const feeTokens = new BN(0); // TODO: extract same fee % for both tokens & sol (keep ratio unchanged for price)
+    // Option 1 ("underfund") / we use all the locked tokens, and the computed amount of sol to produce the desired price (see place_bid.rs)
+    var liquidityTokens = new BN(tokensWithdrawn.toString());
 
-    // Option 2 ("overmint") / V important! For whatever reason, we can't supply tokens leaving exactly zero in our account - raydium open position fails
+    // Option 2 ("overmint") -- NOT USED
+    // v important! For whatever reason, we can't supply tokens leaving exactly zero in our account - raydium open position fails
     // so, move 99.9% of the ex fee amount
     // const originalTUnits = new BN(tokensWithdrawn.toString()).mul(new BN(1000)).div(new BN(1005)); // extract fee 0.5%: see place_bid.rs
     // console.log(`originalTUnits`, originalTUnits.toString());
@@ -142,48 +144,97 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
     // console.log(`feeTokens`, feeTokens.toString());
     // console.log(`liquidityTokens`, liquidityTokens.toString()); // T == S / P
 
+    //
+    // take a fee, both tokens & sol - send
+    //
+    console.log(`LIQ_FEE_PERCENT = ${LIQ_FEE_PERCENT / 100}%`, LIQ_FEE_PERCENT);
+    const liqFeeTokens = liquidityTokens.mul(new BN(LIQ_FEE_PERCENT)).div(new BN(10000));
+    const liqFeeWSol = liquidityWSol.mul(new BN(LIQ_FEE_PERCENT)).div(new BN(10000));
+    console.log(`liqFeeTokens`, liqFeeTokens.toString());
+    console.log(`liqFeeWSol`, liqFeeWSol.toString());
+    console.log(`liquidityTokens before liq. fees`, liquidityTokens.toString());
+    console.log(`liquidityWSol before liq. fees`, liquidityWSol.toString());
+    liquidityTokens = liquidityTokens.sub(liqFeeTokens);
+    liquidityWSol = liquidityWSol.sub(liqFeeWSol);
+    console.log(`liquidityTokens after liq. fees`, liquidityTokens.toString());
+    console.log(`liquidityWSol after liq. fees`, liquidityWSol.toString());
+
+    //
     // Create & fund a new market/pool
-    // const { marketId, poolId, marketInfo, poolKeys } = await createAndFundPool_v2_AMM(
-    //   program, isMainnet, auctionId, tokenMint,
-    //   BigInt(liquidityTokens.toString()),
-    //   BigInt(liquidityWSol.toString()),
-    //   adminKp, connection);
+    //
     const { poolId, poolKeys } = await createAndFundPool_v3_CLMM(
       program, isMainnet, auctionId, tokenMint,
       BigInt(liquidityTokens.toString()),
       BigInt(liquidityWSol.toString()),
       adminKp, connection, auctionDataFetched.clearingPrice.toNumber());
-
+    // const { marketId, poolId, marketInfo, poolKeys } = await createAndFundPool_v2_AMM( // v2 CPMM pool -- NOT USED
+    //   program, isMainnet, auctionId, tokenMint,
+    //   BigInt(liquidityTokens.toString()),
+    //   BigInt(liquidityWSol.toString()),
+    //   adminKp, connection);
     console.log(`migrateAuction => OK!`);
     console.log(`tokenMint: ${tokenMint.toBase58()}`);
     console.log(`liquidityTokens: ${liquidityTokens.toString()}`);
     console.log(`liquidityWSol: ${liquidityWSol.toString()}`);
     //console.log(`marketInfo:`, marketInfo);
     //console.log(`marketId: ${marketId.toBase58()}`);
+    //console.log(`poolKeys:`, poolKeys);
     console.log(`poolId: ${poolId.toBase58()}`);
-    console.log(`poolKeys:`, poolKeys);
 
-    // update DB
+    //
+    // update DB keypair with market/pool info
+    //
     await updateKeyPairPoolInfo(tokenMint, null /*marketInfo*/, poolKeys, null /*marketId*/, poolId);
 
-    // Send fee tokens to the revenue wallet
-    if (feeTokens.gt(new BN(0))) {
+    //
+    // Send fee tokens & wsol to the revenue wallet
+    //
+    if (liqFeeTokens.gt(new BN(0))) { // send tokens
       const feeAccount = globalInfoAccount.config.feeAccount;
       const feeAccountTokenAccount = getAssociatedTokenAddressSync(tokenMint, feeAccount, true);
       const feeTx = new Transaction().add(
         createAssociatedTokenAccountIdempotentInstruction(adminKp.publicKey, feeAccountTokenAccount, feeAccount, tokenMint, TOKEN_PROGRAM_ID),
         createTransferInstruction(
-          adminTokenAccount,            // Source (admin's token account)
-          feeAccountTokenAccount,       // Destination (feeAccount's ATA)
-          adminKp.publicKey,            // Authority (admin)
-          BigInt(feeTokens.toString()), // Amount (converted from BN to number)
+          adminTokenAccount,
+          feeAccountTokenAccount,
+          adminKp.publicKey,
+          BigInt(liqFeeTokens.toString()),
           [],
           TOKEN_PROGRAM_ID
         ));
       feeTx.feePayer = adminKp.publicKey;
       feeTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
       const feeSig = await sendAndConfirmTransaction(connection, feeTx, [adminKp]);
-      await logSuccessTx(connection, feeSig, `migrateAuction (${auctionId}) => Sent fee tokens to the revenue wallet`);
+      await logSuccessTx(connection, feeSig, `migrateAuction (${auctionId}) => Sent fee ${liqFeeTokens.toNumber() / 10 ** mintAccount.decimals} tokens to the revenue wallet`);
+    } else {
+      console.log(`no token fees to send.`);
+    }
+    if (liqFeeWSol.gt(new BN(0))) { // send wsol 
+      const feeAccount = globalInfoAccount.config.feeAccount;
+      const feeAccountWsolATA = getAssociatedTokenAddressSync(new PublicKey(TOKEN_WSOL.address), feeAccount, true);
+      const wsolFeeTx = new Transaction().add(
+        createAssociatedTokenAccountIdempotentInstruction(
+          adminKp.publicKey,
+          feeAccountWsolATA,
+          feeAccount,
+          new PublicKey(TOKEN_WSOL.address),
+          TOKEN_PROGRAM_ID
+        ),
+        createTransferInstruction(
+          adminWsolAccount.address,
+          feeAccountWsolATA,
+          adminKp.publicKey,
+          BigInt(liqFeeWSol.toString()),
+          [],
+          TOKEN_PROGRAM_ID
+        )
+      );
+      wsolFeeTx.feePayer = adminKp.publicKey;
+      wsolFeeTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      const wsolFeeSig = await sendAndConfirmTransaction(connection, wsolFeeTx, [adminKp]);
+      await logSuccessTx(connection, wsolFeeSig, `migrateAuction (${auctionId}) => Sent fee ${liqFeeWSol.toNumber() / LAMPORTS_PER_SOL} WSOL to the revenue wallet`);
+    } else {
+      console.log(`no wsol fees to send.`);
     }
   }
   catch (error) {
@@ -541,9 +592,9 @@ export const updateKeyPairPoolInfo = async (tokenMint, marketInfo, poolKeys, mar
 
 async function logSuccessTx(connection, sig, label) {
   const txDetails = await getTransactionDetailsWithRetry(connection, sig);
-  //logObject("txDetails", txDetails);
   if (txDetails && txDetails.meta && txDetails.meta.logMessages) {
-    console.log("Transaction logs:", txDetails.meta.logMessages);
+    console.log(`logSuccessTx -> ${sig} ${label}`);
+    console.log("logSuccessTx -> logs:", txDetails.meta.logMessages);
   } else {
     console.log("No logs available for this transaction.");
   }

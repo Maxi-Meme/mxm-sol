@@ -1,8 +1,7 @@
 use crate::{
-    account::{Auction, GlobalInfo},
-    constants::{AUCTION_DATA_SEED, AUCTION_SOL_SEED, GLOBAL_INFO_SEED, MAX_BIDS, METADATA_SEED},
+    account::{Auction, GlobalInfo, Bids},
+    constants::{AUCTION_DATA_SEED, AUCTION_SOL_SEED, GLOBAL_INFO_SEED, METADATA_SEED, BIDS_SEED},
     events::AuctionCreated,
-    states::Bid,
     states::AuctionStatus,
 };
 use anchor_lang::{prelude::*, system_program};
@@ -12,7 +11,7 @@ use anchor_spl::{
     token::{self, spl_token::instruction::AuthorityType, Mint, Token, TokenAccount},
 };
 use core::mem::size_of;
-use crate::{ errors::CustomError,  };
+use crate::errors::CustomError;
 
 #[derive(Accounts)]
 pub struct CreateAuction<'info> {
@@ -23,7 +22,6 @@ pub struct CreateAuction<'info> {
     )]
     pub global_info: Box<Account<'info, GlobalInfo>>,
 
-    // The auction creator
     #[account(mut)]
     pub creator: Signer<'info>,
 
@@ -53,28 +51,25 @@ pub struct CreateAuction<'info> {
     )]
     token_metadata_account: UncheckedAccount<'info>,
 
-    /// CHECK: Signer for PDA - used as authority for the auction token account
+    /// CHECK: Signer for PDA
     #[account(
-        mut, // account must already exist
-        //init,
-        //payer = creator,
-        //space = 8,
+        mut,
         seeds = [AUCTION_SOL_SEED.as_ref(), global_info.auctions_num.to_le_bytes().as_ref()],
         bump
     )]
     pub auction_sol_account: AccountInfo<'info>,
 
-    /// CHECK: Storage - used as storage for the auction data
+    /// CHECK: Storage for auction data
     #[account(
         init,
         payer = creator,
-        space = 8 + size_of::<Auction>() + (MAX_BIDS * size_of::<Bid>()),
+        space = 8 + size_of::<Auction>(),
         seeds = [AUCTION_DATA_SEED.as_ref(), global_info.auctions_num.to_le_bytes().as_ref()],
         bump
     )]
     pub auction_data_account: Box<Account<'info, Auction>>,
 
-    /// CHECK: The auction's token account (PDA) that will hold the auctioned tokens
+    /// CHECK: Auction's token account
     #[account(
         init,
         payer = creator,
@@ -83,10 +78,10 @@ pub struct CreateAuction<'info> {
     )]
     pub auction_token_account: Box<Account<'info, TokenAccount>>,
 
+    sysvar_rent: Sysvar<'info, Rent>,
+
     #[account(address = system_program::ID)]
     system_program: Program<'info, System>,
-
-    sysvar_rent: Sysvar<'info, Rent>,
 
     #[account(address = token::ID)]
     token_program: Program<'info, Token>,
@@ -102,21 +97,17 @@ impl<'info> CreateAuction<'info> {
     pub fn process(
         &mut self,
         auction_bump: u8,
-        // --------------- X id ------------------- //
         x_id: u64,
-        // --------------- metadata --------------- //
         name: String,
         symbol: String,
         uri: String,
-        // --------------- auction config --------------- //
         duration_hours: u64,
         dist_percent: u64,
         delay_in_seconds: u64,
-        //start_price: u64,
+        buyback_period_days: u16,
     ) -> Result<()> {
         msg!("Calling create_auction...");
 
-        // 1-100% tokens must be distributed to bidders
         require!(dist_percent >= 100 && dist_percent <= 10000, CustomError::InvalidDistPercent); 
 
         let global_info = &mut self.global_info;
@@ -125,9 +116,9 @@ impl<'info> CreateAuction<'info> {
         let auction_sol_account = &mut self.auction_sol_account;
         let auction_data_account = &mut self.auction_data_account;
         let auction_token_account = &mut self.auction_token_account;
+        //let bids_account = &mut self.bids_account;
         let auction_id = global_info.auctions_num;
 
-        // mint tokens
         token::mint_to(
             CpiContext::new_with_signer(
                 self.token_program.to_account_info(),
@@ -145,7 +136,6 @@ impl<'info> CreateAuction<'info> {
             global_info.config.default_token_supply,
         )?;
 
-        // create metadata
         metadata::create_metadata_accounts_v3(
             CpiContext::new_with_signer(
                 self.mpl_token_metadata_program.to_account_info(),
@@ -178,7 +168,6 @@ impl<'info> CreateAuction<'info> {
             None,
         )?;
 
-        // revoke mint authority
         token::set_authority(
             CpiContext::new_with_signer(
                 self.token_program.to_account_info(),
@@ -196,11 +185,10 @@ impl<'info> CreateAuction<'info> {
             None,
         )?;
 
-        // Current time
         let clock: Clock = Clock::get()?;
         let current_timestamp = clock.unix_timestamp;
         let start_timestamp = current_timestamp + (delay_in_seconds as i64);
-        let end_timestamp = start_timestamp + (duration_hours as i64 * 36); // unit is actually hours_div_100
+        let end_timestamp = start_timestamp + (duration_hours as i64 * 36);
 
         auction_data_account.id = auction_id;
         auction_data_account.is_finished = false;
@@ -212,21 +200,21 @@ impl<'info> CreateAuction<'info> {
         auction_data_account.token_mint = token_mint.key();
         auction_data_account.token_supply = global_info.config.default_token_supply;
         auction_data_account.token_decimals = global_info.config.default_token_decimals;
-        
-        //auction_data_account.dist_percent = 10000; //dist_percent;  // overmint - old, method 1
+        auction_data_account.buyback_period_days = buyback_period_days;
         auction_data_account.dist_percent = dist_percent;
-        
-        auction_data_account.bids = vec![];
         auction_data_account.bump = auction_bump;
         auction_data_account.delay_in_seconds = delay_in_seconds;
         auction_data_account.start_price = global_info.config.default_start_price_lamports;
-        if delay_in_seconds > 0 {
-            auction_data_account.last_status = AuctionStatus::Pending;
+        auction_data_account.last_status = if delay_in_seconds > 0 {
+            AuctionStatus::Pending
         } else {
-            auction_data_account.last_status = AuctionStatus::Live;
-        }
+            AuctionStatus::Live
+        };
         auction_data_account.is_sol_withdrawn = false;
         auction_data_account.is_tokens_withdrawn = false;
+        
+        auction_data_account.is_dao_claimed = false;
+        auction_data_account.buyback_price = 0;
 
         global_info.auctions_num = auction_id + 1;
 

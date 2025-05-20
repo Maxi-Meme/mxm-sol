@@ -12,7 +12,7 @@ pub mod states;
 use instructions::*;
 use states::Config;
 
-declare_id!("C6XgmmirRAmFkWazyGoaZLpFoKtjARLzdiZmgr2j9AnU");
+declare_id!("CrjEgbBuLB9HssfnErcGHXKPsfaBHi4dLLdqyMwzkX4k");
 
 #[program]
 pub mod maxi_auction {
@@ -39,6 +39,7 @@ pub mod maxi_auction {
         duration_hours: u64,
         dist_percent: u64,
         delay_in_seconds: u64,
+        buyback_period_days: u16,
     ) -> Result<()> {
         ctx.accounts.process(
             ctx.bumps.auction_sol_account,
@@ -48,7 +49,8 @@ pub mod maxi_auction {
             uri,
             duration_hours,
             dist_percent,
-            delay_in_seconds,
+            delay_in_seconds,   
+            buyback_period_days,
         )
     }
 
@@ -73,6 +75,10 @@ pub mod maxi_auction {
     }
 
     pub fn finalize(ctx: Context<Finalize>) -> Result<()> {
+        ctx.accounts.process()
+    }
+
+    pub fn init_auction_bids(ctx: Context<InitAuctionBids>) -> Result<()> {
         ctx.accounts.process()
     }
 }

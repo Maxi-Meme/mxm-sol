@@ -1,21 +1,20 @@
 use crate::{
-    account::{Auction, GlobalInfo},
-    constants::{GLOBAL_INFO_SEED, MAX_BIDS, AUCTION_DATA_SEED, AUCTION_SOL_SEED},
+    account::{Auction, GlobalInfo, Bids},
+    constants::{GLOBAL_INFO_SEED, AUCTION_DATA_SEED, AUCTION_SOL_SEED, BIDS_SEED},
     errors::CustomError,
     states::AuctionStatus,
     events::{AuctionFilled, NewBid},
     helper::{get_current_price, get_remaining_tokens, get_net_sol_raised},
-    helper::{get_status_and_clearing_price},
+    helper::get_status_and_clearing_price,
     processor::sol_transfer_user,
     states::Bid,
 };
 use anchor_spl::{
-    associated_token::{self, AssociatedToken},
-    metadata::{self, mpl_token_metadata::types::DataV2, Metadata},
-    token::{self, spl_token::instruction::AuthorityType, Mint, Token, TokenAccount},
+    associated_token::AssociatedToken,
+    token::{Mint, Token, TokenAccount},
 };
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::sysvar::rent::Rent;
+use std::mem::size_of;
 
 #[derive(Accounts)]
 pub struct PlaceBid<'info> {
@@ -34,15 +33,14 @@ pub struct PlaceBid<'info> {
     )]
     pub admin: Signer<'info>,
 
-    /// CHECK: no checks needed, just program's account
+    /// CHECK: admin knows what he's passing in
     #[account(mut)]
     pub auction_sol_account: AccountInfo<'info>,
 
-    /// CHECK: Storage - used as storage for the auction data
     #[account(mut)]
     pub auction_data_account: Box<Account<'info, Auction>>,
 
-    /// CHECK: Revenue account to receive the 1% fee
+    /// CHECK: admin knows what he's passing in
     #[account(
         mut,
         address = global_info.config.fee_account
@@ -52,78 +50,126 @@ pub struct PlaceBid<'info> {
     #[account(mut)] 
     pub token_mint: Account<'info, Mint>,
 
-    /// CHECK: The auction's token account (PDA) that holds the auctioned tokens
     #[account(mut)] 
     pub auction_token_account: Account<'info, TokenAccount>,
+
+    // Bids account for dynamic bid storage
+    #[account(
+        mut,
+        seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub bids_account: Account<'info, Bids>,
 
     #[account(address = anchor_lang::system_program::ID)]
     system_program: Program<'info, System>,
 
-    #[account(address = token::ID)]
-    token_program: Program<'info, Token>,
+    // Added to calculate rent costs for resizing
+    pub rent: Sysvar<'info, Rent>,
 }
 
 impl<'info> PlaceBid<'info> {
     pub fn process(&mut self, bid_quantity: u64, x_id: u64, fee_perc: u64) -> Result<()> {
         let rent = Rent::get()?;
-        let min_rent = rent.minimum_balance(0);
 
         let auction = &mut self.auction_data_account;
         let default_start_price = self.global_info.config.default_start_price_lamports;
         require!(!auction.is_finalized, CustomError::AuctionAlreadyFinalized);
 
-        
-        
-        // Validate bid and auction state
-        require!(auction.bids.len() < MAX_BIDS, CustomError::MaxBidsReached);
+        // Validate bid and auction state 
+        //require!(auction.bids.len() < MAX_BIDS, CustomError::MaxBidsReached); // NEW
         require!(bid_quantity > 0, CustomError::InvalidBidQuantity);
 
         let clock = Clock::get()?;
         require!(clock.unix_timestamp >= auction.start_timestamp, CustomError::AuctionNotStarted);
         require!(!auction.is_finished, CustomError::AuctionEnded);
+
+        // init bid account, if not yet initialized
+        if self.bids_account.bids.is_empty() {
+            self.bids_account.auction_id = auction.id;  
+            self.bids_account.bids = vec![];
+        }
+
+       // Perform immutable borrows to gather necessary data
+        let current_bids_len = self.bids_account.bids.len(); // Immutable borrow to get length
+        let current_space = self.bids_account.to_account_info().data.borrow().len(); // Immutable borrow for space
         require!(
-            !(auction.bids.len() > 0 && self.auction_sol_account.lamports() == 0),
+            !(current_bids_len > 0 && self.auction_sol_account.lamports() == 0),
             CustomError::AuctionLiquidityMoved
         );
 
         // Calculate current price and remaining tokens
-        let mut current_price = get_current_price(auction, clock.unix_timestamp, default_start_price)
+        let mut current_price = 
+            get_current_price(auction, clock.unix_timestamp, default_start_price)
             .unwrap_or(default_start_price);
-        let remaining_tokens = get_remaining_tokens(auction);
+        let remaining_tokens = get_remaining_tokens(auction, &self.bids_account.bids);
         require!(bid_quantity <= remaining_tokens, CustomError::NotEnoughTokensLeft);
 
-        // Calculate initial total cost
+        // Calculate total cost, and auction amount (ex. fee)
         let mut total_cost = bid_quantity.checked_mul(current_price).ok_or(CustomError::Overflow)?;
         require!(fee_perc < 10000, CustomError::InvalidFeePercentage);
-        let mut fee = ((total_cost as u128 * fee_perc as u128) / 10000) as u64;
-        // let mut fee = 0; // testing zero fees
+        let mut fee = ((total_cost as u128 * fee_perc as u128) / 10000) as u64; // let mut fee = 0; // testing zero fees
         let mut auction_amount = total_cost - fee;
 
         // Adjust total_cost if auction_amount is below min_rent
-        if auction_amount < min_rent {
-            let mut low = total_cost; 
-            let mut high = u64::MAX;
-            while low < high { // All hail Grok
-                let mid = low + (high - low) / 2;
-                let f = ((mid as u128 * fee_perc as u128) / 10000) as u64;
-                let a = mid - f;
-                if a >= min_rent {
-                    high = mid;
-                } else {
-                    low = mid + 1;
-                }
-            }
-            total_cost = low;
-            msg!("place_bid - bumping total_cost to {} to cover min rent", total_cost);
+        // let min_rent = rent.minimum_balance(0);
+        // if auction_amount < min_rent {
+        //     let mut low = total_cost; 
+        //     let mut high = u64::MAX;
+        //     while low < high { // All hail Grok
+        //         let mid = low + (high - low) / 2;
+        //         let f = ((mid as u128 * fee_perc as u128) / 10000) as u64;
+        //         let a = mid - f;
+        //         if a >= min_rent {
+        //             high = mid;
+        //         } else {
+        //             low = mid + 1;
+        //         }
+        //     }
+        //     total_cost = low;
+        //     msg!("place_bid - bumping total_cost to {} to cover min rent", total_cost);
+        //     current_price = (total_cost + bid_quantity - 1) / bid_quantity; // Calculate adjusted current_price (ceiling division)
+        //     total_cost = bid_quantity.checked_mul(current_price).ok_or(CustomError::Overflow)?; // Recalculate total_cost, fee, and auction_amount with adjusted current_price
+        //     fee = ((total_cost as u128 * fee_perc as u128) / 10000) as u64;
+        //     auction_amount = total_cost - fee;
+        // }
 
-            // Calculate adjusted current_price (ceiling division)
-            current_price = (total_cost + bid_quantity - 1) / bid_quantity;
+        // NEW vv
+        // Added logic to dynamically resize bids_account
+        let bid_size = size_of::<Bid>();
+        let header_space = 8 + 8 + 4; // Discriminator (8) + auction_id (8) + Vec length (4)
+        let current_capacity = (current_space - header_space) / bid_size;
+        let required_space = header_space + (current_bids_len + 1) * bid_size;
+        let mut additional_rent = 0;
+        msg!("place_bid - current_capacity: {}", current_capacity);
+        msg!("place_bid - required_space: {}", required_space); 
+        msg!("place_bid - current_bids_len: {}", current_bids_len);
+        msg!("place_bid - bid_size: {}", bid_size);
+        msg!("place_bid - header_space: {}", header_space);
+        msg!("place_bid - current_space: {}", current_space);
+        if current_bids_len >= current_capacity {
+            let new_space = required_space;
+            let rent_for_new_space = rent.minimum_balance(new_space);
+            let current_rent = rent.minimum_balance(current_space);
+            additional_rent = rent_for_new_space - current_rent;
+            msg!("place_bid - additional_rent: {}", additional_rent);
 
-            // Recalculate total_cost, fee, and auction_amount with adjusted current_price
-            total_cost = bid_quantity.checked_mul(current_price).ok_or(CustomError::Overflow)?;
-            fee = ((total_cost as u128 * fee_perc as u128) / 10000) as u64;
-            auction_amount = total_cost - fee;
+            // Transfer additional rent from bidder to bids_account before resizing
+            sol_transfer_user(
+                self.bidder.to_account_info(),
+                self.bids_account.to_account_info(),
+                self.system_program.to_account_info(),
+                additional_rent,
+            )?;
+            msg!("place_bid - transferred additional rent from bidder to bids_account");
+
+            // Now resize the account
+            AccountInfo::realloc(&self.bids_account.to_account_info(), new_space, false)?;
+            msg!("place_bid - resized bids_account to {} bytes", new_space);
         }
+        let total_payment = total_cost.checked_add(additional_rent).ok_or(CustomError::Overflow)?;
+        require!(self.bidder.lamports() >= total_payment, CustomError::InsufficientFunds);
+        // NEW ^^
 
         // Log the values for debugging
         msg!("place_bid - bid_quantity: {}", bid_quantity);
@@ -133,7 +179,7 @@ impl<'info> PlaceBid<'info> {
         msg!("place_bid - auction_amount: {}", auction_amount);
         msg!("place_bid - fee_perc: {}", fee_perc);
         msg!("place_bid - fee: {}", fee);
-        msg!("place_bid - min_rent: {}", min_rent);
+        //msg!("place_bid - min_rent: {}", min_rent);
 
         // Transfer auction amount to auction_sol_account
         sol_transfer_user(
@@ -152,7 +198,8 @@ impl<'info> PlaceBid<'info> {
         )?;
 
         // Record the bid with adjusted current_price and fee
-        auction.bids.push(Bid {
+        let bids = &mut self.bids_account.bids; // mutuable borrow
+        bids.push(Bid {
             bidder: self.bidder.key(),
             x_id,
             bid_timestamp: clock.unix_timestamp,
@@ -185,7 +232,7 @@ impl<'info> PlaceBid<'info> {
             //   2. and by implication, clearing price > 0
             //
             let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(
-                auction,
+                auction, bids,
                 clock.unix_timestamp,
                 self.global_info.config.min_total_sol,
             );
@@ -195,7 +242,7 @@ impl<'info> PlaceBid<'info> {
                     return err!(CustomError::InvalidClearingPrice);
                 }
 
-                auction.net_sol_raised = get_net_sol_raised(auction, clearing_price, 0, self.auction_sol_account.lamports())?;
+                auction.net_sol_raised = get_net_sol_raised(auction, bids, clearing_price, 0, self.auction_sol_account.lamports())?;
 
                 //
                 // Method (3) -- todo??
@@ -272,8 +319,24 @@ impl<'info> PlaceBid<'info> {
                     msg!("place_bid final - no unlocked tokens, buyback_price set to 0");
                 }
                 //
-                // TODO: buyback() method - only for bidders... send tokens rec'd to DAO wallet... 
-                // TODO: DAO access method - admin method to access unused sol after n days... time limit on buyback... auction param.
+                // TODO: buyback() instruction - take in auctionId; only for bidders in that auction; 
+                //       they can only buyback after the auction is finsihed in sucess state, and after is_sol_withdrawn && is_tokens_withdrawn
+                //       they can't buyback if more than auction.buyback_period_days has elapsed since the auction ended
+                //       they can only buyback at the buyback_price
+                //
+                //       to buyback they must send tokens to us; tokens must be from the auctionId they are specifying in the params
+                //       we will send them in return sol at auction.buyback_price lamports per whole token 
+                //       they can buyback up to the amount of tokens they bid
+                //
+                //       we then send the tokens received to the DAO wallet
+                //
+
+                //
+                // TODO: daoClaim() instruction; should be signed by the daoWallet (see global config)
+                //       it should take in an auctionId;
+                //       it should fail if is NOT: (finsihed in sucess state && is_sol_withdrawn && is_tokens_withdrawn && buyback period has elapsed)
+                //
+                //       instruction should withdraw all sol and tokens from the auction and send to the DaoWallet, and set a new is_dao_claimed flag on the auction.
                 //
 
                 //
@@ -351,7 +414,7 @@ impl<'info> PlaceBid<'info> {
 
         // Update status & clearing price
         let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(
-            auction,
+            auction, bids,
             clock.unix_timestamp,
             self.global_info.config.min_total_sol
         );

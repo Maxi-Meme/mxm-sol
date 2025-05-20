@@ -25,5 +25,8 @@ pub use withdraw_tokens::*;
 pub mod finalize;
 pub use finalize::*;
 
+pub mod init_auction_bids;
+pub use init_auction_bids::*;
+
 //pub mod raydium_migrate;
 //pub use raydium_migrate::*;
