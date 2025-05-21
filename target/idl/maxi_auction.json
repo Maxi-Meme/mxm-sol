@@ -656,7 +656,7 @@
         },
         {
           "name": "buyback_period_days",
-          "type": "u16"
+          "type": "u64"
         }
       ]
     },
@@ -1675,7 +1675,7 @@
           },
           {
             "name": "buyback_period_days",
-            "type": "u16"
+            "type": "u64"
           },
           {
             "name": "is_dao_claimed",

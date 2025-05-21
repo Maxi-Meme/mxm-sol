@@ -42,6 +42,6 @@ pub struct Auction {
     pub net_sol_raised: u64,  // 8
     pub liquidity_sol: u64,   // 8
     pub buyback_price: u64,   // 8
-    pub buyback_period_days: u16, // 2
+    pub buyback_period_days: u64, // 2
     pub is_dao_claimed: bool, // 1
 }

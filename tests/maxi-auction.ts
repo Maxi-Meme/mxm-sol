@@ -348,9 +348,9 @@ describe("maxi-auction", () => {
     await test_bid_auction({ fill_percent: 1.0, bidderKp: adminKp });
   });
 
-  it("base - creates a one hour auction and bids until the end", async () => {
+  it("base - bids continuously", async () => {
     const durationSecs = 60 * 5;
-    const everySecs = 10;
+    const everySecs = 5;
     const nBids = Number(durationSecs / everySecs);
     const bidPerc = (1 / (nBids - 1)); // we'll fill at the last minute
     console.log(`nBids: ${nBids}, bidPerc: ${bidPerc}`);
@@ -1431,22 +1431,13 @@ describe("maxi-auction", () => {
     const durationHours = new BN(duration_hours_div100 || 10);
     const distPercent = new BN(auction_distribution_percent !== undefined ? (auction_distribution_percent * 10000) : TEST_DISTRIBTION_PERCENT);
     const delaySeconds = new BN(0);
-    const buybackPeriodDays = 30;
+    const buybackPeriodDays = new BN(30);
 
     // Derive PDAs using nextAuctionId
     const nextAuctionId = globalInfoFetched.auctionsNum;
-    const [auctionDataAccount] = PublicKey.findProgramAddressSync(
-      [Buffer.from(auctionDataSeed), new BN(nextAuctionId).toArrayLike(Buffer, "le", 8)],
-      program.programId
-    );
-    const [bidsAccount] = PublicKey.findProgramAddressSync(
-      [Buffer.from(auctionBidsSeed), new BN(nextAuctionId).toArrayLike(Buffer, "le", 8)],
-      program.programId
-    );
-    const [auctionSolAccount] = PublicKey.findProgramAddressSync(
-      [Buffer.from(auctionSolSeed), new BN(nextAuctionId).toArrayLike(Buffer, "le", 8)],
-      program.programId
-    );
+    const [auctionDataAccount] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new BN(nextAuctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const [bidsAccount] = PublicKey.findProgramAddressSync([Buffer.from(auctionBidsSeed), new BN(nextAuctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const [auctionSolAccount] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new BN(nextAuctionId).toArrayLike(Buffer, "le", 8)], program.programId);
     const auctionTokenAccount = await getAssociatedTokenAddress(token.publicKey, auctionSolAccount, true);
 
     // Log balances before transaction
@@ -1466,7 +1457,7 @@ describe("maxi-auction", () => {
     const createAuctionIx = await program.methods
       .createAuction(xId, name, symbol, uri, durationHours, distPercent, delaySeconds, buybackPeriodDays) // TODO: change in web
       .accounts({
-        globalInfo: globalInfo,
+        //globalInfo: globalInfo,
         creator: signer.publicKey,
         admin: adminKp.publicKey,
         tokenMint: token.publicKey,
@@ -1491,7 +1482,7 @@ describe("maxi-auction", () => {
         bidsAccount: bidsAccount,
     //systemProgram: anchor.web3.SystemProgram.programId,
     //rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
+      } as any)
       .instruction();
 
     // Build and send transaction

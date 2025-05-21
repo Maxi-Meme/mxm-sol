@@ -39,7 +39,7 @@ pub mod maxi_auction {
         duration_hours: u64,
         dist_percent: u64,
         delay_in_seconds: u64,
-        buyback_period_days: u16,
+        buyback_period_days: u64,
     ) -> Result<()> {
         ctx.accounts.process(
             ctx.bumps.auction_sol_account,

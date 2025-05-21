@@ -101,10 +101,10 @@ impl<'info> CreateAuction<'info> {
         name: String,
         symbol: String,
         uri: String,
-        duration_hours: u64,
+        duration_hours: u64, // actually 1/100 of an hour ~= 36s
         dist_percent: u64,
         delay_in_seconds: u64,
-        buyback_period_days: u16,
+        buyback_period_days: u64,
     ) -> Result<()> {
         msg!("Calling create_auction...");
 
