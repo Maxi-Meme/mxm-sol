@@ -12,7 +12,7 @@ pub mod states;
 use instructions::*;
 use states::Config;
 
-declare_id!("CrjEgbBuLB9HssfnErcGHXKPsfaBHi4dLLdqyMwzkX4k");
+declare_id!("DCHSWSbuASPf8zquQ25t24xe6cSMxCWaGtSxKLRHAT2t");
 
 #[program]
 pub mod maxi_auction {
