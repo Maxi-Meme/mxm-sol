@@ -406,9 +406,6 @@ impl<'info> PlaceBid<'info> {
                     AuthorityType::MintTokens,
                     None,
                 )?;*/
-
-                // todo: nicer than offchain flow -  interact directly with raydium from here...
-                //...
             }
         }
 

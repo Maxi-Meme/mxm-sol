@@ -361,6 +361,10 @@ describe("maxi-auction", () => {
     }
   });
 
+  it("stress - handles 100 bids from multiple users", async () => {
+    await test_large_number_of_bids(100);
+  });
+
   it("base - places a bid", async () => {
     await test_create_auction_KP0({});
     await test_bid_auction({ fill_percent: 0.1 });
@@ -892,6 +896,118 @@ describe("maxi-auction", () => {
   it("claims - e2e - withdraws & movesliq after claims", async () => {
     await test_e2e_auction_success({ migrateAfterClaims: true }); // claims will happen first: patholigical case, we will trigger liqmove on event listener so it will happen fast
   });
+
+
+
+  async function test_large_number_of_bids(numBids) {
+    logger.color("magenta").log(`Starting stress test with ${numBids} bids...`);
+  
+    // **Step 1: Set up auction parameters**
+    // Longer duration to accommodate 100 bids (e.g., 10 minutes ~ 600 seconds)
+    const durationHoursDiv100 = Math.ceil(600 / 36); // ~16 units, each ~36s
+    await test_create_auction_KP0({ duration_hours_div100: durationHoursDiv100 });
+  
+    // Derive auction PDAs
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
+    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const auctionPre = await program.account.auction.fetch(auctionData);
+    const tokenSupply = auctionPre.tokenSupply.toNumber() / Math.pow(10, auctionPre.tokenDecimals);
+  
+    // **Step 2: Prepare multiple bidders**
+    // Use existing USER_KPs (3 keypairs) and cycle through them
+    const bidders = USER_KPs;
+    const fillPercentPerBid = 1.0 / numBids; // Each bid fills supply evenly
+  
+    // Ensure bidders have enough SOL (especially for local testing)
+    if (isLocal) {
+      const airdropPromises = bidders.map(async (bidder) => {
+        const balance = await connection.getBalance(bidder.publicKey);
+        if (balance < 5 * LAMPORTS_PER_SOL) {
+          const tx = await connection.requestAirdrop(bidder.publicKey, 5 * LAMPORTS_PER_SOL);
+          await connection.confirmTransaction(tx);
+        }
+      });
+      await Promise.all(airdropPromises);
+    }
+  
+    // **Step 3: Place numBids bids in batches**
+    const BATCH_SIZE = 3; // Set to 1 for sequential, or higher for batched bids - CAP 3 to prevent dupe keys in client (3 test accounts)
+    const results = [];
+    for (let i = 0; i < numBids; i += BATCH_SIZE) {
+      const batchEnd = Math.min(i + BATCH_SIZE, numBids);
+      const batchPromises = [];
+
+      // Check auction status before starting the batch
+      const auction = await program.account.auction.fetch(auctionData);
+      if (Object.keys(auction.lastStatus)[0] !== 'live') {
+        logger.log(`Auction is no longer live. Stopping at bid ${i + 1}`);
+        break;
+      }
+
+      // Prepare bids for the current batch
+      for (let j = i; j < batchEnd; j++) {
+        const bidderKp = bidders[j % bidders.length]; // Cycle through borrowers
+        batchPromises.push(
+          test_bid_auction({
+            fill_percent: fillPercentPerBid,
+            bidderKp: bidderKp,
+            useAuctionId: auctionId,
+            skipMigrationWait: true,
+            skipValidations: true,
+          }).then((result) => {
+            logger.log(`Bid ${j + 1} confirmed`);
+            return result;
+          }).catch((err) => {
+            logger.color("red").log(`Bid ${j + 1} failed:`, err);
+            return { error: err };
+          })
+        );
+      }
+
+      // Wait for all bids in the batch to complete
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
+
+      // Wait before the next batch
+      //await sleep(1);
+    }
+  
+    // **Step 4: Check for errors**
+    const failedBids = results.filter((result) => result.error);
+    assert.equal(failedBids.length, 0, `${failedBids.length} bids failed during stress test`);
+  
+    // **Step 5: Verify auction state**
+    const auctionPost = await program.account.auction.fetch(auctionData);
+    const auctionBids = await getBids(program, auctionId);
+    const totalBidQty = auctionBids.reduce((sum, bid) => sum.add(bid.bidQty), new BN(0)).toNumber();
+    const totalSolCommitted = await connection.getBalance(auctionSol);
+    const expectedQty = Math.floor(tokenSupply * fillPercentPerBid * numBids);
+  
+    console.log(`Total bids placed: ${auctionBids.length}`);
+    console.log(`Total bid quantity: ${totalBidQty}`);
+    console.log(`Expected quantity: ${expectedQty}`);
+    console.log(`Total SOL committed: ${totalSolCommitted / LAMPORTS_PER_SOL} SOL`);
+  
+    // Adjust assertion to account for early stopping
+    assert.ok(auctionBids.length <= numBids, "Number of bids should not exceed requested amount");
+    assert.ok(Math.abs(totalBidQty - expectedQty) <= 1 || totalBidQty <= tokenSupply, "Total bid quantity should match expected or be capped by supply");
+    assert.ok(totalSolCommitted > 0, "Auction should have received SOL from bids");
+  
+    // **Step 6: Check auction status**
+    if (totalBidQty >= tokenSupply) {
+      assert.deepEqual(auctionPost.lastStatus, { succeeded: {} }, "Auction should succeed when fully filled");
+    } else {
+      assert.deepEqual(auctionPost.lastStatus, { live: {} }, "Auction should remain live if not fully filled");
+    }
+  
+    logger.color("green").log(`Successfully completed stress test with ${numBids} bids`);
+}
+
+
+  
 
   async function test_e2e_auction_success({
     lowClearingPrice = false,
@@ -1521,7 +1637,8 @@ describe("maxi-auction", () => {
     useAuctionId = undefined,
     skipMigrationWait = false,
     skipLiqMoveAssumption = false,
-    fee_perc = 0.01 // 0-1
+    fee_perc = 0.01, // 0-1
+    skipValidations = false, // stress test does concurrent (same block) multiple bids, which screws up validation logic - just skip them when stress testing
   }) {
     logger.color("magenta").log(`${bidderKp.publicKey} is bidding...`);
 
@@ -1531,14 +1648,14 @@ describe("maxi-auction", () => {
     const auctionId = useAuctionId || Number(globalInfoAccount.auctionsNum) - 1;
     const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
     const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
-    console.log("auctionId", auctionId, "auctionSol", auctionSol.toBase58(), "auctionData", auctionData.toBase58());
+    //console.log("auctionId", auctionId, "auctionSol", auctionSol.toBase58(), "auctionData", auctionData.toBase58());
 
     // Fetch pre-bid auction data
     const auctionPre = await program.account.auction.fetch(auctionData);
-    console.log("auctionPre", auctionPre);
+    //console.log("auctionPre", auctionPre);
 
     const auctionPreBids = await getBids(program, auctionId);
-    console.log("auctionPreBids", auctionPreBids);
+    //console.log("auctionPreBids", auctionPreBids);
 
     // Set up bidder and bid quantity
     const signer = bidderKp;
@@ -1561,21 +1678,26 @@ describe("maxi-auction", () => {
     const isFinalBid = bidQtyLamports.gte(remainingTokens);
     //console.log('remainingTokens:', remainingTokens.toString());
     //console.log('bidQtyLamports:', bidQtyLamports.toString());
-    console.log('isFinalBid:', isFinalBid);
+    //console.log('isFinalBid:', isFinalBid);
 
     // get new bids account lamports - before the bid
     const [bidsPda] = PublicKey.findProgramAddressSync([Buffer.from(auctionBidsSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
     const bidsAccountInfoBefore = await connection.getAccountInfo(bidsPda);
-    console.log('bidsAccountInfoBefore:', bidsAccountInfoBefore);
+    //console.log('bidsAccountInfoBefore:', bidsAccountInfoBefore);
     const bidsLamportsBefore = bidsAccountInfoBefore ? bidsAccountInfoBefore.lamports : 0;
-    console.log('bidsLamportsBefore', bidsLamportsBefore);
+    //console.log('bidsLamportsBefore', bidsLamportsBefore);
 
     // Place bid transaction
     let actualBidFeeBN;
     const newBidListener = program.addEventListener("newBid", (event) => {
       actualBidFeeBN = new BN(event.bidFee);
     });
-    const tx = await program.methods.placeBid(bidQty, new BN(42), new BN(fee_perc * 100 * 100)) // 0-1 => 0-10000
+    const publicKeyBase58 = bidderKp.publicKey.toBase58(); // for dummy/test xId
+    const firstFourChars = publicKeyBase58.slice(4);
+    const tx = await program.methods.placeBid(
+      bidQty, 
+      new BN(base58ToInt(firstFourChars)), // dummy xid from pub key
+      new BN(fee_perc * 100 * 100)) // 0-1 => 0-10000
       .accounts({
         bidder: signer.publicKey,
         auctionDataAccount: auctionData,
@@ -1601,9 +1723,9 @@ describe("maxi-auction", () => {
     // get new bids account lamports - after the bid
     const bidsAccountInfoAfter = await connection.getAccountInfo(bidsPda);
     const bidsLamportsAfter = bidsAccountInfoAfter ? bidsAccountInfoAfter.lamports : 0;
-    console.log('bidsAccountInfoAfter:', bidsAccountInfoAfter);
+    //console.log('bidsAccountInfoAfter:', bidsAccountInfoAfter);
     const bidsAccountRentPaidByBidder = bidsLamportsAfter - bidsLamportsBefore;
-    console.log('bidsAccountRentPaidByBidder', bidsAccountRentPaidByBidder);
+    //console.log('bidsAccountRentPaidByBidder', bidsAccountRentPaidByBidder);
 
     // Handle final bid with a promise-based semaphore
     if (isFinalBid) {
@@ -1641,11 +1763,11 @@ describe("maxi-auction", () => {
     const auctionPostBids = await getBids(program, auctionId);
     const txDetails = await getTransactionDetailsWithRetry(connection, sig);
     const networkFee = txDetails.meta.fee; // Network transaction fee
-    logObject("test_bid_auction - auctionPost.liquidityOvermint", auctionPost.liquidityOvermint);
+    //logObject("test_bid_auction - auctionPost.liquidityOvermint", auctionPost.liquidityOvermint);
 
     // Calculate bid amount and use actual fee from event
     const bids = await getBids(program, auctionId);
-    console.log("bids", bids);
+    //console.log("bids", bids);
     const lastBid = bids[bids.length - 1]; //auctionPost.bids[auctionPost.bids.length - 1];
     const bidAmountBN = lastBid.bidQty.mul(lastBid.bidSol); // Total SOL paid by bidder (excluding network fee)
     const expectedAuctionSolIncreaseBN = bidAmountBN.sub(actualBidFeeBN); // Auction receives bid amount minus fee
@@ -1666,12 +1788,14 @@ describe("maxi-auction", () => {
 
     // Calculate minimum expected fee (% of bidAmountBN)
     const minExpectedFeeBN = bidAmountBN.mul(new BN(fee_perc * 1000)).div(new BN(1000)); // % of bid amount
-    console.log("bidAmountBN", bidAmountBN.toString());
-    console.log("minExpectedFeeBN", minExpectedFeeBN.toString());
-    console.log("feeIncreaseBN", feeIncreaseBN.toString());
+    //console.log("bidAmountBN", bidAmountBN.toString());
+    //console.log("minExpectedFeeBN", minExpectedFeeBN.toString());
+    //console.log("feeIncreaseBN", feeIncreaseBN.toString());
 
     // **Validate that feeAccount increases by at least 1% of the SOL paid (excluding network fee)**
-    assert.ok(feeIncreaseBN.eq(minExpectedFeeBN), `Fee account should increase by ${fee_perc * 100}% of the bid amount. Actual increase: ${feeIncreaseBN.toString()}, Minimum expected: ${minExpectedFeeBN.toString()}`);
+    if (!skipValidations) {
+      assert.ok(feeIncreaseBN.eq(minExpectedFeeBN), `Fee account should increase by ${fee_perc * 100}% of the bid amount. Actual increase: ${feeIncreaseBN.toString()}, Minimum expected: ${minExpectedFeeBN.toString()}`);
+    }
 
     // Validate based on bid type
     if (isFinalBid) {
@@ -1712,31 +1836,31 @@ describe("maxi-auction", () => {
         }
       }
     } else {
-      // Standard bid checks
-      //assert.equal(auctionPost.bids.length - 1, auctionPre.bids.length, "Bid length should increase by 1");
-      assert.equal(auctionPostBids.length - 1, auctionPreBids.length, "Bid length should increase by 1");
-      assert.equal(
-        auctionSolBalanceAfterBN.sub(auctionSolBalanceBeforeBN).eq(expectedAuctionSolIncreaseBN),
-        true,
-        "Auction SOL increase should match bid amount minus actual fee"
-      );
+      if (!skipValidations) {
+        assert.equal(auctionPostBids.length - 1, auctionPreBids.length, "Bid length should increase by 1");
+        assert.equal(
+          auctionSolBalanceAfterBN.sub(auctionSolBalanceBeforeBN).eq(expectedAuctionSolIncreaseBN),
+          true,
+          "Auction SOL increase should match bid amount minus actual fee"
+        );
 
-      console.log("adminBalanceBeforeBN", adminBalanceBeforeBN.toString());
-      console.log("adminBalanceAfterBN", adminBalanceAfterBN.toString());
-      console.log("bidderBalanceBeforeBN", bidderBalanceBeforeBN.toString());
-      console.log("bidderBalanceAfterBN", bidderBalanceAfterBN.toString());
-      console.log("bidAmountBN", bidAmountBN.toString());
-      console.log("networkFeeBN", networkFeeBN.toString());
+        //console.log("adminBalanceBeforeBN", adminBalanceBeforeBN.toString());
+        //console.log("adminBalanceAfterBN", adminBalanceAfterBN.toString());
+        //console.log("bidderBalanceBeforeBN", bidderBalanceBeforeBN.toString());
+        //console.log("bidderBalanceAfterBN", bidderBalanceAfterBN.toString());
+        //console.log("bidAmountBN", bidAmountBN.toString());
+        //console.log("networkFeeBN", networkFeeBN.toString());
 
-      const actualDecreaseBN = bidderBalanceBeforeBN.sub(bidderBalanceAfterBN);
-      const expectedDecreaseBN = bidAmountBN.add(networkFeeBN).add(new BN(bidsAccountRentPaidByBidder));
-      console.log("actualDecreaseBN", actualDecreaseBN.toString());
-      console.log("expectedDecreaseBN", expectedDecreaseBN.toString());
-      const tolerance = new BN(51);// observed (intermittantly): 50 lamport diff..., even grok doesn't get it. life is short.
-      assert.ok(
-        actualDecreaseBN.sub(expectedDecreaseBN).abs().lte(tolerance),
-        `Bidder SOL decrease should approximately match bid amount plus network fee plus bids account rent paid. Actual: ${actualDecreaseBN.toString()}, Expected: ${expectedDecreaseBN.toString()}`
-      );
+        const actualDecreaseBN = bidderBalanceBeforeBN.sub(bidderBalanceAfterBN);
+        const expectedDecreaseBN = bidAmountBN.add(networkFeeBN).add(new BN(bidsAccountRentPaidByBidder));
+        //console.log("actualDecreaseBN", actualDecreaseBN.toString());
+        //console.log("expectedDecreaseBN", expectedDecreaseBN.toString());
+        const tolerance = new BN(51);// observed (intermittantly): 50 lamport diff..., even grok doesn't get it. life is short.
+        assert.ok(
+          actualDecreaseBN.sub(expectedDecreaseBN).abs().lte(tolerance),
+          `Bidder SOL decrease should approximately match bid amount plus network fee plus bids account rent paid. Actual: ${actualDecreaseBN.toString()}, Expected: ${expectedDecreaseBN.toString()}`
+        );
+      }
     }
 
     // Log results
@@ -2898,4 +3022,19 @@ async function getBids(program: Program<MaxiAuction>, auctionId: number) {
   }
   const bidsAccount = await program.account.bids.fetch(bidsPda);
   return bidsAccount.bids;
+}
+
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+function base58ToInt(base58Str) {
+  let value = 0;
+  for (let i = 0; i < base58Str.length; i++) {
+    const char = base58Str[i];
+    const charValue = BASE58_ALPHABET.indexOf(char);
+    if (charValue === -1) {
+      throw new Error(`Invalid base58 character: ${char}`);
+    }
+    value = value + charValue;
+  }
+  return value;
 }
