@@ -365,6 +365,21 @@ describe("maxi-auction", () => {
     }
   });
 
+  it("base - bids and cancels continuously", async () => {
+    const durationSecs = 60 * 5;
+    const everySecs = 10;
+    const nCycles = Number(durationSecs / everySecs);
+    const bidPerc = (1 / (nCycles - 1));
+    console.log(`nCycles: ${nCycles}, bidPerc: ${bidPerc}`);
+    await test_create_auction_KP0({ duration_hours_div100: durationSecs / 36 });
+    for (let i = 0; i < nCycles; i++) {
+      await test_bid_auction({ fill_percent: bidPerc });
+      await sleep(everySecs / 2);
+      await test_cancel_bid();
+      await sleep(everySecs / 2);
+    }
+  });
+
   it("stress - handles 100 bids from multiple users", async () => {
     await test_large_number_of_bids(100);
   });
