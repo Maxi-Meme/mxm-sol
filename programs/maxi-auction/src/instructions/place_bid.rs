@@ -262,7 +262,7 @@ impl<'info> PlaceBid<'info> {
                 //     and T is the amount of liquidity tokens already locked.
                 //    e.g. for T = 3, P = 0.000861112: S = 0.002583336
                 //
-                let token_balance = self.auction_token_account.amount; // smallest token units
+                /*let token_balance = self.auction_token_account.amount; // smallest token units
                 let dist_percent = auction.dist_percent; // 0 to 10000
                 let token_decimals = auction.token_decimals as u32;
 
@@ -285,7 +285,7 @@ impl<'info> PlaceBid<'info> {
                 // ### this MUST MATCH the fixed amount in migrate-auction.ts!
                 let FIXED_SOL_RAYDIUM_COSTS = 25000; // test low devenet value - ~250000000 for mainnet value ~0.25 sol
                 //let FIXED_SOL_RAYDIUM_COSTS = 0; // testing zero fees
-                auction.liquidity_sol = s_lamports + FIXED_SOL_RAYDIUM_COSTS;
+                auction.liquidity_sol = s_lamports + FIXED_SOL_RAYDIUM_COSTS; // method 3 field
                 
                 msg!("place_bid final - P (lamports per whole token [clearing_price]): {}", clearing_price);
                 msg!("place_bid final - T (smallest token units [locked_tokens]): {}", locked_tokens);
@@ -317,9 +317,9 @@ impl<'info> PlaceBid<'info> {
                 } else {
                     auction.buyback_price = 0;
                     msg!("place_bid final - no unlocked tokens, buyback_price set to 0");
-                }
+                }*/
                 //
-                // TODO: buyback() instruction - take in auctionId; only for bidders in that auction; 
+                // Method (2) todo: buyback() instruction - take in auctionId; only for bidders in that auction; 
                 //       they can only buyback after the auction is finsihed in sucess state, and after is_sol_withdrawn && is_tokens_withdrawn
                 //       they can't buyback if more than auction.buyback_period_days has elapsed since the auction ended
                 //       they can only buyback at the buyback_price
@@ -330,9 +330,8 @@ impl<'info> PlaceBid<'info> {
                 //
                 //       we then send the tokens received to the DAO wallet
                 //
-
                 //
-                // TODO: daoClaim() instruction; should be signed by the daoWallet (see global config)
+                // Method (2) todo: daoClaim() instruction; should be signed by the daoWallet (see global config)
                 //       it should take in an auctionId;
                 //       it should fail if is NOT: (finsihed in sucess state && is_sol_withdrawn && is_tokens_withdrawn && buyback period has elapsed)
                 //
@@ -346,7 +345,8 @@ impl<'info> PlaceBid<'info> {
                 //    where S is the net SOL raised, and P is the settlement price. 
                 //    e.g. for S = 0.084317208, P = 0.000861112: T = 97.91
                 //
-                /*let s_lamports = get_net_sol_raised(auction, clearing_price, 0, self.auction_sol_account.lamports())?; // S
+                let s_lamports = get_net_sol_raised(auction, clearing_price, 0, self.auction_sol_account.lamports())?; // S
+                auction.net_sol_raised = s_lamports;
 
                 // Calculate T_units: T = S / P, adjusted for decimals
                 let token_decimals = auction.token_decimals as u32;
@@ -361,12 +361,11 @@ impl<'info> PlaceBid<'info> {
                 msg!("place_bid final - token_decimals: {}", token_decimals);
                 msg!("place_bid final - T - t_units: {}", t_units);
 
-                // +0.5%
-                let adjusted_t_units = (t_units as u128)
-                    .checked_mul(1005)
-                    .and_then(|x| x.checked_div(1000))
-                    .ok_or(CustomError::Overflow)? as u64;
-
+                // +0.5% (old) - we do this off chain now
+                // let adjusted_t_units = (t_units as u128)
+                //     .checked_mul(1005)
+                //     .and_then(|x| x.checked_div(1000))
+                //     .ok_or(CustomError::Overflow)? as u64;
                 let adjusted_t_units = t_units;
 
                 // Mint T_units to auction_token_account
@@ -387,7 +386,8 @@ impl<'info> PlaceBid<'info> {
                     ),
                     adjusted_t_units,
                 )?;
-                msg!("Minted {} token units for liquidity", adjusted_t_units);
+                msg!("Overminted {} token units for liquidity", auction.liquidity_overmint);
+                msg!("Total {} token units", auction.liquidity_overmint + auction.token_supply);
 
                 //  revoke mint authority
                 token::set_authority(
@@ -405,7 +405,7 @@ impl<'info> PlaceBid<'info> {
                     ),
                     AuthorityType::MintTokens,
                     None,
-                )?;*/
+                )?;
             }
         }
 

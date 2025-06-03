@@ -334,17 +334,21 @@ describe("maxi-auction", () => {
   it("base - creates a 1 min auction", async () => {
     await test_create_auction_KP0({ duration_hours_div100: 1 }); // 1 unit ~= 36s
   });
+  it("base - creates a 1 hr auction", async () => {
+    await test_create_auction_KP0({ duration_hours_div100: 100 });
+  });
+
   it("base - creates a 2 min auction", async () => {
     await test_create_auction_KP0({ duration_hours_div100: 2 });
   });
 
   it("base - admin creates & bids 50%, 1 min, no claim", async () => {
-    await test_create_auction_KP0({ duration_hours_div100: 1 }); // 1 unit ~= 36s
+    await test_create_auction_KP0({ duration_hours_div100: 1 }); 
     await test_bid_auction({ fill_percent: 0.5, bidderKp: adminKp });
   });
 
   it("base - admin creates & bids 100%, 1 min, no claim", async () => {
-    await test_create_auction_KP0({ duration_hours_div100: 1 }); // 1 unit ~= 36s
+    await test_create_auction_KP0({ duration_hours_div100: 1 }); 
     await test_bid_auction({ fill_percent: 1.0, bidderKp: adminKp });
   });
 
@@ -1545,7 +1549,10 @@ describe("maxi-auction", () => {
     const symbol = TEST_TOKEN_SYMBOL;
     const uri = TEST_TOKEN_URI;
     const durationHours = new BN(duration_hours_div100 || 10);
-    const distPercent = new BN(auction_distribution_percent !== undefined ? (auction_distribution_percent * 10000) : TEST_DISTRIBTION_PERCENT);
+
+    const distPercent = new BN(10000); // method 1 - overmint
+    //const distPercent = new BN(auction_distribution_percent !== undefined ? (auction_distribution_percent * 10000) : TEST_DISTRIBTION_PERCENT); // method 2 - lock tokens
+
     const delaySeconds = new BN(0);
     const buybackPeriodDays = new BN(30);
 

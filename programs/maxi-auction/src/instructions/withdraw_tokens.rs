@@ -87,7 +87,7 @@ impl<'info> WithdrawTokens<'info> {
             .ok_or(CustomError::Overflow)?;
 
         // overmint - add liquidity_overmint to withdrawable
-        //withdrawable = withdrawable.checked_add(auction.liquidity_overmint).ok_or(CustomError::Overflow)?;
+        withdrawable = withdrawable.checked_add(auction.liquidity_overmint).ok_or(CustomError::Overflow)?;
             
         msg!("withdrawable {}", withdrawable);
         //msg!("liquidity_overmint {}", auction.liquidity_overmint);

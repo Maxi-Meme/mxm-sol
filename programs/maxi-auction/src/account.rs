@@ -38,10 +38,13 @@ pub struct Auction {
     pub is_sol_withdrawn: bool, // 1
     pub is_tokens_withdrawn: bool, // 1
     pub is_finalized: bool,   // 1
-    pub liquidity_overmint: u64, // 8
+
+    // liqmove, post-auction:
     pub net_sol_raised: u64,  // 8
-    pub liquidity_sol: u64,   // 8
-    pub buyback_price: u64,   // 8
-    pub buyback_period_days: u64, // 2
-    pub is_dao_claimed: bool, // 1
+    pub liquidity_overmint: u64, // 8 - method 1 "overmint" field
+    
+    //pub liquidity_sol: u64,   // 8 - method 2 field (vs method 1, "overmint")
+    //pub buyback_price: u64,   // 8 - method 2 - todo
+    //pub buyback_period_days: u64, // 2 - method 2 - todo
+    //pub is_dao_claimed: bool, // 1 - method 2 - todo
 }

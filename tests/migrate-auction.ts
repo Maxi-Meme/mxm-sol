@@ -129,23 +129,26 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
     //
     // calc how many tokens to deposit into the pool
     //
-    // Option 1 ("underfund") / we use all the locked tokens, and the computed amount of sol to produce the desired price (see place_bid.rs)
-    var liquidityTokens = new BN(tokensWithdrawn.toString());
+    // Method 2 ("underfund", or lock tokens) / we use all the locked tokens, and the computed amount of sol to produce the desired price (see place_bid.rs)
+    //var liquidityTokens = new BN(tokensWithdrawn.toString());
 
-    // Option 2 ("overmint") -- NOT USED
-    // v important! For whatever reason, we can't supply tokens leaving exactly zero in our account - raydium open position fails
-    // so, move 99.9% of the ex fee amount
-    // const originalTUnits = new BN(tokensWithdrawn.toString()).mul(new BN(1000)).div(new BN(1005)); // extract fee 0.5%: see place_bid.rs
-    // console.log(`originalTUnits`, originalTUnits.toString());
-    // const feeTokens = new BN(tokensWithdrawn.toString()).sub(originalTUnits);
-    // const liquidityTokens = new BN(originalTUnits.toString()).mul(new BN(999)).div(new BN(1000)); // originalTUnits; //new BN(tokensWithdrawn.toString()).sub(feeTokens);
-    // console.log(`tokensWithdrawn`, tokensWithdrawn.toString());
-    // console.log(`originalTUnits`, originalTUnits.toString());
-    // console.log(`feeTokens`, feeTokens.toString());
-    // console.log(`liquidityTokens`, liquidityTokens.toString()); // T == S / P
+    // Method 1 ("overmint")
+    const originalTUnits = new BN(tokensWithdrawn.toString());
+    //const originalTUnits = new BN(tokensWithdrawn.toString()).mul(new BN(1000)).div(new BN(1005)); // old: extract fee 0.5%: see place_bid.rs
+    console.log(`originalTUnits`, originalTUnits.toString());
+
+    var liquidityTokens = new BN(originalTUnits.toString()); // we'll take a fee below, so this isn't needed
+    //const feeTokens = new BN(tokensWithdrawn.toString()).sub(originalTUnits);
+    //console.log(`feeTokens`, feeTokens.toString());
+    //var liquidityTokens = new BN(originalTUnits.toString()).mul(new BN(999)).div(new BN(1000)); // originalTUnits; //new BN(tokensWithdrawn.toString()).sub(feeTokens); // v important! For whatever reason, we can't supply tokens leaving exactly zero in our account - raydium open position fails - so, move 99.9% of the ex fee amount
+    console.log(`liquidityTokens`, liquidityTokens.toString());
+
+    console.log(`tokensWithdrawn`, tokensWithdrawn.toString());
+    console.log(`originalTUnits`, originalTUnits.toString());
+    console.log(`liquidityTokens`, liquidityTokens.toString()); // T == S / P
 
     //
-    // take a fee, both tokens & sol - send
+    // take a fee, same % both tokens & sol to preserve the price
     //
     console.log(`LIQ_FEE_PERCENT = ${LIQ_FEE_PERCENT / 100}%`, LIQ_FEE_PERCENT);
     const liqFeeTokens = liquidityTokens.mul(new BN(LIQ_FEE_PERCENT)).div(new BN(10000));
@@ -162,29 +165,29 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
     //
     // Create & fund a new market/pool
     //
-    const { poolId, poolKeys } = await createAndFundPool_v3_CLMM(
+    // const { poolId, poolKeys } = await createAndFundPool_v3_CLMM( // v3 CLMM pool 
+    //   program, isMainnet, auctionId, tokenMint,
+    //   BigInt(liquidityTokens.toString()),
+    //   BigInt(liquidityWSol.toString()),
+    //   adminKp, connection, auctionDataFetched.clearingPrice.toNumber());
+    const { marketId, poolId, marketInfo, poolKeys } = await createAndFundPool_v2_AMM( // v2 CPMM pool -- MUCH CHEAPER, BETTER FOR MAX RANGE LONG TAIL ASSETS...
       program, isMainnet, auctionId, tokenMint,
       BigInt(liquidityTokens.toString()),
       BigInt(liquidityWSol.toString()),
       adminKp, connection, auctionDataFetched.clearingPrice.toNumber());
-    // const { marketId, poolId, marketInfo, poolKeys } = await createAndFundPool_v2_AMM( // v2 CPMM pool -- NOT USED
-    //   program, isMainnet, auctionId, tokenMint,
-    //   BigInt(liquidityTokens.toString()),
-    //   BigInt(liquidityWSol.toString()),
-    //   adminKp, connection);
     console.log(`migrateAuction => OK!`);
     console.log(`tokenMint: ${tokenMint.toBase58()}`);
     console.log(`liquidityTokens: ${liquidityTokens.toString()}`);
     console.log(`liquidityWSol: ${liquidityWSol.toString()}`);
-    //console.log(`marketInfo:`, marketInfo);
-    //console.log(`marketId: ${marketId.toBase58()}`);
+    console.log(`marketInfo:`, marketInfo);
+    console.log(`marketId: ${marketId.toBase58()}`);
     //console.log(`poolKeys:`, poolKeys);
     console.log(`poolId: ${poolId.toBase58()}`);
 
     //
     // update DB keypair with market/pool info
     //
-    await updateKeyPairPoolInfo(tokenMint, null /*marketInfo*/, poolKeys, null /*marketId*/, poolId);
+    await updateKeyPairPoolInfo(tokenMint, /*null*/ marketInfo, poolKeys, /*null*/ marketId, poolId);
 
     //
     // Send fee tokens & wsol to the revenue wallet
@@ -483,7 +486,18 @@ async function createAndFundPool_v3_CLMM(
 }
 
 // (2) OLD: Create market and pool - v2 AMM (continuous product pool)
-async function createAndFundPool_v2_AMM(program: Program<MaxiAuction>, isMainnet: boolean, auctionId: number, tokenMint: PublicKey, tokenAmount: bigint, wsolAmount: bigint, adminKp: Keypair, connection: Connection): Promise<{
+async function createAndFundPool_v2_AMM(
+  program: Program<MaxiAuction>,
+  isMainnet: boolean,
+  auctionId: number,
+  tokenMint: PublicKey,
+  tokenAmount: bigint,
+  wsolAmount: bigint,
+  adminKp: Keypair,
+  connection: Connection,
+  auctionClearingPrice: number
+):
+  Promise<{
   marketId: PublicKey;
   poolId: PublicKey;
   marketInfo: Object;
@@ -492,9 +506,10 @@ async function createAndFundPool_v2_AMM(program: Program<MaxiAuction>, isMainnet
   const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: true, blockhashCommitment: 'finalized', });
   const mintAccount = await getMint(connection, tokenMint);
   const baseDecimals = mintAccount.decimals;
+  const initialPrice = new Decimal(auctionClearingPrice / LAMPORTS_PER_SOL);
 
   // Create market
-  console.log(`createAndFundPool -> raydium.marketV2.create: mintAccount ${tokenMint.toBase58()}, baseDecimals ${baseDecimals}...`);
+  console.log(`createAndFundPool_v2_AMM -> raydium.marketV2.create: mintAccount ${tokenMint.toBase58()}, baseDecimals ${baseDecimals}...`);
   const { execute: execCM, extInfo: extInfoCM } = await raydium.marketV2.create({
     baseInfo: { mint: tokenMint, decimals: baseDecimals, },
     quoteInfo: { mint: WSOLMint, decimals: 9, }, // WSOL
@@ -503,7 +518,7 @@ async function createAndFundPool_v2_AMM(program: Program<MaxiAuction>, isMainnet
     txVersion: TxVersion.LEGACY,
   });
   const cmSigs = await execCM({ sequentially: true });
-  cmSigs.txIds.forEach(x => console.log(`createAndFundPool -> ${x} createAndFundPool (${auctionId}) => execCM OK`));
+  cmSigs.txIds.forEach(x => console.log(`createAndFundPool_v2_AMM -> ${x} createAndFundPool (${auctionId}) => execCM OK`));
   const marketId = extInfoCM.address.marketId;
   const marketInfo = Object.keys(extInfoCM.address).reduce(
     (acc, cur) => ({ ...acc, [cur]: extInfoCM.address[cur as keyof typeof extInfoCM.address].toBase58(), }), {});
@@ -519,8 +534,8 @@ async function createAndFundPool_v2_AMM(program: Program<MaxiAuction>, isMainnet
   }
   const baseAmount = new BN(tokenAmount.toString());
   const quoteAmount = new BN(wsolAmount.toString());
-  console.log(`createAndFundPool -> baseAmount (tokens)`, baseAmount.toString());
-  console.log(`createAndFundPool -> quoteAmount (lamports)`, quoteAmount.toString());
+  console.log(`createAndFundPool_v2_AMM -> baseAmount (tokens)`, baseAmount.toString());
+  console.log(`createAndFundPool_v2_AMM -> quoteAmount (lamports)`, quoteAmount.toString());
   if (baseAmount.mul(quoteAmount).lte(new BN(1).mul(new BN(10 ** baseMintInfo.decimals)).pow(new BN(2)))) { // need 1 sol for 1b tokens at 10^9 decimals
     throw new Error('initial liquidity too low');
   }
@@ -538,10 +553,16 @@ async function createAndFundPool_v2_AMM(program: Program<MaxiAuction>, isMainnet
     feeDestinationId: isMainnet ? FEE_DESTINATION_ID : DEVNET_PROGRAM_ID.FEE_DESTINATION_ID,
   });
   const { txId: cpSig } = await execCP({ sendAndConfirm: true });
-  console.log(`createAndFundPool -> ${cpSig} createAndFundPool (${auctionId}) => execCP OK`);
+  console.log(`createAndFundPool_v2_AMM -> ${cpSig} (${auctionId}) => execCP OK`);
   const poolId = extInfoCP.address.ammId;
   const poolKeys = Object.keys(extInfoCP.address).reduce(
     (acc, cur) => ({ ...acc, [cur]: extInfoCP.address[cur as keyof typeof extInfoCP.address].toBase58(), }), {});
+
+  // check price
+  console.log(`createAndFundPool_v2_AMM -> poolId`, poolId.toBase58());
+  const res = await raydium.liquidity.getRpcPoolInfos([poolId.toBase58()]);
+  console.log(`createAndFundPool_v2_AMM -> getRpcPoolInfos -> res`, res);
+  console.log(`createAndFundPool_v2_AMM -> getRpcPoolInfos -> res[poolId.toBase58()].poolPrice`, res[poolId.toBase58()].poolPrice);
 
   return { marketId, poolId, marketInfo, poolKeys };
 }
