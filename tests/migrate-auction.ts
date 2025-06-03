@@ -300,7 +300,127 @@ async function withdrawFunds(program: Program<MaxiAuction>, isMainnet: boolean, 
   return { solAmount: solWithdrawn, tokenAmount: tokenWithdrawn, tokenMint, adminTokenAccount };
 }
 
-// (2) Create market and pool - v3 CLMM (constant product pool; full range position)
+// (2a) Create market and pool - v2 AMM (continuous product pool)
+async function createAndFundPool_v2_AMM(
+  program: Program<MaxiAuction>,
+  isMainnet: boolean,
+  auctionId: number,
+  tokenMint: PublicKey,
+  tokenAmount: bigint,
+  wsolAmount: bigint,
+  adminKp: Keypair,
+  connection: Connection,
+  auctionClearingPrice: number
+):
+  Promise<{
+    marketId: PublicKey;
+    poolId: PublicKey;
+    marketInfo: Object;
+    poolKeys: Object;
+  }> {
+  // Get initial SOL balance of the admin
+  const initialBalance = await connection.getBalance(adminKp.publicKey);
+
+  const raydium = await Raydium.load({
+    connection,
+    owner: adminKp,
+    disableFeatureCheck: true,
+    blockhashCommitment: 'finalized',
+  });
+  const mintAccount = await getMint(connection, tokenMint);
+  const baseDecimals = mintAccount.decimals;
+  const initialPrice = new Decimal(auctionClearingPrice / LAMPORTS_PER_SOL);
+
+  // Create market
+  console.log(`createAndFundPool_v2_AMM -> raydium.marketV2.create: mintAccount ${tokenMint.toBase58()}, baseDecimals ${baseDecimals}...`);
+  const { execute: execCM, extInfo: extInfoCM } = await raydium.marketV2.create({
+    baseInfo: { mint: tokenMint, decimals: baseDecimals, },
+    quoteInfo: { mint: WSOLMint, decimals: 9, }, // WSOL
+    lotSize: 1,
+    tickSize: 0.01,
+    dexProgramId: isMainnet ? OPEN_BOOK_PROGRAM : DEVNET_PROGRAM_ID.OPENBOOK_MARKET,
+    txVersion: TxVersion.LEGACY,
+  });
+  const cmSigs = await execCM({ sequentially: true });
+  cmSigs.txIds.forEach(x => console.log(`createAndFundPool_v2_AMM -> ${x} createAndFundPool (${auctionId}) => execCM OK`));
+  const marketId = extInfoCM.address.marketId;
+  const marketInfo = Object.keys(extInfoCM.address).reduce(
+    (acc, cur) => ({ ...acc, [cur]: extInfoCM.address[cur as keyof typeof extInfoCM.address].toBase58(), }),
+    {}
+  );
+
+  // Calculate cost of market creation
+  const balanceAfterMarketCreation = await connection.getBalance(adminKp.publicKey);
+  const marketCreationCost = (initialBalance - balanceAfterMarketCreation) / LAMPORTS_PER_SOL;
+
+  // Create & fund the pool
+  const marketBufferInfo = await raydium.connection.getAccountInfo(marketId);
+  if (!marketBufferInfo) throw new Error('Failed to fetch market account info');
+  const { baseMint, quoteMint } = MARKET_STATE_LAYOUT_V3.decode(marketBufferInfo.data);
+  const baseMintInfo = await raydium.token.getTokenInfo(baseMint);
+  const quoteMintInfo = await raydium.token.getTokenInfo(quoteMint);
+  if (baseMintInfo.programId !== TOKEN_PROGRAM_ID.toBase58() || quoteMintInfo.programId !== TOKEN_PROGRAM_ID.toBase58()) {
+    throw new Error('base or quote mint is not a supported token type');
+  }
+  const baseAmount = new BN(tokenAmount.toString());
+  const quoteAmount = new BN(wsolAmount.toString());
+  console.log(`createAndFundPool_v2_AMM -> baseAmount (tokens)`, baseAmount.toString());
+  console.log(`createAndFundPool_v2_AMM -> quoteAmount (lamports)`, quoteAmount.toString());
+  if (baseAmount.mul(quoteAmount).lte(new BN(1).mul(new BN(10 ** baseMintInfo.decimals)).pow(new BN(2)))) {
+    throw new Error('initial liquidity too low');
+  }
+  const { execute: execCP, extInfo: extInfoCP } = await raydium.liquidity.createPoolV4({
+    programId: isMainnet ? AMM_V4 : DEVNET_PROGRAM_ID.AmmV4,
+    marketInfo: { marketId, programId: isMainnet ? OPEN_BOOK_PROGRAM : DEVNET_PROGRAM_ID.OPENBOOK_MARKET, },
+    baseMintInfo: { mint: baseMint, decimals: baseMintInfo.decimals },
+    quoteMintInfo: { mint: quoteMint, decimals: quoteMintInfo.decimals },
+    baseAmount,
+    quoteAmount,
+    startTime: new BN(0),
+    ownerInfo: { useSOLBalance: true },
+    associatedOnly: false,
+    txVersion: TxVersion.LEGACY,
+    feeDestinationId: isMainnet ? FEE_DESTINATION_ID : DEVNET_PROGRAM_ID.FEE_DESTINATION_ID,
+  });
+  const { txId: cpSig } = await execCP({ sendAndConfirm: true });
+  console.log(`createAndFundPool_v2_AMM -> ${cpSig} (${auctionId}) => execCP OK`);
+  const poolId = extInfoCP.address.ammId;
+  const poolKeys = Object.keys(extInfoCP.address).reduce(
+    (acc, cur) => ({ ...acc, [cur]: extInfoCP.address[cur as keyof typeof extInfoCP.address].toBase58(), }),
+    {}
+  );
+
+  // Calculate total cost and breakdown
+  const finalBalance = await connection.getBalance(adminKp.publicKey);
+  const poolCreationCost = (balanceAfterMarketCreation - finalBalance) / LAMPORTS_PER_SOL;
+  const totalSolSpent = (initialBalance - finalBalance) / LAMPORTS_PER_SOL;
+  const fundingAmountSol = Number(wsolAmount) / LAMPORTS_PER_SOL;
+  const estimatedFeesAndRent = poolCreationCost - fundingAmountSol;
+
+  // Log the costs
+  console.log(`Market creation cost (fees and rent deposits): ${marketCreationCost.toFixed(6)} SOL`);
+  console.log(`Pool creation and funding:`);
+  console.log(`  - Funding amount: ${fundingAmountSol.toFixed(6)} SOL`);
+  console.log(`  - Estimated fees and rent deposits: ${estimatedFeesAndRent.toFixed(6)} SOL`);
+  console.log(`Total SOL cost to admin: ${totalSolSpent.toFixed(6)} SOL`);
+
+  // Check price (unchanged)
+  console.log(`createAndFundPool_v2_AMM -> poolId`, poolId.toBase58());
+  const res = await raydium.liquidity.getRpcPoolInfos([poolId.toBase58()]);
+  const poolPrice = Number(res[poolId.toBase58()].poolPrice);
+  console.log(`createAndFundPool_v2_AMM -> getRpcPoolInfos -> res`, res);
+  console.log(`createAndFundPool_v2_AMM -> getRpcPoolInfos -> poolPrice`, poolPrice);
+  console.log(`createAndFundPool_v2_AMM -> getRpcPoolInfos -> 1 / poolPrice`, 1 / poolPrice);
+  console.log(`createAndFundPool_v2_AMM -> getRpcPoolInfos -> initialPrice`, initialPrice.toNumber());
+  if (Math.abs(initialPrice.toNumber() - 1 / poolPrice) > 1e-6) {
+    console.log(`createAndFundPool_v2_AMM -> Current price mismatch`);
+    throw new Error('Current price mismatch');
+  }
+
+  return { marketId, poolId, marketInfo, poolKeys };
+}
+
+// (2b) Create market and pool - v3 CLMM (constant product pool; full range position)
 async function createAndFundPool_v3_CLMM(
   program: Program<MaxiAuction>,
   isMainnet: boolean,
@@ -483,88 +603,6 @@ async function createAndFundPool_v3_CLMM(
   //   {}
   // );
   return { poolId, poolKeys: poolExtInfo, marketInfo: {}, marketId: null };
-}
-
-// (2) OLD: Create market and pool - v2 AMM (continuous product pool)
-async function createAndFundPool_v2_AMM(
-  program: Program<MaxiAuction>,
-  isMainnet: boolean,
-  auctionId: number,
-  tokenMint: PublicKey,
-  tokenAmount: bigint,
-  wsolAmount: bigint,
-  adminKp: Keypair,
-  connection: Connection,
-  auctionClearingPrice: number
-):
-  Promise<{
-  marketId: PublicKey;
-  poolId: PublicKey;
-  marketInfo: Object;
-  poolKeys: Object;
-}> {
-  const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: true, blockhashCommitment: 'finalized', });
-  const mintAccount = await getMint(connection, tokenMint);
-  const baseDecimals = mintAccount.decimals;
-  const initialPrice = new Decimal(auctionClearingPrice / LAMPORTS_PER_SOL);
-
-  // Create market
-  console.log(`createAndFundPool_v2_AMM -> raydium.marketV2.create: mintAccount ${tokenMint.toBase58()}, baseDecimals ${baseDecimals}...`);
-  const { execute: execCM, extInfo: extInfoCM } = await raydium.marketV2.create({
-    baseInfo: { mint: tokenMint, decimals: baseDecimals, },
-    quoteInfo: { mint: WSOLMint, decimals: 9, }, // WSOL
-    lotSize: 1, tickSize: 0.01,
-    dexProgramId: isMainnet ? OPEN_BOOK_PROGRAM : DEVNET_PROGRAM_ID.OPENBOOK_MARKET,
-    txVersion: TxVersion.LEGACY,
-  });
-  const cmSigs = await execCM({ sequentially: true });
-  cmSigs.txIds.forEach(x => console.log(`createAndFundPool_v2_AMM -> ${x} createAndFundPool (${auctionId}) => execCM OK`));
-  const marketId = extInfoCM.address.marketId;
-  const marketInfo = Object.keys(extInfoCM.address).reduce(
-    (acc, cur) => ({ ...acc, [cur]: extInfoCM.address[cur as keyof typeof extInfoCM.address].toBase58(), }), {});
-
-  // Create & fund the pool
-  const marketBufferInfo = await raydium.connection.getAccountInfo(marketId);
-  if (!marketBufferInfo) throw new Error('Failed to fetch market account info');
-  const { baseMint, quoteMint } = MARKET_STATE_LAYOUT_V3.decode(marketBufferInfo.data);
-  const baseMintInfo = await raydium.token.getTokenInfo(baseMint);
-  const quoteMintInfo = await raydium.token.getTokenInfo(quoteMint);
-  if (baseMintInfo.programId !== TOKEN_PROGRAM_ID.toBase58() || quoteMintInfo.programId !== TOKEN_PROGRAM_ID.toBase58()) {
-    throw new Error('base or quote mint is not a supported token type');
-  }
-  const baseAmount = new BN(tokenAmount.toString());
-  const quoteAmount = new BN(wsolAmount.toString());
-  console.log(`createAndFundPool_v2_AMM -> baseAmount (tokens)`, baseAmount.toString());
-  console.log(`createAndFundPool_v2_AMM -> quoteAmount (lamports)`, quoteAmount.toString());
-  if (baseAmount.mul(quoteAmount).lte(new BN(1).mul(new BN(10 ** baseMintInfo.decimals)).pow(new BN(2)))) { // need 1 sol for 1b tokens at 10^9 decimals
-    throw new Error('initial liquidity too low');
-  }
-  const { execute: execCP, extInfo: extInfoCP } = await raydium.liquidity.createPoolV4({
-    programId: isMainnet ? AMM_V4 : DEVNET_PROGRAM_ID.AmmV4,
-    marketInfo: { marketId, programId: isMainnet ? OPEN_BOOK_PROGRAM : DEVNET_PROGRAM_ID.OPENBOOK_MARKET, },
-    baseMintInfo: { mint: baseMint, decimals: baseMintInfo.decimals },
-    quoteMintInfo: { mint: quoteMint, decimals: quoteMintInfo.decimals },
-    baseAmount,
-    quoteAmount,
-    startTime: new BN(0),
-    ownerInfo: { useSOLBalance: true },
-    associatedOnly: false,
-    txVersion: TxVersion.LEGACY,
-    feeDestinationId: isMainnet ? FEE_DESTINATION_ID : DEVNET_PROGRAM_ID.FEE_DESTINATION_ID,
-  });
-  const { txId: cpSig } = await execCP({ sendAndConfirm: true });
-  console.log(`createAndFundPool_v2_AMM -> ${cpSig} (${auctionId}) => execCP OK`);
-  const poolId = extInfoCP.address.ammId;
-  const poolKeys = Object.keys(extInfoCP.address).reduce(
-    (acc, cur) => ({ ...acc, [cur]: extInfoCP.address[cur as keyof typeof extInfoCP.address].toBase58(), }), {});
-
-  // check price
-  console.log(`createAndFundPool_v2_AMM -> poolId`, poolId.toBase58());
-  const res = await raydium.liquidity.getRpcPoolInfos([poolId.toBase58()]);
-  console.log(`createAndFundPool_v2_AMM -> getRpcPoolInfos -> res`, res);
-  console.log(`createAndFundPool_v2_AMM -> getRpcPoolInfos -> res[poolId.toBase58()].poolPrice`, res[poolId.toBase58()].poolPrice);
-
-  return { marketId, poolId, marketInfo, poolKeys };
 }
 
 export const updateKeyPairPoolInfo = async (tokenMint, marketInfo, poolKeys, marketId, poolId) => {

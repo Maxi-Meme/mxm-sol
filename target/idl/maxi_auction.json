@@ -1,5 +1,5 @@
 {
-  "address": "DCHSWSbuASPf8zquQ25t24xe6cSMxCWaGtSxKLRHAT2t",
+  "address": "9gfCVyYBrYEA5oFqXNMRxZNGKsEPCFkRsHFkMDYd2CHF",
   "metadata": {
     "name": "maxi_auction",
     "version": "0.2.0",
@@ -1030,6 +1030,10 @@
           "address": "11111111111111111111111111111111"
         },
         {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
           "name": "rent",
           "address": "SysvarRent111111111111111111111111111111111"
         }
@@ -1658,28 +1662,12 @@
             "type": "bool"
           },
           {
-            "name": "liquidity_overmint",
-            "type": "u64"
-          },
-          {
             "name": "net_sol_raised",
             "type": "u64"
           },
           {
-            "name": "liquidity_sol",
+            "name": "liquidity_overmint",
             "type": "u64"
-          },
-          {
-            "name": "buyback_price",
-            "type": "u64"
-          },
-          {
-            "name": "buyback_period_days",
-            "type": "u64"
-          },
-          {
-            "name": "is_dao_claimed",
-            "type": "bool"
           }
         ]
       }

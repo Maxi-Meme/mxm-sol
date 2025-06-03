@@ -11,7 +11,7 @@ use crate::{
 };
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token::{Mint, Token, TokenAccount},
+    token::{self, spl_token::instruction::AuthorityType, Mint, Token, TokenAccount},
 };
 use anchor_lang::prelude::*;
 use std::mem::size_of;
@@ -63,6 +63,9 @@ pub struct PlaceBid<'info> {
 
     #[account(address = anchor_lang::system_program::ID)]
     system_program: Program<'info, System>,
+
+    #[account(address = token::ID)]
+    token_program: Program<'info, Token>,
 
     // Added to calculate rent costs for resizing
     pub rent: Sysvar<'info, Rent>,
@@ -242,8 +245,6 @@ impl<'info> PlaceBid<'info> {
                     return err!(CustomError::InvalidClearingPrice);
                 }
 
-                auction.net_sol_raised = get_net_sol_raised(auction, bids, clearing_price, 0, self.auction_sol_account.lamports())?;
-
                 //
                 // Method (3) -- todo??
                 //   Combine 1 & 2
@@ -262,7 +263,8 @@ impl<'info> PlaceBid<'info> {
                 //     and T is the amount of liquidity tokens already locked.
                 //    e.g. for T = 3, P = 0.000861112: S = 0.002583336
                 //
-                /*let token_balance = self.auction_token_account.amount; // smallest token units
+                /*auction.net_sol_raised = get_net_sol_raised(auction, bids, clearing_price, 0, self.auction_sol_account.lamports())?;
+                let token_balance = self.auction_token_account.amount; // smallest token units
                 let dist_percent = auction.dist_percent; // 0 to 10000
                 let token_decimals = auction.token_decimals as u32;
 
@@ -345,7 +347,7 @@ impl<'info> PlaceBid<'info> {
                 //    where S is the net SOL raised, and P is the settlement price. 
                 //    e.g. for S = 0.084317208, P = 0.000861112: T = 97.91
                 //
-                let s_lamports = get_net_sol_raised(auction, clearing_price, 0, self.auction_sol_account.lamports())?; // S
+                let s_lamports = get_net_sol_raised(auction, bids, clearing_price, 0, self.auction_sol_account.lamports())?; // S
                 auction.net_sol_raised = s_lamports;
 
                 // Calculate T_units: T = S / P, adjusted for decimals

@@ -200,14 +200,7 @@ impl<'info> CreateAuction<'info> {
         auction_data_account.token_mint = token_mint.key();
         auction_data_account.token_supply = global_info.config.default_token_supply;
         auction_data_account.token_decimals = global_info.config.default_token_decimals;
-        auction_data_account.buyback_period_days = buyback_period_days;
-
-        // liqmove: method 1 - distribute in full, mint more tokens (overmint) to achieve target price
-        auction_data_account.dist_percent = 10000;
-
-        // liqmove: method 2 - reverse fit sol to move to yield target price, for a given fixed token lock % (1-dist_percent)
-        //auction_data_account.dist_percent = dist_percent; 
-
+        
         auction_data_account.bump = auction_bump;
         auction_data_account.delay_in_seconds = delay_in_seconds;
         auction_data_account.start_price = global_info.config.default_start_price_lamports;
@@ -216,11 +209,20 @@ impl<'info> CreateAuction<'info> {
         } else {
             AuctionStatus::Live
         };
+        
+        // liqmove: method 1 - distribute in full, mint more tokens (overmint) to achieve target price
+        auction_data_account.dist_percent = 10000;
+
+        // liqmove: method 2 - reverse fit sol to move to yield target price, for a given fixed token lock % (1-dist_percent)
+        //auction_data_account.dist_percent = dist_percent; 
+
         auction_data_account.is_sol_withdrawn = false;
         auction_data_account.is_tokens_withdrawn = false;
-        
-        auction_data_account.is_dao_claimed = false;
-        auction_data_account.buyback_price = 0;
+
+        // we would only need these if we used method 2 (underfund) for liquidity movement (to make use of the remaining sol in the contract, for buyback and/or DAO)
+        //auction_data_account.buyback_period_days = buyback_period_days;
+        //auction_data_account.is_dao_claimed = false;
+        //auction_data_account.buyback_price = 0;
 
         global_info.auctions_num = auction_id + 1;
 

@@ -75,14 +75,14 @@ impl<'info> WithdrawSol<'info> {
         auction.clearing_price = clearing_price;
         msg!("updated auction_status: {:?}", auction.last_status);
 
-        //
-        // liq underfund - withdraw the fraction of net sol raised to yield pool starting price = the auction clearing price
-        // retain the rest of the sol in the auction
-        //
-        require!(auction.liquidity_sol > 0, CustomError::InvalidState);
-        let amount_to_transfer = auction.liquidity_sol; // method 2
-        //let amount_to_transfer = get_net_sol_raised(auction, bids, clearing_price, 0, self.auction_sol_account.lamports())?; // method 1
+        // method 1 - overmint: we withdraw all the sol...
+        let amount_to_transfer = get_net_sol_raised(auction, bids, clearing_price, 0, self.auction_sol_account.lamports())?; 
 
+        // method 2 - liq underfund - withdraw the fraction of net sol raised to yield pool starting price = the auction clearing price
+        // retain the rest of the sol in the auction
+        //require!(auction.liquidity_sol > 0, CustomError::InvalidState);
+        //let amount_to_transfer = auction.liquidity_sol; // method 2
+        
         // Perform transfer if amount is positive
         if amount_to_transfer > 0 {
             let transfer_instruction = solana_program::system_instruction::transfer(
