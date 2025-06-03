@@ -168,7 +168,11 @@ impl<'info> CreateAuction<'info> {
             None,
         )?;
 
-        token::set_authority(
+        // method 1 - we're using liquidity movement (overmint) - we need to keep mint authority and revoke it on the last bid
+        ;
+
+        // method 2 (underfund) - revoke token mint authority 
+        /*token::set_authority(
             CpiContext::new_with_signer(
                 self.token_program.to_account_info(),
                 token::SetAuthority {
@@ -183,7 +187,7 @@ impl<'info> CreateAuction<'info> {
             ),
             AuthorityType::MintTokens,
             None,
-        )?;
+        )?;*/
 
         let clock: Clock = Clock::get()?;
         let current_timestamp = clock.unix_timestamp;

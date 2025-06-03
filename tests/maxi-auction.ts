@@ -214,12 +214,12 @@ describe("maxi-auction", () => {
       // Process migration and resolve the promise
       let migrationResult = { success: true, error: null };
       migrateAuction(program, isMainnet, auctionId, adminKp, connection)
-        .catch((err) => {
-          logObject('auction migration error', err);
-          logger.color("red").error(`auction ${auctionId} migration complete - catch`, err);
-          migrationResult = { success: false, error: err };
-          //throw err;
-        })
+        // .catch((err) => {
+        //   logObject('auction migration error', err);
+        //   logger.color("red").error(`auction ${auctionId} migration complete - catch`, err);
+        //   migrationResult = { success: false, error: err };
+        //   //throw err;
+        // })
         .finally(async () => {
           console.log(`auction ${auctionId} migration complete - finally`);
           const resolve = await waitForResolver(auctionId.toString(), auctionFilledPromises, 10000, 500); // Poll for the resolver with a timeout
@@ -1124,24 +1124,25 @@ describe("maxi-auction", () => {
         // liqmove happened *and* claims happened...
         console.log(`auctionSolBalance`, auctionSolBalance.toString() / LAMPORTS_PER_SOL);
 
-        // OLD: Method 1
-        // withdraw_sol will hold back RENT_EXEMPT_MIN
-        //assert.equal(//BigInt(auctionSolBalance) < BigInt(0.001 * LAMPORTS_PER_SOL),  // life is suffering
-        //  auctionSolBalance <= RENT_EXEMPT_MIN, true, "should be <= RENT_EXEMPT_MIN left in the auction after liqmove and claims");
+        // suffering exists, craving causing suffering, crazing can be overcome, this is the way...
+        // OLD: Method 1 - overmint
+        // withdraw_sol *may* hold back RENT_EXEMPT_MIN (it'a param internally, set to zero currently)
+        assert.equal(//BigInt(auctionSolBalance) < BigInt(0.001 * LAMPORTS_PER_SOL),  // life is suffering
+          auctionSolBalance <= RENT_EXEMPT_MIN, true, "should be <= RENT_EXEMPT_MIN left in the auction after liqmove and claims");
 
         // Method 2: Check that remaining SOL in the auction account is netSolRaised - liquiditySol
-        const netSolRaised = auctionPost.netSolRaised; // BN from Anchor
-        const liquiditySol = auctionPost.liquiditySol; // BN from Anchor
-        const expectedRemaining = netSolRaised.sub(liquiditySol); // BN subtraction
-        const actualRemaining = new BN(auctionSolBalance); // Convert number to BN
-        console.log(`netSolRaised: ${netSolRaised.toString()} lamports`);
-        console.log(`liquiditySol: ${liquiditySol.toString()} lamports`);
-        console.log(`expectedRemaining: ${expectedRemaining.toString()} lamports`);
-        console.log(`actualRemaining: ${actualRemaining.toString()} lamports`);
-        assert.ok(
-          expectedRemaining.eq(actualRemaining),
-          `Remaining SOL should be ${expectedRemaining.toString()} lamports, but got ${actualRemaining.toString()} lamports`
-        );
+        // const netSolRaised = auctionPost.netSolRaised; // BN from Anchor
+        // const liquiditySol = auctionPost.liquiditySol; // BN from Anchor
+        // const expectedRemaining = netSolRaised.sub(liquiditySol); // BN subtraction
+        // const actualRemaining = new BN(auctionSolBalance); // Convert number to BN
+        // console.log(`netSolRaised: ${netSolRaised.toString()} lamports`);
+        // console.log(`liquiditySol: ${liquiditySol.toString()} lamports`);
+        // console.log(`expectedRemaining: ${expectedRemaining.toString()} lamports`);
+        // console.log(`actualRemaining: ${actualRemaining.toString()} lamports`);
+        // assert.ok(
+        //   expectedRemaining.eq(actualRemaining),
+        //   `Remaining SOL should be ${expectedRemaining.toString()} lamports, but got ${actualRemaining.toString()} lamports`
+        // );
 
         // Check the mint authority was revoked
         const mintInfo = await connection.getAccountInfo(new PublicKey(auctionPost.tokenMint));
@@ -1741,24 +1742,43 @@ describe("maxi-auction", () => {
           const migrationResult = await waitForMigration(auctionId);
           logObject("migrationResult", migrationResult);
           assert.ok(migrationResult.error == null, "migration should succeed");
-        }
-        else {
+        } else {
           console.log("Final Bid - skipping migration wait as requested...");
         }
-      }
-      else {
+      } else {
         console.log("Final Bid - local - NOP: no raydium here...");
       }
 
-      // Fetch and log the total minted token count - want to see how liquidityOvermint has affected the total supply
-      const tokenMintPublicKey = auctionPre.tokenMint; // Use the token mint from auction data
-      const mintInfo = await getMint(connection, tokenMintPublicKey); // Fetch mint info
-      const totalSupply = mintInfo.supply; // Total supply in smallest unit (bigint)
-      const decimals = mintInfo.decimals; // Token decimals
-      const totalSupplyInWholeTokens = Number(totalSupply) / Math.pow(10, decimals); // Convert to whole tokens
+      // Fetch and log the total minted token count
+      // Optional: Verify exact total supply if liquidityOvermint is available
+      const auctionPost = await program.account.auction.fetch(auctionData);
+      console.log('auctionPost.liquidityOvermint', auctionPost.liquidityOvermint);
+      if (auctionPost.liquidityOvermint) {
+        const tokenMintPublicKey = auctionPre.tokenMint; // Use the token mint from auction data
+        const mintInfo = await getMint(connection, tokenMintPublicKey); // Fetch mint info
+        const totalSupply = mintInfo.supply; // Total supply in smallest unit (bigint)
+        const decimals = mintInfo.decimals; // Token decimals
+        const totalSupplyInWholeTokens = Number(totalSupply) / Math.pow(10, decimals); // Convert to whole tokens
 
-      console.log('Total minted tokens (smallest unit):', totalSupply.toString());
-      console.log('Total minted tokens (whole tokens):', totalSupplyInWholeTokens);
+        console.log('Overmint - Total minted tokens (smallest unit):', totalSupply.toString());
+        console.log('Overmint - Total minted tokens (whole tokens):', totalSupplyInWholeTokens);
+
+        // Overmint test: Verify that total supply exceeds original token supply
+        const totalSupplyBN = new BN(totalSupply.toString()); // Convert to BN for precise comparison
+        const originalTokenSupplyBN = auctionPre.tokenSupply; // Original supply from auction data
+
+        assert.ok(
+          totalSupplyBN.gt(originalTokenSupplyBN),
+          `Total supply should be greater than original token supply after overmint. Total supply: ${totalSupplyBN.toString()}, Original token supply: ${originalTokenSupplyBN.toString()}`
+        );
+
+        const expectedTotalSupplyBN = originalTokenSupplyBN.add(auctionPost.liquidityOvermint);
+        assert.equal(
+          totalSupplyBN.toString(),
+          expectedTotalSupplyBN.toString(),
+          `Total supply should equal original token supply plus liquidity overmint. Expected: ${expectedTotalSupplyBN.toString()}, Actual: ${totalSupplyBN.toString()}`
+        );
+      }
     }
 
     // Fetch post-bid data
