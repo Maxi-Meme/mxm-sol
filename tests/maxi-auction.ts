@@ -71,6 +71,8 @@ import * as sql from "mssql";
 import { e } from '@raydium-io/raydium-sdk-v2/lib/api-6a529105';
 //import { program } from "@coral-xyz/anchor/dist/cjs/native/system";
 
+import { generateAndUploadTestTokenData, generateThemedTestToken, TestTokenData } from "./maxi-auction-testdata";
+
 const RENT_EXEMPT_MIN = 890880; // devnet 
 
 const DB_CONFIG: sql.config = {
@@ -352,19 +354,22 @@ describe("maxi-auction", () => {
     await test_bid_auction({ fill_percent: 1.0, bidderKp: adminKp });
   });
 
+  // TODO: test again one last time, make sure the bids after expiry don't work!!
   it("base - bids continuously", async () => {
-    const durationSecs = 36 * 5; // we want even div by 36; Harry!
-    const everySecs = 9;
-    const nBidsInTimerPeriod = Number(durationSecs / everySecs);
-    const bidPerc = (1 / (nBidsInTimerPeriod - 1));
-    console.log(`nBids: ${nBidsInTimerPeriod}, bidPerc: ${bidPerc}`);
-    await test_create_auction_KP0({ duration_hours_div100: durationSecs / 36 }); // units of 36s
+    const duration36Secs = 5; // units of 36s
+    const targetIntervalSecs = 9; // target time between bid starts
+    const nBidsInTimerPeriod = Number(duration36Secs * 36 / targetIntervalSecs);
+    const bidPerc = (1 / (nBidsInTimerPeriod - 1)); // we won't fill the auction with the last bid - it will end failed
+    console.log(`nBids: ${nBidsInTimerPeriod}, bidPerc: ${bidPerc}, targetInterval: ${targetIntervalSecs}s`);
+    await test_create_auction_KP0({ duration_hours_div100: duration36Secs }); // units of 36s
 
     let successfulBids = 0;
     let expectedFailuresStarted = false;
 
     const totalBids = nBidsInTimerPeriod + 1;
     for (let i = 0; i < nBidsInTimerPeriod + 1; i++) { // Add 1 extra bids beyond expected duration to test time validation
+      const bidStartTime = Date.now();
+
       try {
         await test_bid_auction({ fill_percent: bidPerc, skipValidations: true });
         successfulBids++;
@@ -388,7 +393,17 @@ describe("maxi-auction", () => {
         }
       }
 
-      await sleep(everySecs);
+      // Calculate how long the bid took and adjust sleep accordingly
+      const bidEndTime = Date.now();
+      const bidDurationMs = bidEndTime - bidStartTime;
+      const bidDurationSecs = bidDurationMs / 1000;
+      const remainingSleepSecs = Math.max(0, targetIntervalSecs - bidDurationSecs);
+
+      console.log(`Bid ${i + 1} took ${bidDurationSecs.toFixed(2)}s, sleeping ${remainingSleepSecs.toFixed(2)}s more (target: ${targetIntervalSecs}s total)`);
+
+      if (remainingSleepSecs > 0) {
+        await sleep(remainingSleepSecs);
+      }
     }
 
     console.log(`Test completed: ${successfulBids} successful bids (of ${totalBids}), failures started correctly after auction expiry`);
@@ -949,7 +964,73 @@ describe("maxi-auction", () => {
     await test_e2e_auction_success({ migrateAfterClaims: true }); // claims will happen first: patholigical case, we will trigger liqmove on event listener so it will happen fast
   });
 
+  // New test cases using dynamic test data generation
+  it("testdata - creates auction with dynamic meme data", async () => {
+    if (!isLocal) {
+      await test_create_auction_KP0({ useDynamicTestData: true, testDataTheme: 'meme' });
+    } else {
+      console.log("Skipping dynamic test data on local network");
+    }
+  });
 
+  it("testdata - creates auction with dynamic DeFi data", async () => {
+    if (!isLocal) {
+      await test_create_auction_KP0({ useDynamicTestData: true, testDataTheme: 'defi' });
+    } else {
+      console.log("Skipping dynamic test data on local network");
+    }
+  });
+
+  it("testdata - creates auction with dynamic gaming data", async () => {
+    if (!isLocal) {
+      await test_create_auction_KP0({ useDynamicTestData: true, testDataTheme: 'gaming' });
+    } else {
+      console.log("Skipping dynamic test data on local network");
+    }
+  });
+
+  it("testdata - creates auction with dynamic AI data", async () => {
+    if (!isLocal) {
+      await test_create_auction_KP0({ useDynamicTestData: true, testDataTheme: 'ai' });
+    } else {
+      console.log("Skipping dynamic test data on local network");
+    }
+  });
+
+  it("testdata - creates auction with random dynamic data", async () => {
+    if (!isLocal) {
+      await test_create_auction_KP0({ useDynamicTestData: true });
+    } else {
+      console.log("Skipping dynamic test data on local network");
+    }
+  });
+
+  it("testdata - creates multiple diverse auctions and bids", async () => {
+    if (!isLocal) {
+      // Create 3 different themed auctions with dynamic data
+      const themes = ['meme', 'defi', 'gaming'];
+
+      for (const theme of themes) {
+        await test_create_auction_KP0({
+          useDynamicTestData: true,
+          testDataTheme: theme,
+          duration_hours_div100: 5 // 5 units of 36s for testing
+        });
+
+        // Place a small bid to test the auction works
+        await test_bid_auction({
+          fill_percent: 0.1,
+          bidderKp: USER_KPs[Math.floor(Math.random() * USER_KPs.length)],
+          skipValidations: true
+        });
+
+        // Small delay between auctions
+        await sleep(2);
+      }
+    } else {
+      console.log("Skipping dynamic test data on local network");
+    }
+  });
 
   async function test_large_number_of_bids(numBids) {
     logger.color("magenta").log(`Starting stress test with ${numBids} bids...`);
@@ -1579,7 +1660,9 @@ describe("maxi-auction", () => {
 
   async function test_create_auction_KP0({
     auction_distribution_percent = undefined,
-    duration_hours_div100 = undefined
+    duration_hours_div100 = undefined,
+    useDynamicTestData = false,
+    testDataTheme = undefined
   }) {
     const signer = USER_KPs[0];
     logger.color("magenta").log(`${signer.publicKey.toBase58()} is creating auction...`);
@@ -1592,11 +1675,57 @@ describe("maxi-auction", () => {
     const tokenKp1 = isLocal ? Keypair.generate() : Keypair.fromSecretKey(bs58.decode(await getAndLockMaxiPrivKey()));
     const token = tokenKp1;
 
+    let name: string;
+    let symbol: string;
+    let uri: string;
+
+    if (useDynamicTestData && !isLocal) {
+      // Use dynamic test data generation (only on devnet/mainnet to avoid IPFS costs in local testing)
+      try {
+        logger.color("cyan").log("Generating dynamic test data with IPFS upload...");
+
+        let testData: TestTokenData;
+        if (testDataTheme) {
+          testData = await generateThemedTestToken(testDataTheme);
+        } else {
+          testData = await generateAndUploadTestTokenData();
+        }
+
+        name = testData.name;
+        symbol = testData.symbol;
+        uri = testData.metadataUri || TEST_TOKEN_URI;
+
+        logger.color("green").log(`Generated test token: ${name} (${symbol})`);
+        logger.color("blue").log(`Description: ${testData.description.substring(0, 100)}...`);
+        logger.color("yellow").log(`Image type: ${testData.imageExtension}`);
+        logger.color("magenta").log(`Metadata URI: ${uri}`);
+
+        if (testData.telegramLink) logger.color("blue").log(`Telegram: ${testData.telegramLink}`);
+        if (testData.websiteLink) logger.color("blue").log(`Website: ${testData.websiteLink}`);
+        if (testData.twitterLink) logger.color("blue").log(`Twitter: ${testData.twitterLink}`);
+
+      } catch (error) {
+        logger.color("red").log(`Failed to generate dynamic test data: ${error instanceof Error ? error.message : String(error)}`);
+        logger.color("yellow").log("Falling back to static test data...");
+
+        // Fallback to static data
+        name = TEST_TOKEN_NAME + ` ${generateRandomBase58(8)}`;
+        symbol = TEST_TOKEN_SYMBOL;
+        uri = TEST_TOKEN_URI;
+      }
+    } else {
+      // Use static test data (default behavior)
+      name = TEST_TOKEN_NAME + ` ${generateRandomBase58(8)}`;
+      symbol = TEST_TOKEN_SYMBOL;
+      uri = TEST_TOKEN_URI;
+
+      if (useDynamicTestData && isLocal) {
+        logger.color("yellow").log("Dynamic test data requested but disabled on local network to avoid IPFS costs");
+      }
+    }
+
     // Test auction data
     const xId = new BN(42);
-    const name = TEST_TOKEN_NAME + ` ${Date.now() / 1000}`;
-    const symbol = TEST_TOKEN_SYMBOL;
-    const uri = TEST_TOKEN_URI;
     const durationHours = new BN(duration_hours_div100 || 10);
 
     const distPercent = new BN(10000); // method 1 - overmint
@@ -3112,4 +3241,14 @@ function base58ToInt(base58Str) {
     value = value + charValue;
   }
   return value;
+}
+
+function generateRandomBase58(length) {
+  let result = '';
+  const characters = BASE58_ALPHABET;
+  const charactersLength = characters.length;
+  for (let i = 0; i < length; i++) {
+    result += characters.charAt(Math.floor(Math.random() * charactersLength));
+  }
+  return result;
 }
