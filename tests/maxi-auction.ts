@@ -353,36 +353,37 @@ describe("maxi-auction", () => {
   });
 
   it("base - bids continuously", async () => {
-    const durationSecs = 60 * 5;
-    const everySecs = 5;
-    const nBids = Number(durationSecs / everySecs);
-    const bidPerc = (1 / (nBids - 1)); // we'll fill at the last minute
-    console.log(`nBids: ${nBids}, bidPerc: ${bidPerc}`);
-    await test_create_auction_KP0({ duration_hours_div100: durationSecs / 36 });
+    const durationSecs = 36 * 5; // we want even div by 36; Harry!
+    const everySecs = 9;
+    const nBidsInTimerPeriod = Number(durationSecs / everySecs);
+    const bidPerc = (1 / (nBidsInTimerPeriod - 1));
+    console.log(`nBids: ${nBidsInTimerPeriod}, bidPerc: ${bidPerc}`);
+    await test_create_auction_KP0({ duration_hours_div100: durationSecs / 36 }); // units of 36s
 
     let successfulBids = 0;
     let expectedFailuresStarted = false;
 
-    for (let i = 0; i < nBids + 5; i++) { // Add 5 extra bids beyond expected duration to test time validation
+    const totalBids = nBidsInTimerPeriod + 1;
+    for (let i = 0; i < nBidsInTimerPeriod + 1; i++) { // Add 1 extra bids beyond expected duration to test time validation
       try {
         await test_bid_auction({ fill_percent: bidPerc, skipValidations: true });
         successfulBids++;
-        console.log(`Bid ${i + 1} successful - time remaining should be positive`);
+        console.log(`Bid ${i + 1} (of ${totalBids}) successful - time remaining should be positive`);
 
         // If we already started seeing failures, this shouldn't succeed
         if (expectedFailuresStarted) {
-          console.error(`Unexpected success after auction expiry for bid ${i + 1}`);
+          console.error(`Unexpected success after auction expiry for bid ${i + 1} (of ${totalBids})`);
           assert.fail("Bid should have failed after auction time expired");
         }
       } catch (err) {
-        console.log(`Bid ${i + 1} failed as expected - auction time expired:`, err.toString());
+        console.log(`Bid ${i + 1} (of ${totalBids}) failed as expected - auction time expired:`, err.toString());
 
         // Verify it's the right type of error (auction ended due to time)
         if (err.toString().includes("AuctionEnded")) {
           expectedFailuresStarted = true;
-          console.log(`✓ Time validation working: bid ${i + 1} correctly rejected after auction expiry`);
+          console.log(`✓ Time validation working: bid ${i + 1} (of ${totalBids}) correctly rejected after auction expiry`);
         } else {
-          console.error(`Unexpected error type for bid ${i + 1}:`, err);
+          console.error(`Unexpected error type for bid ${i + 1} (of ${totalBids}):`, err);
           throw err; // Re-throw if it's not the expected auction time error
         }
       }
@@ -390,7 +391,7 @@ describe("maxi-auction", () => {
       await sleep(everySecs);
     }
 
-    console.log(`Test completed: ${successfulBids} successful bids, failures started correctly after auction expiry`);
+    console.log(`Test completed: ${successfulBids} successful bids (of ${totalBids}), failures started correctly after auction expiry`);
 
     // Verify we got some successful bids and some failures
     assert.ok(successfulBids > 0, "Should have had some successful bids within auction period");
