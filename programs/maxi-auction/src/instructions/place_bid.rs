@@ -80,12 +80,18 @@ impl<'info> PlaceBid<'info> {
         require!(!auction.is_finalized, CustomError::AuctionAlreadyFinalized);
 
         // Validate bid and auction state 
-        //require!(auction.bids.len() < MAX_BIDS, CustomError::MaxBidsReached); // NEW
         require!(bid_quantity > 0, CustomError::InvalidBidQuantity);
 
         let clock = Clock::get()?;
-        require!(clock.unix_timestamp >= auction.start_timestamp, CustomError::AuctionNotStarted);
-        require!(!auction.is_finished, CustomError::AuctionEnded);
+
+        // auction period expired? update finished state if so
+        if clock.unix_timestamp >= auction.end_timestamp {
+            auction.is_finished = true;
+            msg!("place_bid - Auction marked as finished");
+        }
+        require!(clock.unix_timestamp >= auction.start_timestamp, CustomError::AuctionNotStarted); // in period
+        require!(clock.unix_timestamp <= auction.end_timestamp, CustomError::AuctionEnded); // in period
+        require!(!auction.is_finished, CustomError::AuctionEnded); // not marked as ended
 
         // init bid account, if not yet initialized
         if self.bids_account.bids.is_empty() {

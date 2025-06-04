@@ -359,10 +359,42 @@ describe("maxi-auction", () => {
     const bidPerc = (1 / (nBids - 1)); // we'll fill at the last minute
     console.log(`nBids: ${nBids}, bidPerc: ${bidPerc}`);
     await test_create_auction_KP0({ duration_hours_div100: durationSecs / 36 });
-    for (let i = 0; i < nBids; i++) { // bid same user, let's see what happens...
-      await test_bid_auction({ fill_percent: bidPerc });
+
+    let successfulBids = 0;
+    let expectedFailuresStarted = false;
+
+    for (let i = 0; i < nBids + 5; i++) { // Add 5 extra bids beyond expected duration to test time validation
+      try {
+        await test_bid_auction({ fill_percent: bidPerc, skipValidations: true });
+        successfulBids++;
+        console.log(`Bid ${i + 1} successful - time remaining should be positive`);
+
+        // If we already started seeing failures, this shouldn't succeed
+        if (expectedFailuresStarted) {
+          console.error(`Unexpected success after auction expiry for bid ${i + 1}`);
+          assert.fail("Bid should have failed after auction time expired");
+        }
+      } catch (err) {
+        console.log(`Bid ${i + 1} failed as expected - auction time expired:`, err.toString());
+
+        // Verify it's the right type of error (auction ended due to time)
+        if (err.toString().includes("AuctionEnded")) {
+          expectedFailuresStarted = true;
+          console.log(`✓ Time validation working: bid ${i + 1} correctly rejected after auction expiry`);
+        } else {
+          console.error(`Unexpected error type for bid ${i + 1}:`, err);
+          throw err; // Re-throw if it's not the expected auction time error
+        }
+      }
+
       await sleep(everySecs);
     }
+
+    console.log(`Test completed: ${successfulBids} successful bids, failures started correctly after auction expiry`);
+
+    // Verify we got some successful bids and some failures
+    assert.ok(successfulBids > 0, "Should have had some successful bids within auction period");
+    assert.ok(expectedFailuresStarted, "Should have started seeing failures after auction time expired");
   });
 
   it("base - bids and cancels continuously", async () => {
@@ -468,7 +500,7 @@ describe("maxi-auction", () => {
   });
 
   it("base - places a late bid", async () => {
-    await test_create_auction_KP0(0.95, 1); // ~36 secs, 95% distribution
+    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // ~36 secs, 95% distribution
     await sleep(32);
     await test_bid_auction({ fill_percent: 0.1 });
   });
