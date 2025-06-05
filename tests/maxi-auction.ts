@@ -108,7 +108,7 @@ var CONTRACT_CONFIG: any;
 
 // moveliq callback 
 const auctionFilledPromises = new Map();
-var MOVELIQ_PAUSE = false;
+var MOVELIQ_PAUSE = true;
 
 // admin & test keypairs
 var program: Program<MaxiAuction>;
@@ -116,7 +116,7 @@ var adminKp: Keypair;
 var USER_KPs: Keypair[];
 
 // prevent moveliq from triggering - useful when testing deployed API 
-var MOVELIQ_DISABLE = true; // TODO: set back to false when we've done testing API...
+var MOVELIQ_DISABLE = false;
 
 export async function setupProgramWithDeployedId(
   programId: PublicKey,
@@ -949,6 +949,10 @@ describe("maxi-auction", () => {
     await test_e2e_auction_success();
   });
 
+  it("claims - e2e - low settlement price", async () => {
+    await test_e2e_auction_low_settlement_price();
+  });
+
   it("claims - e2e - low clearing price auction", async () => {
     await test_e2e_auction_success({ lowClearingPrice: true, });
   });
@@ -1291,6 +1295,80 @@ describe("maxi-auction", () => {
         assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction after claims"); // claims should have returned all sol
       }
     }
+  }
+
+  async function test_e2e_auction_low_settlement_price() { // TODO: make this run much faster; specail case no waiting for confirmation -- to get really close to the limit
+    logger.color("cyan").log("Starting low settlement price test - single bid at last moment...");
+
+    // Create auction with 36s duration (1 unit)
+    await test_create_auction_KP0({ auction_distribution_percent: 0.9631, duration_hours_div100: 1 }); // 5% lock, 36s duration
+
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const auctionId = Number(globalInfoAccount.auctionsNum) - 1;
+    const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+    const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(auctionDataSeed), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
+
+    // Wait 34 seconds before placing the bid (very last moment)
+    logger.color("yellow").log("Waiting 25 seconds before placing single bid at last moment...");
+    await sleep(25);
+
+    // Place single bid to fill the entire auction at the very last moment
+    logger.color("cyan").log("Placing single bid to fill entire auction...");
+    const bidResult = await test_bid_auction({ fill_percent: 1.0, bidderKp: USER_KPs[0] }); // fill entire auction with single bid
+
+    // Verify auction succeeded (should not fail due to timing)
+    assert.deepEqual(bidResult.auctionPost.lastStatus, { succeeded: {} }, "expected succeeded, got " + JSON.stringify(bidResult.auctionPost.lastStatus));
+
+    // Log auction state after bid
+    const auctionPost = await program.account.auction.fetch(auctionData);
+    const auctionSolBalance = await connection.getBalance(auctionSol);
+    const bids = await getBids(program, auctionId);
+
+    console.log(`Single bid placed at last moment:`);
+    bids.forEach((bid) => {
+      console.log("bid", bid.bidder.toBase58(), `qty`, bid.bidQty.toNumber(), `price sol`, bid.bidSol.toNumber() / LAMPORTS_PER_SOL, `fee sol`, bid.bidFee.toNumber() / LAMPORTS_PER_SOL, `isClaimed`, bid.isClaimed);
+    });
+
+    // Verify only one bid was placed
+    assert.equal(bids.length, 1, "Should have exactly one bid");
+
+    // Wait for migration to complete (liquidity should be moved)
+    if (!isLocal) {
+      const migrationResult = await waitForMigration(auctionId);
+      logObject("migrationResult", migrationResult);
+      assert.ok(migrationResult.error == null, "migration should succeed even with last-moment bid");
+    }
+
+    // Claim the bid
+    const { solTransferred, tokensTransferred } = await test_claim_auction(USER_KPs[0], true, bidResult);
+
+    // Verify claim results for successful auction
+    assert.equal(tokensTransferred > 0, true, "Bidder should receive tokens");
+    assert.equal(solTransferred == 0, true, "Last-moment bidder should get no change (paid clearing price)");
+
+    // Verify liquidity was moved properly
+    if (!isLocal) {
+      const finalAuctionSolBalance = await connection.getBalance(auctionSol);
+      console.log(`Final auction SOL balance: ${finalAuctionSolBalance / LAMPORTS_PER_SOL} SOL`);
+
+      // Check that most SOL was moved to liquidity (should be <= rent exemption minimum)
+      assert.equal(finalAuctionSolBalance <= RENT_EXEMPT_MIN, true, "should be <= RENT_EXEMPT_MIN left in the auction after moveliq and claims");
+
+      // Verify mint authority was revoked
+      const mintInfo = await connection.getAccountInfo(new PublicKey(auctionPost.tokenMint));
+      if (mintInfo) {
+        const mintData = MintLayout.decode(mintInfo.data);
+        const mintAuthority = mintData.mintAuthorityOption === 1 ? new PublicKey(mintData.mintAuthority) : null;
+        console.log(`Mint Authority: ${mintAuthority ? mintAuthority.toBase58() : 'None'}`);
+        assert.equal(mintAuthority, null, "Mint authority should be revoked");
+      }
+    }
+
+    const clearingPrice = auctionPost.clearingPrice;
+    console.log(`Clearing price (low settlement): ${clearingPrice.toNumber() / LAMPORTS_PER_SOL} SOL per token`);
+
+    logger.color("green").log("Low settlement price test completed successfully!");
   }
 
   async function test_claim_auction(bidderKp: Keypair, assumeSuccessAuction: boolean = true, bidResult: any = undefined): Promise<{ solTransferred: number, tokensTransferred: number }> {

@@ -48,7 +48,7 @@ const DB_CONFIG: sql.config = {
 // https://github.com/raydium-io/raydium-sdk-V2-demo/tree/master/src/amm
 export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: boolean, auctionId: number, adminKp: Keypair, connection: Connection) => {
 
-  const LIQ_FEE_PERCENT = 69; // 0.69%, 10000 = 100%
+  const LIQ_FEE_PERCENT = 69;  //69; // 0.69 %, 10000 = 100 %
 
   try {
     // abort if min sol is not reached - user's will claim back their sol in full
@@ -581,6 +581,7 @@ async function createAndFundPool_v3_CLMM(
   // Open full range liquidity position and log fee
   const baseAmount = new BN(tokenAmount.toString());
 
+  // TODO: why can't we get this exact??
   // Define the buffer as 0.2% of wsolAmount
   const bufferPercent = 20; // 0.2% = 20 basis points (since BN doesn't support decimals directly)
   const buffer = new BN(wsolAmount.toString()).mul(new BN(bufferPercent)).div(new BN(10000));
