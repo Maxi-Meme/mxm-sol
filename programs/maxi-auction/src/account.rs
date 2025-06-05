@@ -39,7 +39,7 @@ pub struct Auction {
     pub is_tokens_withdrawn: bool, // 1
     pub is_finalized: bool,   // 1
 
-    // liqmove, post-auction:
+    // moveliq, post-auction:
     pub net_sol_raised: u64,  // 8
     pub liquidity_overmint: u64, // 8 - method 1 "overmint" field
     

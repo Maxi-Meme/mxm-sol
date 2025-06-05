@@ -581,12 +581,10 @@ async function createAndFundPool_v3_CLMM(
   // Open full range liquidity position and log fee
   const baseAmount = new BN(tokenAmount.toString());
 
-  // Define the buffer as 0.1% of wsolAmount
-  const bufferPercent = 10; // 0.1% = 10 basis points (since BN doesn't support decimals directly)
+  // Define the buffer as 0.2% of wsolAmount
+  const bufferPercent = 20; // 0.2% = 20 basis points (since BN doesn't support decimals directly)
   const buffer = new BN(wsolAmount.toString()).mul(new BN(bufferPercent)).div(new BN(10000));
   const otherAmountMax = new BN(wsolAmount.toString()).add(buffer);
-
-  // Log values for debugging and verification
   console.log(`createAndFundPool_v3_CLMM -> baseAmount`, Number(baseAmount.toString()) / 10 ** tokenDecimals);
   console.log(`createAndFundPool_v3_CLMM -> otherAmountMax`, Number(otherAmountMax.toString()) / LAMPORTS_PER_SOL);
   console.log(`createAndFundPool_v3_CLMM -> buffer`, Number(buffer.toString()) / LAMPORTS_PER_SOL);

@@ -214,10 +214,10 @@ impl<'info> CreateAuction<'info> {
             AuctionStatus::Live
         };
         
-        // liqmove: method 1 - distribute in full, mint more tokens (overmint) to achieve target price
+        // moveliq: method 1 - distribute in full, mint more tokens (overmint) to achieve target price
         auction_data_account.dist_percent = 10000;
 
-        // liqmove: method 2 - reverse fit sol to move to yield target price, for a given fixed token lock % (1-dist_percent)
+        // moveliq: method 2 - reverse fit sol to move to yield target price, for a given fixed token lock % (1-dist_percent)
         //auction_data_account.dist_percent = dist_percent; 
 
         auction_data_account.is_sol_withdrawn = false;

@@ -115,8 +115,8 @@ var program: Program<MaxiAuction>;
 var adminKp: Keypair;
 var USER_KPs: Keypair[];
 
-// prevent moveliq from triggering
-var MOVELIQ_DISABLE = false;
+// prevent moveliq from triggering - useful when testing deployed API 
+var MOVELIQ_DISABLE = true; // TODO: set back to false when we've done testing API...
 
 export async function setupProgramWithDeployedId(
   programId: PublicKey,
@@ -561,7 +561,7 @@ describe("maxi-auction", () => {
   });
 
   it("admin - no withdraws during auction", async () => {
-    await test_admin_withdraws({ n_bids: 1, withdraw_tokens: false, withdraw_sol: true, fill_auction: false }); // keep auction open - no liqmove
+    await test_admin_withdraws({ n_bids: 1, withdraw_tokens: false, withdraw_sol: true, fill_auction: false }); // keep auction open - no moveliq
     await test_admin_withdraws({ n_bids: 1, withdraw_tokens: true, withdraw_sol: false, fill_auction: false });
   });
 
@@ -961,7 +961,7 @@ describe("maxi-auction", () => {
   });
 
   it("claims - e2e - withdraws & movesliq after claims", async () => {
-    await test_e2e_auction_success({ migrateAfterClaims: true }); // claims will happen first: patholigical case, we will trigger liqmove on event listener so it will happen fast
+    await test_e2e_auction_success({ migrateAfterClaims: true }); // claims will happen first: patholigical case, we will trigger moveliq on event listener so it will happen fast
   });
 
   // New test cases using dynamic test data generation
@@ -1229,7 +1229,7 @@ describe("maxi-auction", () => {
 
     if (isLocal) {
       const expectedTotalChange = new BN((await getBids(program, auctionId)).map((bid) => { //auctionPost.bids.map((bid) => {
-        // if no liqmove took place
+        // if no moveliq took place
         // expected in auction: is sum(clearing price * total qty) [change was returned] - sum(bid fees) [was taken at bid time]
         if (bid.bidSol.gt(clearingPrice)) {
           const paid = bid.bidSol.mul(bid.bidQty).sub(bid.bidFee);
@@ -1250,14 +1250,14 @@ describe("maxi-auction", () => {
     }
     else {
       if (assumeSuccessAuction) {
-        // liqmove happened *and* claims happened...
+        // moveliq happened *and* claims happened...
         console.log(`auctionSolBalance`, auctionSolBalance.toString() / LAMPORTS_PER_SOL);
 
         // suffering exists, craving causing suffering, crazing can be overcome, this is the way...
         // OLD: Method 1 - overmint
         // withdraw_sol *may* hold back RENT_EXEMPT_MIN (it'a param internally, set to zero currently)
         assert.equal(//BigInt(auctionSolBalance) < BigInt(0.001 * LAMPORTS_PER_SOL),  // life is suffering
-          auctionSolBalance <= RENT_EXEMPT_MIN, true, "should be <= RENT_EXEMPT_MIN left in the auction after liqmove and claims");
+          auctionSolBalance <= RENT_EXEMPT_MIN, true, "should be <= RENT_EXEMPT_MIN left in the auction after moveliq and claims");
 
         // Method 2: Check that remaining SOL in the auction account is netSolRaised - liquiditySol
         // const netSolRaised = auctionPost.netSolRaised; // BN from Anchor
@@ -1286,7 +1286,7 @@ describe("maxi-auction", () => {
         }        
       }
       else {
-        // no liqmove happened, but claims did happen...
+        // no moveliq happened, but claims did happen...
         console.log(`auctionSolBalance`, auctionSolBalance.toString() / LAMPORTS_PER_SOL);
         assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction after claims"); // claims should have returned all sol
       }
