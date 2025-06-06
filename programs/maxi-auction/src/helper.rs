@@ -12,6 +12,7 @@ pub fn get_net_sol_raised(
     rent_exempt_minimum: u64,
     balance: u64,
 ) -> Result<u64> { // Fixed: Only one generic argument
+    
     // Calculate total refunds owed for unclaimed bids
     let total_unclaimed_refunds = bids.iter()
         .filter(|bid| !bid.is_claimed) // Only unclaimed bids

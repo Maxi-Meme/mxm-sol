@@ -1960,7 +1960,17 @@ describe("maxi-auction", () => {
     const tx = await program.methods.placeBid(
       bidQty, 
       new BN(base58ToInt(firstFourChars)), // dummy xid from pub key
-      new BN(fee_perc * 100 * 100)) // 0-1 => 0-10000
+
+      //
+      // DMVIN_TEST -- this is counterintuitive! but the fee paid here in sol by the bidder,
+      //  determines the total # of tokens minted in the last bid (T) = S / P
+      //  where S = net sol raised (= clearing_price * total_bid_qty)
+      //    and P = clearning_price
+      // the clearing_prices cancel out, and T = total_bid_qty -- hence, 50/50 split of auction (bid qty) & overminted qty
+      // but if we take fees from the sol (net sol raised) then T also reduces by the same fee %
+      //
+      new BN(fee_perc * 100 * 100)) // 0-1 => 0-10000 
+
       .accounts({
         bidder: signer.publicKey,
         auctionDataAccount: auctionData,

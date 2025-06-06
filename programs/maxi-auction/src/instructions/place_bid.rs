@@ -73,7 +73,7 @@ pub struct PlaceBid<'info> {
 
 impl<'info> PlaceBid<'info> {
     pub fn process(&mut self, bid_quantity: u64, x_id: u64, fee_perc: u64) -> Result<()> {
-        let rent = Rent::get()?;
+    let rent = Rent::get()?;
 
         let auction = &mut self.auction_data_account;
         let default_start_price = self.global_info.config.default_start_price_lamports;
@@ -397,7 +397,7 @@ impl<'info> PlaceBid<'info> {
                 msg!("Overminted {} token units for liquidity", auction.liquidity_overmint);
                 msg!("Total {} token units", auction.liquidity_overmint + auction.token_supply);
 
-                //  revoke mint authority
+                // revoke mint authority
                 token::set_authority(
                     CpiContext::new_with_signer(
                         self.token_program.to_account_info(),
