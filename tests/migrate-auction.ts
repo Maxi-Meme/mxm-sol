@@ -126,7 +126,7 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
       createSyncNativeInstruction(adminWsolAccount.address)
     );
     wrapTx.feePayer = adminKp.publicKey;
-    wrapTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+    wrapTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
     const wrapSig = await sendAndConfirmTransaction(connection, wrapTx, [adminKp]);
     console.log(`${wrapSig} migrateAuction => Wrapped SOL into WSOL`);
 
@@ -222,7 +222,7 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
           TOKEN_PROGRAM_ID
         ));
       feeTx.feePayer = adminKp.publicKey;
-      feeTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      feeTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
       const feeSig = await sendAndConfirmTransaction(connection, feeTx, [adminKp]);
       await logSuccessTx(connection, feeSig, `migrateAuction (${auctionId}) => Sent fee ${liqFeeTokens.toNumber() / 10 ** mintAccount.decimals} tokens to the revenue wallet`);
     } else {
@@ -249,7 +249,7 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
         )
       );
       wsolFeeTx.feePayer = adminKp.publicKey;
-      wsolFeeTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      wsolFeeTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
       const wsolFeeSig = await sendAndConfirmTransaction(connection, wsolFeeTx, [adminKp]);
       await logSuccessTx(connection, wsolFeeSig, `migrateAuction (${auctionId}) => Sent fee ${liqFeeWSol.toNumber() / LAMPORTS_PER_SOL} WSOL to the revenue wallet`);
     } else {

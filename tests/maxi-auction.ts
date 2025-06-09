@@ -1717,7 +1717,7 @@ describe("maxi-auction", () => {
         .signers([signer])
         .transaction();
       tx.feePayer = signer.publicKey;
-      tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      tx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
       try {
         const sig = await sendAndConfirmTransaction(connection, tx, [signer]);
         await logSuccessTx(connection, sig, "initialize");
@@ -1869,7 +1869,7 @@ describe("maxi-auction", () => {
       .add(createAuctionIx)
       .add(initAuctionBidsIx);
     tx.feePayer = signer.publicKey;
-    tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+    tx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
 
     try {
       const sig = await sendAndConfirmTransaction(connection, tx, [adminKp, signer, token]);
@@ -1984,7 +1984,7 @@ describe("maxi-auction", () => {
       })
       .transaction();
     tx.feePayer = signer.publicKey;
-    tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+    tx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
     const sig = await sendAndConfirmTransaction(connection, tx, [adminKp, signer]).catch(err => {
       console.error("Error during transaction signing or confirmation:", err);
       console.error("logs:", err.getLogs());
@@ -2218,7 +2218,7 @@ describe("maxi-auction", () => {
       })
       .transaction();
     cancelTx.feePayer = bidderKp.publicKey;
-    cancelTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+    cancelTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
 
     let cancelSig;
     try {
@@ -2326,7 +2326,7 @@ describe("maxi-auction", () => {
         createSyncNativeInstruction(minterWsolAccount.address)
       );
       wrapTx.feePayer = minterKp.publicKey;
-      wrapTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      wrapTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
       await logSuccessTx(connection, await sendAndConfirmTransaction(connection, wrapTx, [minterKp]), "Wrapped SOL to WSOL");
     }
 
@@ -2497,7 +2497,7 @@ describe("maxi-auction", () => {
         createSyncNativeInstruction(minterWsolAccount.address)
       );
       wrapTx.feePayer = minterKp.publicKey;
-      wrapTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      wrapTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
       const wrapSig = await sendAndConfirmTransaction(connection, wrapTx, [minterKp]);
       await logSuccessTx(connection, wrapSig, "Wrapped minter's SOL into WSOL");
     }
@@ -3011,7 +3011,7 @@ async function setupAccount(connection: Connection, adminKp: Keypair, setupAccou
 
     const tx = new Transaction().add(transferIx);
     tx.feePayer = adminKp.publicKey;
-    tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+    tx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
 
     const sig = await sendAndConfirmTransaction(connection, tx, [adminKp]);
     await logSuccessTx(connection, sig, "setupAccount " + setupAccountPubKey.toBase58());
@@ -3187,7 +3187,7 @@ async function finalizeAuction(auctionId) {
     //.signers([adminKp, /*feeAccount*/])
     .transaction();
   tx.feePayer = adminKp.publicKey;
-  tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+  tx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
   try {
     const sig = await sendAndConfirmTransaction(connection, tx, [adminKp, feeAccount]);  // dual sig
     await logSuccessTx(connection, sig, "finalize");
