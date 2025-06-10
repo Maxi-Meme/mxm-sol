@@ -118,7 +118,7 @@ var USER_KPs: Keypair[];
 // prevent moveliq from triggering - useful when testing deployed API 
 var MOVELIQ_DISABLE = false;
 
-export async function setupProgramWithDeployedId(
+/*export async function setupProgramWithDeployedId(
   programId: PublicKey,
   network: string,
   adminKp: Keypair
@@ -150,7 +150,7 @@ export async function setupProgramWithDeployedId(
   // Create and return the Program instance using the fetched IDL
   const program = new Program(idl, programId, provider);
   return program;
-}
+}*/
 
 describe("maxi-auction", () => {
   // setup provider & program
@@ -2440,10 +2440,6 @@ describe("maxi-auction", () => {
 
     assert.ok(Math.abs(INITIAL_PRICE - 1 / poolInfoRpc.currentPrice) < 1e-6, 'Current price mismatch');
   }
-
-
-
-
 
   //
   // Raydium - v2 AMM Pools
