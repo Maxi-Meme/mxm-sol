@@ -5,6 +5,14 @@ import { BN } from "bn.js";
 import { Raydium, PoolUtils, TokenAmount, } from '@raydium-io/raydium-sdk-v2';
 import keypair from "../id.json";
 
+// Instruction type mapping for decoding
+const typeMap = {
+    'SwapV2': 'swap',
+    'OpenPositionV2': 'open_position',
+    'ClosePositionV2': 'close_position',
+    'CreatePool': 'create_pool',
+};
+
 describe('CLMM Pools', () => {
 
     var providerEnv = anchor.AnchorProvider.env();
@@ -18,6 +26,72 @@ describe('CLMM Pools', () => {
     console.log("isMainnet", isMainnet);
     const connection = providerEnv.connection;
     const adminKp = Keypair.fromSecretKey(Uint8Array.from(keypair));
+
+    it('pools - clmm tx history and real-time monitor', async function () {
+        this.timeout(0); // Disable timeout for continuous monitoring
+
+        // Initialize Raydium SDK
+        const raydium = await Raydium.load({
+            connection,
+            owner: adminKp,
+            disableFeatureCheck: true,
+            blockhashCommitment: 'confirmed',
+        });
+
+        // Define the pool to monitor
+        const poolId = new PublicKey('41GFAa6LYFi9oG5kxXPCvbs5NLkyS8NiaRFtmYxpAAPH');
+        const poolData = await raydium.clmm.getPoolInfoFromRpc(poolId);
+        const poolInfo = poolData.poolInfo;
+
+        // Step 1: Fetch and process historical transactions
+        const signatures = [];
+        let before = null;
+        do {
+            const result = await connection.getSignaturesForAddress(poolId, { before, limit: 1000 }, 'confirmed');
+            signatures.push(...result.map(res => res.signature));
+            before = result.length > 0 ? result[result.length - 1].signature : null;
+        } while (before);
+
+        console.log(`Total historical signatures found: ${signatures.length}`);
+
+        const processedSignatures = new Set();
+
+        for (const signature of signatures) {
+            const tx = await connection.getTransaction(signature, {
+                commitment: 'confirmed',
+                maxSupportedTransactionVersion: 0
+            });
+            if (tx) {
+                decodeTransaction(tx, poolInfo);
+                processedSignatures.add(signature);
+            }
+        }
+
+        console.log('Processed historical transactions. Now listening for new transactions...');
+
+        // Step 2: Subscribe to new transactions
+        connection.onLogs(
+            poolId,
+            async (logs, context) => {
+                const signature = logs.signature;
+                if (!processedSignatures.has(signature)) {
+                    const tx = await connection.getTransaction(signature, {
+                        commitment: 'confirmed',
+                        maxSupportedTransactionVersion: 0
+                    });
+                    if (tx) {
+                        decodeTransaction(tx, poolInfo);
+                        processedSignatures.add(signature);
+                    }
+                }
+            },
+            'confirmed'
+        );
+
+        // Keep the test running indefinitely
+        await new Promise(() => { });
+    });
+
 
     it('pools - price & preview match', async () => {
         let raydium: Raydium;
@@ -209,82 +283,232 @@ describe('CLMM Pools', () => {
 
     });
 
-    it('pools - clmm tx history', async function () {
-        // Set Mocha timeout to 16.67 minutes (1,000,000 ms) as specified in the invocation
+    /*it('pools - clmm tx history', async function () {
         this.timeout(1000000);
 
-        // Establish connection to Solana mainnet
-        const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
+        let raydium: Raydium;
+        raydium = await Raydium.load({
+            connection,
+            owner: adminKp,
+            disableFeatureCheck: true,
+            blockhashCommitment: 'confirmed',
+        });
 
-        // Hard-coded pool ID (replace with your actual pool ID)
-        const poolId = new PublicKey('3yi8R2ka192ZjMYmbN6s5HDdFBraNuLm1XtNfLxMbhgT');
-
-        // Step 1: Fetch all transaction signatures involving the pool address
+        const poolId = new PublicKey('41GFAa6LYFi9oG5kxXPCvbs5NLkyS8NiaRFtmYxpAAPH');
         console.log(`Fetching transaction signatures for pool: ${poolId.toBase58()}`);
-        const signatures: TransactionSignature[] = [];
-        let before: string | null = null;
-        let fetchCount = 0;
 
-        try {
-            do {
-                const result = await connection.getSignaturesForAddress(poolId, {
-                    before,
-                    limit: 1000, // Max allowed by Solana API per request
-                });
-                signatures.push(...result.map((res) => res.signature));
-                before = result.length > 0 ? result[result.length - 1].signature : null;
-                fetchCount += result.length;
-                console.log(`Fetched ${fetchCount} signatures so far...`);
-            } while (before);
-        } catch (error) {
-            console.error('Error fetching signatures:', error);
-            throw new Error('Failed to retrieve transaction signatures');
-        }
+        // Fetch transaction signatures
+        const signatures = [];
+        let before = null;
+        do {
+            const result = await connection.getSignaturesForAddress(poolId, { before, limit: 1000 }, 'confirmed');
+            signatures.push(...result.map(res => res.signature));
+            before = result.length > 0 ? result[result.length - 1].signature : null;
+        } while (before);
 
         console.log(`Total signatures found: ${signatures.length}`);
 
-        // Step 2: Define transaction type mapping based on expected instruction names
-        const typeMap: { [key: string]: string } = {
-            'InitializePool': 'creation',
-            'Swap': 'swap',
-            'IncreaseLiquidity': 'liquidity',
-            'DecreaseLiquidity': 'liquidity',
-            // Add more instruction names as needed based on Raydium V3 CLMM program
+        // Fetch pool info
+        const poolData = await raydium.clmm.getPoolInfoFromRpc(poolId);
+        const poolInfo = poolData.poolInfo;
+        const mintA = poolInfo.mintA.address; // String
+        const mintB = poolInfo.mintB.address; // String
+        const vaultA = poolInfo.vaultA;       // PublicKey
+        const vaultB = poolInfo.vaultB;       // PublicKey
+        const solMint = 'So11111111111111111111111111111111111111112';
+        const isMintASol = mintA === solMint;
+        const isMintBSol = mintB === solMint;
+
+        const typeMap = {
+            'SwapV2': 'swap',
+            'OpenPositionV2': 'open_position',
+            'ClosePositionV2': 'close_position',
+            'CreatePool': 'create_pool',
         };
 
-        // Step 3: Process each transaction and classify based on logs
         console.log('\nProcessing transactions:');
         for (const signature of signatures) {
-            try {
-                const tx = await connection.getTransaction(signature, {
-                    commitment: 'confirmed',
-                    maxSupportedTransactionVersion: 0, // Support legacy transactions
-                });
+            const tx = await connection.getTransaction(signature, {
+                commitment: 'confirmed',
+                maxSupportedTransactionVersion: 0,
+            });
 
-                if (!tx || !tx.meta || !tx.meta.logMessages) {
-                    console.log(`Transaction ${signature}: No metadata or logs available`);
+            if (!tx || !tx.meta || !tx.meta.logMessages || !tx.meta.preTokenBalances || !tx.meta.postTokenBalances) {
+                console.log(`Transaction ${signature}: No metadata or balance data available`);
+                continue;
+            }
+
+            // Determine transaction type
+            let txType = 'unknown';
+            let instructionName = 'unknown';
+            for (const msg of tx.meta.logMessages) {
+                if (msg.startsWith('Program log: Instruction: ')) {
+                    instructionName = msg.split(': ')[2] || 'unknown';
+                    txType = typeMap[instructionName] || 'unknown';
+                    break;
+                }
+            }
+
+            let action = 'unknown';
+            let amountIn = 0;
+            let amountOut = 0;
+
+            if (txType === 'swap') {
+                const accountKeys = tx.transaction.message.staticAccountKeys;
+
+                // Correctly find vault indices using PublicKey.equals
+                const vaultAIndex = accountKeys.findIndex(key => key.equals(vaultA));
+                const vaultBIndex = accountKeys.findIndex(key => key.equals(vaultB));
+
+                if (vaultAIndex === -1 || vaultBIndex === -1) {
+                    console.log(`Transaction ${signature}: Vaults not found in account keys`);
+                    console.log('Vault A:', vaultA.toBase58());
+                    console.log('Vault B:', vaultB.toBase58());
+                    console.log('Account keys:', accountKeys.map(key => key.toBase58()));
                     continue;
                 }
 
-                // Analyze log messages to determine transaction type
-                let txType = 'unknown';
-                let instructionName = 'unknown';
-                for (const msg of tx.meta.logMessages) {
-                    if (msg.startsWith('Instruction: ')) {
-                        instructionName = msg.split(': ')[1] || 'unknown';
-                        txType = typeMap[instructionName] || 'unknown';
-                        break; // Assume first instruction is the primary action
+                // Get vault balances
+                const preVaultA = tx.meta.preTokenBalances.find(b => b.accountIndex === vaultAIndex && b.mint === mintA);
+                const postVaultA = tx.meta.postTokenBalances.find(b => b.accountIndex === vaultAIndex && b.mint === mintA);
+                const preVaultB = tx.meta.preTokenBalances.find(b => b.accountIndex === vaultBIndex && b.mint === mintB);
+                const postVaultB = tx.meta.postTokenBalances.find(b => b.accountIndex === vaultBIndex && b.mint === mintB);
+
+                if (!preVaultA || !postVaultA || !preVaultB || !postVaultB) {
+                    console.log(`Transaction ${signature}: Missing token balance data for vaults`);
+                    continue;
+                }
+
+                // Calculate balance changes
+                const changeVaultA = parseFloat(postVaultA.uiTokenAmount.uiAmount || 0) - parseFloat(preVaultA.uiTokenAmount.uiAmount || 0);
+                const changeVaultB = parseFloat(postVaultB.uiTokenAmount.uiAmount || 0) - parseFloat(preVaultB.uiTokenAmount.uiAmount || 0);
+
+                // Determine swap direction
+                if (changeVaultA > 0 && changeVaultB < 0) {
+                    if (isMintASol) {
+                        action = 'buy token with SOL';
+                        amountIn = changeVaultA;
+                        amountOut = -changeVaultB;
+                    } else if (isMintBSol) {
+                        action = 'sell token for SOL';
+                        amountIn = changeVaultA;
+                        amountOut = -changeVaultB;
+                    }
+                } else if (changeVaultA < 0 && changeVaultB > 0) {
+                    if (isMintBSol) {
+                        action = 'buy token with SOL';
+                        amountIn = changeVaultB;
+                        amountOut = -changeVaultA;
+                    } else if (isMintASol) {
+                        action = 'sell token for SOL';
+                        amountIn = changeVaultB;
+                        amountOut = -changeVaultA;
                     }
                 }
 
-                console.log(`Transaction ${signature}: ${txType} (Instruction: ${instructionName})`);
-            } catch (error) {
-                console.error(`Error fetching transaction ${signature}:`, error);
-                // Continue to next transaction on error
+                console.log(`\nTransaction ${signature}:`);
+                console.log(`  Type: ${txType}`);
+                console.log(`  Instruction: ${instructionName}`);
+                console.log(`  Action: ${action}`);
+                if (action === 'buy token with SOL') {
+                    console.log(`  Bought ${amountOut} tokens with ${amountIn} SOL`);
+                } else if (action === 'sell token for SOL') {
+                    console.log(`  Sold ${amountIn} tokens for ${amountOut} SOL`);
+                }
+            } else {
+                console.log(`\nTransaction ${signature}:`);
+                console.log(`  Type: ${txType}`);
+                console.log(`  Instruction: ${instructionName}`);
+                console.log(`  Action: ${action}`);
             }
         }
+    });*/
 
-        // Optional: Add assertions if desired
-        // Example: expect(signatures.length).to.be.greaterThan(0, 'No transactions found for the pool');
-    });
 });
+
+/**
+ * Decodes a transaction and logs its details based on instruction type.
+ * @param {Object} tx - The transaction object from getTransaction.
+ * @param {Object} poolInfo - Pool information containing vault and mint details.
+ */
+function decodeTransaction(tx, poolInfo) {
+    const logMessages = tx.meta.logMessages;
+    let instructionName = 'unknown';
+
+    // Extract instruction name from log messages
+    for (const msg of logMessages) {
+        if (msg.startsWith('Program log: Instruction: ')) {
+            instructionName = msg.split(': ')[2] || 'unknown';
+            break;
+        }
+    }
+
+    const txType = typeMap[instructionName] || 'unknown';
+    let action = 'unknown';
+    let amountIn = 0;
+    let amountOut = 0;
+
+    if (txType === 'swap') {
+        const accountKeys = tx.transaction.message.staticAccountKeys;
+        const vaultAIndex = accountKeys.findIndex(key => key.equals(poolInfo.vaultA));
+        const vaultBIndex = accountKeys.findIndex(key => key.equals(poolInfo.vaultB));
+
+        if (vaultAIndex === -1 || vaultBIndex === -1) {
+            console.log(`Transaction ${tx.transaction.signatures[0]}: Vaults not found in account keys`);
+            return;
+        }
+
+        const preVaultA = tx.meta.preTokenBalances.find(b => b.accountIndex === vaultAIndex && b.mint === poolInfo.mintA.address);
+        const postVaultA = tx.meta.postTokenBalances.find(b => b.accountIndex === vaultAIndex && b.mint === poolInfo.mintA.address);
+        const preVaultB = tx.meta.preTokenBalances.find(b => b.accountIndex === vaultBIndex && b.mint === poolInfo.mintB.address);
+        const postVaultB = tx.meta.postTokenBalances.find(b => b.accountIndex === vaultBIndex && b.mint === poolInfo.mintB.address);
+
+        if (!preVaultA || !postVaultA || !preVaultB || !postVaultB) {
+            console.log(`Transaction ${tx.transaction.signatures[0]}: Missing token balance data for vaults`);
+            return;
+        }
+
+        const changeVaultA = parseFloat(postVaultA.uiTokenAmount.uiAmount || 0) - parseFloat(preVaultA.uiTokenAmount.uiAmount || 0);
+        const changeVaultB = parseFloat(postVaultB.uiTokenAmount.uiAmount || 0) - parseFloat(preVaultB.uiTokenAmount.uiAmount || 0);
+        const isMintASol = poolInfo.mintA.address === 'So11111111111111111111111111111111111111112';
+        const isMintBSol = poolInfo.mintB.address === 'So11111111111111111111111111111111111111112';
+
+        if (changeVaultA > 0 && changeVaultB < 0) {
+            if (isMintASol) {
+                action = 'buy token with SOL';
+                amountIn = changeVaultA;
+                amountOut = -changeVaultB;
+            } else if (isMintBSol) {
+                action = 'sell token for SOL';
+                amountIn = changeVaultA;
+                amountOut = -changeVaultB;
+            }
+        } else if (changeVaultA < 0 && changeVaultB > 0) {
+            if (isMintBSol) {
+                action = 'buy token with SOL';
+                amountIn = changeVaultB;
+                amountOut = -changeVaultA;
+            } else if (isMintASol) {
+                action = 'sell token for SOL';
+                amountIn = changeVaultB;
+                amountOut = -changeVaultA;
+            }
+        }
+    } else if (txType === 'open_position') {
+        action = 'open position';
+    } else if (txType === 'close_position') {
+        action = 'close position';
+    } else if (txType === 'create_pool') {
+        action = 'create pool';
+    }
+
+    console.log(`\nTransaction ${tx.transaction.signatures[0]}:`);
+    console.log(`  Type: ${txType}`);
+    console.log(`  Instruction: ${instructionName}`);
+    console.log(`  Action: ${action}`);
+    if (action === 'buy token with SOL') {
+        console.log(`  Bought ${amountOut} tokens with ${amountIn} SOL`);
+    } else if (action === 'sell token for SOL') {
+        console.log(`  Sold ${amountIn} tokens for ${amountOut} SOL`);
+    }
+}
