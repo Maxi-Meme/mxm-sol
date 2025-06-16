@@ -108,7 +108,6 @@ describe('CLMM Pools', () => {
             // Initialize transaction data collection for this pool
             const poolTxData = {
                 poolIdStr,
-                poolSymbol: '',
                 historicalTxs: [],
                 stats: { swaps: 0, positions: 0, other: 0 }
             };
@@ -119,9 +118,7 @@ describe('CLMM Pools', () => {
                 const poolDataStartTime = Date.now();
                 const poolData = await raydium.clmm.getPoolInfoFromRpc(poolIdStr); // Fix: pass string instead of PublicKey
                 const poolInfo = poolData.poolInfo;
-                poolTxData.poolSymbol = `${poolInfo.mintA.symbol}/${poolInfo.mintB.symbol}`;
                 console.log(`[Pool ${poolIndex + 1}] ✅ Pool data fetched in ${Date.now() - poolDataStartTime}ms`);
-                console.log(`[Pool ${poolIndex + 1}] 🏊 Pool: ${poolTxData.poolSymbol}`);
 
                 // Step 2: Fetch historical transactions
                 console.log(`[Pool ${poolIndex + 1}] 📜 Fetching historical signatures...`);
@@ -510,7 +507,7 @@ function formatTransactionConcise(txData) {
  * @param {Object} poolTxData - Pool transaction data
  */
 function logPoolTransactionsConsolidated(poolTxData) {
-    const { poolIdStr, poolSymbol, historicalTxs, stats } = poolTxData;
+    const { poolIdStr, historicalTxs, stats } = poolTxData;
     const shortPoolId = poolIdStr.substring(0, 8);
 
     // Create concise transaction representations
@@ -521,7 +518,7 @@ function logPoolTransactionsConsolidated(poolTxData) {
     // Group similar transactions for even more density
     const groupedTxs = groupSimilarTransactions(txStrings);
 
-    console.log(`📊 [${shortPoolId}] ${poolSymbol} | ${stats.swaps}S ${stats.positions}P ${stats.other}O | ${groupedTxs}`);
+    console.log(`📊 [${shortPoolId}] | ${stats.swaps}S ${stats.positions}P ${stats.other}O | ${groupedTxs}`);
 }
 
 /**
