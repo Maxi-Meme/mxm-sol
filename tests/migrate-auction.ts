@@ -7,7 +7,7 @@ import {
   Transaction,
   SystemProgram,
 } from "@solana/web3.js";
-import { BN } from "bn.js";
+import BN from "bn.js";
 import {
   createAssociatedTokenAccountIdempotent,
   createAssociatedTokenAccountIdempotentInstruction,
@@ -15,7 +15,19 @@ import {
   getTokenMetadata,
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
-import { Raydium, TxVersion, DEVNET_PROGRAM_ID, CLMM_PROGRAM_ID, WSOLMint, AMM_V4, OPEN_BOOK_PROGRAM, FEE_DESTINATION_ID, MARKET_STATE_LAYOUT_V3, TOKEN_WSOL, ApiV3Token, TickUtils } from '@raydium-io/raydium-sdk-v2';
+
+import { Raydium, TxVersion, DEVNET_PROGRAM_ID, CLMM_PROGRAM_ID, WSOLMint, AMM_V4, OPEN_BOOK_PROGRAM, FEE_DESTINATION_ID, MARKET_STATE_LAYOUT_V3, TOKEN_WSOL, ApiV3Token, TickUtils }
+  from '@raydium-io/raydium-sdk-v2';
+
+import { PoolUtils } from '@raydium-io/raydium-sdk-v2';
+
+import {
+  ApiV3PoolInfoConcentratedItem,
+  ClmmKeys,
+  ComputeClmmPoolInfo,
+  ReturnTypeFetchMultiplePoolTickArrays,
+} from '@raydium-io/raydium-sdk-v2'
+
 import { getMint, getOrCreateAssociatedTokenAccount, createSyncNativeInstruction, createTransferInstruction } from '@solana/spl-token';
 import { Connection, Keypair } from "@solana/web3.js";
 import { Program } from "@coral-xyz/anchor";
@@ -43,6 +55,8 @@ const DB_CONFIG: sql.config = {
     idleTimeoutMillis: 30000
   }
 };
+
+const GIFT_HOLDING_ACCOUNT = new PublicKey("GJcEf3rXCy2vg31bprhGjkau6Wqio9Y899W5jwLYZTac");
 
 // migrate auction liquidity to a new raydium pool
 // https://github.com/raydium-io/raydium-sdk-V2-demo/tree/master/src/amm
@@ -92,8 +106,9 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
       throw new Error('CONFIG_MIN_TOTAL_SOL is too low');
     }
 
-    // withdraw funds & 
-    // validate min sol bid thresholds
+    //
+    // withdraw funds & validate min sol bid thresholds
+    //
     const { solAmount: solWithdrawn, tokenAmount: tokensWithdrawn, tokenMint, adminTokenAccount } = await withdrawFunds(program, isMainnet, auctionId, adminKp, connection);
     if (solWithdrawn === BigInt(0) || tokensWithdrawn === BigInt(0)) {
       throw ("Failed withdrawing funds");
@@ -107,6 +122,12 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
     if (new BN(solWithdrawn.toString()).lt(new BN(CONFIG_MIN_TOTAL_SOL.toString()))) { // to cover our costs 
       throw new Error('solWithdrawn is too low: CONFIG_MIN_TOTAL_SOL #### SHOULD NOT HAPPEN! auction state should be failed, and admin withdraw not allowed #####');
     }
+
+    //
+    // xAirDrop / Gifts: Get auction gifts total percentage
+    //
+    const totalGiftPercent = await getAuctionGifts(auctionId, tokenMint);
+    console.log(`totalGiftPercent`, totalGiftPercent);
 
     //
     // calc how much sol to wrap - we keep setup costs in sol
@@ -137,19 +158,9 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
     //var liquidityTokens = new BN(tokensWithdrawn.toString());
 
     // Method 1 ("overmint") / we use all the sol, and the computed amount of tokens to produce the desired price (see place_bid.rs)
-    //const originalTUnits = new BN(tokensWithdrawn.toString());
-    //const originalTUnits = new BN(tokensWithdrawn.toString()).mul(new BN(1000)).div(new BN(1005)); // old: extract fee 0.5%: see place_bid.rs
-    const originalTUnits = new BN(tokensWithdrawn.toString()).mul(new BN(10000)).div(new BN(10001)); // take off a tiny amount; avoid rounding errors in Raydium
-
-    var liquidityTokens = new BN(originalTUnits.toString()); // we'll take a fee below, so this isn't needed
-    //const feeTokens = new BN(tokensWithdrawn.toString()).sub(originalTUnits);
-    //console.log(`feeTokens`, feeTokens.toString());
-    //var liquidityTokens = new BN(originalTUnits.toString()).mul(new BN(999)).div(new BN(1000)); // originalTUnits; //new BN(tokensWithdrawn.toString()).sub(feeTokens); // v important! For whatever reason, we can't supply tokens leaving exactly zero in our account - raydium open position fails - so, move 99.9% of the ex fee amount
-    console.log(`liquidityTokens`, liquidityTokens.toString());
-
+    var liquidityTokens = new BN(tokensWithdrawn.toString()).mul(new BN(10000)).div(new BN(10001)); // take off a tiny amount; avoid rounding errors in Raydium
     console.log(`tokensWithdrawn`, tokensWithdrawn.toString());
-    console.log(`originalTUnits`, originalTUnits.toString());
-    console.log(`liquidityTokens`, liquidityTokens.toString()); // T == S / P
+    console.log(`liquidityTokens (sub epsilon; avoid Raydium rounding issues)`, liquidityTokens.toString()); // T == S / P
 
     //
     // take a fee, same % both tokens & sol to preserve the price
@@ -165,6 +176,15 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
     liquidityWSol = liquidityWSol.sub(liqFeeWSol);
     console.log(`liquidityTokens after liq. fees`, liquidityTokens.toString());
     console.log(`liquidityWSol after liq. fees`, liquidityWSol.toString());
+
+    //
+    // xAirDrop / Gifts: Reserve auction gifts
+    //
+    const { giftTokens, giftSol, liquidityTokensAfterGifts, liquidityWSolAfterGifts } = await reserveAuctionGifts(
+      liquidityTokens, liquidityWSol, totalGiftPercent, tokenMint, adminKp, connection
+    );
+    liquidityTokens = liquidityTokensAfterGifts;
+    liquidityWSol = liquidityWSolAfterGifts;
 
     //
     // Create & fund a new market/pool
@@ -255,6 +275,13 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
     } else {
       console.log(`no wsol fees to send.`);
     }
+
+    //
+    // xAirDrop/Gifts: Use sol associated with the (now reserved) gift tokens to buy & burn from the pool
+    //
+    if (giftSol.gt(new BN(0))) {
+      await buyAndBurn(giftSol, tokenMint, poolId, adminKp, connection, isMainnet);
+    }    
   }
   catch (error) {
     console.error(`migrateAuction (${auctionId}) => Error: ${error}`);
@@ -477,21 +504,11 @@ async function createAndFundPool_v3_CLMM(
 
   // Create and log fees for token ATA
   const adminTokenAccount = await getOrCreateAssociatedTokenAccount(connection, adminKp, tokenMint, adminKp.publicKey);
-  if (adminTokenAccount.txId) {
-    const txDetails = await connection.getTransaction(adminTokenAccount.txId, { commitment: 'confirmed' });
-    const fee = txDetails.meta.fee / LAMPORTS_PER_SOL;
-    console.log(`createAndFundPool_v3_CLMM -> Create token ATA fee: ${fee} SOL`);
-    totalFee += fee;
-  }
+  // Note: Fee tracking removed as txId is not available on Account type
 
   // Create and log fees for WSOL ATA
   const adminWsolAccount = await getOrCreateAssociatedTokenAccount(connection, adminKp, WSOLMint, adminKp.publicKey);
-  if (adminWsolAccount.txId) {
-    const txDetails = await connection.getTransaction(adminWsolAccount.txId, { commitment: 'confirmed' });
-    const fee = txDetails.meta.fee / LAMPORTS_PER_SOL;
-    console.log(`createAndFundPool_v3_CLMM -> Create WSOL ATA fee: ${fee} SOL`);
-    totalFee += fee;
-  }
+  // Note: Fee tracking removed as txId is not available on Account type
 
   // Check balances
   const solBalance = await connection.getBalance(adminKp.publicKey);
@@ -772,3 +789,250 @@ export const clmmDevConfigs = [
     defaultRangePoint: [0.01, 0.05, 0.1, 0.2, 0.5],
   },
 ]
+
+
+async function getAuctionGifts(auctionId: number, tokenMint: PublicKey): Promise<number> {
+  const pool = new sql.ConnectionPool(DB_CONFIG);
+  try {
+    await pool.connect();
+    const request = pool.request();
+
+    request.input('auction_id', sql.Int, auctionId);
+    request.input('pubkey', sql.NVarChar(255), tokenMint.toBase58());
+
+    const query = `
+      SELECT ISNULL(SUM([percentage]), 0) as total_percentage
+      FROM [dbo].[AuctionGift]
+      WHERE [auction_id] = @auction_id AND [pubkey] = @pubkey
+    `;
+
+    const result = await request.query(query);
+    const totalPercentage = result.recordset[0].total_percentage;
+
+    // Convert from percentage (0-100) to decimal (0-1)
+    const totalGiftPercent = Number(totalPercentage) / 100;
+
+    console.log(`getAuctionGifts -> auction_id: ${auctionId}, pubkey: ${tokenMint.toBase58()}, total_percentage: ${totalPercentage}%, normalized: ${totalGiftPercent}`);
+
+    return totalGiftPercent;
+  } catch (error) {
+    console.error('Error fetching auction gifts:', error);
+    throw error;
+  } finally {
+    await pool.close();
+  }
+}
+
+async function reserveAuctionGifts(
+  liquidityTokens: any,
+  liquidityWSol: any,
+  totalGiftPercent: number,
+  tokenMint: PublicKey,
+  adminKp: Keypair,
+  connection: Connection
+) {
+  console.log(`reserveAuctionGifts -> totalGiftPercent: ${totalGiftPercent}`);
+
+  if (totalGiftPercent <= 0) {
+    console.log(`reserveAuctionGifts -> No gifts to process`);
+    return {
+      giftTokens: new BN(0),
+      giftSol: new BN(0),
+      liquidityTokensAfterGifts: liquidityTokens,
+      liquidityWSolAfterGifts: liquidityWSol
+    };
+  }
+
+  // Calculate gift amounts
+  const giftTokens = liquidityTokens.mul(new BN(Math.floor(totalGiftPercent * 10000))).div(new BN(10000));
+  const giftSol = liquidityWSol.mul(new BN(Math.floor(totalGiftPercent * 10000))).div(new BN(10000));
+
+  console.log(`reserveAuctionGifts -> giftTokens: ${giftTokens.toString()}`);
+  console.log(`reserveAuctionGifts -> giftSol: ${giftSol.toString()}`);
+
+  // Subtract gifts from liquidity
+  const liquidityTokensAfterGifts = liquidityTokens.sub(giftTokens);
+  const liquidityWSolAfterGifts = liquidityWSol.sub(giftSol);
+
+  console.log(`reserveAuctionGifts -> liquidityTokensAfterGifts: ${liquidityTokensAfterGifts.toString()}`);
+  console.log(`reserveAuctionGifts -> liquidityWSolAfterGifts: ${liquidityWSolAfterGifts.toString()}`);
+
+  // Send gift tokens to GIFT_HOLDING_ACCOUNT if > 0
+  if (giftTokens.gt(new BN(0))) {
+    const adminTokenAccount = getAssociatedTokenAddressSync(tokenMint, adminKp.publicKey);
+    const giftHoldingTokenAccount = getAssociatedTokenAddressSync(tokenMint, GIFT_HOLDING_ACCOUNT, true);
+
+    const giftTx = new Transaction().add(
+      createAssociatedTokenAccountIdempotentInstruction(
+        adminKp.publicKey,
+        giftHoldingTokenAccount,
+        GIFT_HOLDING_ACCOUNT,
+        tokenMint,
+        TOKEN_PROGRAM_ID
+      ),
+      createTransferInstruction(
+        adminTokenAccount,
+        giftHoldingTokenAccount,
+        adminKp.publicKey,
+        BigInt(giftTokens.toString()),
+        [],
+        TOKEN_PROGRAM_ID
+      )
+    );
+
+    giftTx.feePayer = adminKp.publicKey;
+    giftTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
+    const giftSig = await sendAndConfirmTransaction(connection, giftTx, [adminKp]);
+
+    const mintAccount = await getMint(connection, tokenMint);
+    await logSuccessTx(connection, giftSig, `reserveAuctionGifts => Sent ${giftTokens.toNumber() / 10 ** mintAccount.decimals} gift tokens to GIFT_HOLDING_ACCOUNT`);
+  }
+
+  return {
+    giftTokens,
+    giftSol,
+    liquidityTokensAfterGifts,
+    liquidityWSolAfterGifts
+  };
+}
+
+export async function buyAndBurn(
+  giftSol: BN,
+  tokenMint: PublicKey,
+  poolId: PublicKey,
+  adminKp: Keypair,
+  connection: Connection,
+  isMainnet: boolean
+): Promise<void> {
+  console.log(`[buyAndBurn] Starting execution...`);
+  console.log(`[buyAndBurn] Parameters - giftSol: ${giftSol.toString()}, tokenMint: ${tokenMint.toBase58()}, poolId: ${poolId.toBase58()}`);
+
+  try {
+    // Initialize Raydium SDK
+    const raydium = await Raydium.load({
+      connection,
+      owner: adminKp,
+      disableFeatureCheck: true,
+      blockhashCommitment: 'finalized',
+    });
+    console.log(`[buyAndBurn] Raydium SDK initialized for ${isMainnet ? 'mainnet' : 'devnet'}`);
+
+    // Define WSOL mint (assuming a constant like TOKEN_WSOL.address exists)
+    const WSOL_MINT = new PublicKey('So11111111111111111111111111111111111111112'); // Replace with your constant if different
+    const inputMint = WSOL_MINT.toBase58();
+
+    // Fetch pool information (matching canonical example)
+    let poolInfo: ApiV3PoolInfoConcentratedItem;
+    let poolKeys: ClmmKeys | undefined;
+    let clmmPoolInfo: ComputeClmmPoolInfo;
+    let tickCache: ReturnTypeFetchMultiplePoolTickArrays;
+
+    /*if (isMainnet) {
+      const data = await raydium.api.fetchPoolById({ ids: poolId.toBase58() });
+      poolInfo = data[0] as ApiV3PoolInfoConcentratedItem;
+      if (!poolInfo.programId == new PublicKey('CLMM9tU3VfNLvRYM75zxezoEL9yNoyMzACW5wUdfXkz6').toString()) {
+        throw new Error('Target pool is not a CLMM pool');
+      }
+      clmmPoolInfo = await PoolUtils.fetchComputeClmmInfo({
+        connection: raydium.connection,
+        poolInfo,
+      });
+      tickCache = await PoolUtils.fetchMultiplePoolTickArrays({
+        connection: raydium.connection,
+        poolKeys: [clmmPoolInfo],
+      });
+    } else*/ {
+      const data = await raydium.clmm.getPoolInfoFromRpc(poolId.toBase58());
+      poolInfo = data.poolInfo;
+      poolKeys = data.poolKeys;
+      clmmPoolInfo = data.computePoolInfo;
+      tickCache = data.tickData;
+    }
+    console.log(`[buyAndBurn] Pool info fetched - mintA: ${poolInfo.mintA.address}, mintB: ${poolInfo.mintB.address}, price: ${poolInfo.price}`);
+
+    // Validate input mint
+    if (inputMint !== poolInfo.mintA.address && inputMint !== poolInfo.mintB.address) {
+      throw new Error(`Input mint ${inputMint} does not match pool mints (${poolInfo.mintA.address}, ${poolInfo.mintB.address})`);
+    }
+    const baseIn = inputMint === poolInfo.mintA.address;
+    console.log(`[buyAndBurn] Input mint is ${baseIn ? 'mintA' : 'mintB'}`);
+
+    // Compute amount out (matching canonical example)
+    const { minAmountOut, remainingAccounts } = await PoolUtils.computeAmountOutFormat({
+      poolInfo: clmmPoolInfo,
+      tickArrayCache: tickCache[poolId.toBase58()],
+      amountIn: giftSol,
+      tokenOut: poolInfo[baseIn ? 'mintB' : 'mintA'],
+      slippage: 0.01, // 1% slippage as in canonical example
+      epochInfo: await raydium.fetchEpochInfo(),
+    });
+    console.log(`[buyAndBurn] Computed - minAmountOut: ${minAmountOut.amount.raw.toString()}, remainingAccounts: ${remainingAccounts.length}`);
+
+    // Execute swap (matching canonical example)
+    const { execute } = await raydium.clmm.swap({
+      poolInfo,
+      poolKeys,
+      inputMint,
+      amountIn: giftSol,
+      amountOutMin: minAmountOut.amount.raw,
+      observationId: clmmPoolInfo.observationId,
+      ownerInfo: {
+        useSOLBalance: false, // Using WSOL ATA, not native SOL
+      },
+      remainingAccounts,
+      txVersion: TxVersion.LEGACY, // Matches canonical example's default
+    });
+    console.log(`[buyAndBurn] Swap prepared, executing...`);
+    const { txId } = await execute({ sendAndConfirm: true });
+    await logSuccessTx(connection, txId, `[buyAndBurn] Swap executed - ${giftSol.toNumber() / 1e9} WSOL swapped`);
+    console.log(`[buyAndBurn] Swap Tx: ${txId}`);
+
+    // Get token balance after swap
+    const adminTokenAccount = getAssociatedTokenAddressSync(tokenMint, adminKp.publicKey);
+    const tokenBalanceAfter = await connection.getTokenAccountBalance(adminTokenAccount);
+    const tokensReceived = new BN(tokenBalanceAfter.value.amount);
+    console.log(`[buyAndBurn] Tokens received: ${tokensReceived.toString()}`);
+
+    // Burn tokens if received
+    if (tokensReceived.gt(new BN(0))) {
+      const NULL_ACCOUNT = new PublicKey('11111111111111111111111111111111');
+      const nullTokenAccount = getAssociatedTokenAddressSync(tokenMint, NULL_ACCOUNT, true);
+
+      const burnTx = new Transaction().add(
+        createAssociatedTokenAccountIdempotentInstruction(
+          adminKp.publicKey,
+          nullTokenAccount,
+          NULL_ACCOUNT,
+          tokenMint,
+          TOKEN_PROGRAM_ID
+        ),
+        createTransferInstruction(
+          adminTokenAccount,
+          nullTokenAccount,
+          adminKp.publicKey,
+          BigInt(tokensReceived.toString()),
+          [],
+          TOKEN_PROGRAM_ID
+        )
+      );
+      burnTx.feePayer = adminKp.publicKey;
+      burnTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
+      const burnSig = await sendAndConfirmTransaction(connection, burnTx, [adminKp]);
+      const mintAccount = await getMint(connection, tokenMint);
+      await logSuccessTx(connection, burnSig, `[buyAndBurn] Burned ${tokensReceived.toNumber() / 10 ** mintAccount.decimals} tokens`);
+      console.log(`[buyAndBurn] Burn Tx: ${burnSig}`);
+    } else {
+      console.log(`[buyAndBurn] No tokens received to burn`);
+    }
+
+  } catch (error) {
+    console.error(`[buyAndBurn] Error occurred:`, error.message);
+    if (error.transactionMessage) {
+      console.error(`[buyAndBurn] Transaction message: ${error.transactionMessage}`);
+    }
+    if (error.transactionLogs) {
+      console.error(`[buyAndBurn] Transaction logs:`, error.transactionLogs);
+    }
+    throw error; // Re-throw to allow caller to handle
+  }
+}

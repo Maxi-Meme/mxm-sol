@@ -213,7 +213,7 @@ impl<'info> CreateAuction<'info> {
         } else {
             AuctionStatus::Live
         };
-        
+
         // moveliq: method 1 - distribute in full, mint more tokens (overmint) to achieve target price
         auction_data_account.dist_percent = 10000;
 

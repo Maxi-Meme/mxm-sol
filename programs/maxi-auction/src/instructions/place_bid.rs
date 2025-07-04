@@ -347,7 +347,7 @@ impl<'info> PlaceBid<'info> {
                 //
 
                 //
-                // Method (1) "overmint" -- mint more tokens, so all SOL raised can be put into the liquidity pool, to achieve the given clearing price. 
+                // Method (1) "overmint" -- mint more tokens, so all SOL raised can be put into the liquidity pool to achieve the given clearing price. 
                 //
                 //  T = S / P
                 //    where S is the net SOL raised, and P is the settlement price. 

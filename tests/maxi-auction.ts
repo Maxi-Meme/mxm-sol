@@ -37,10 +37,10 @@ import {
 
   TEST_DISTRIBTION_PERCENT,
   TEST_STARTPRICE_SOL,
-  TEST_TOKEN_DECIMALS,
+  MAXIMEME_TOKEN_DECIMALS,
   TEST_TOKEN_NAME,
   //TestTokenQty,
-  TEST_TOKEN_SUPPLY,
+  MAXIMEME_TOKEN_SUPPLY,
   TEST_TOKEN_SYMBOL,
   TEST_TOKEN_URI,
   TEST_MIN_TOTAL_SOL,
@@ -108,7 +108,7 @@ var CONTRACT_CONFIG: any;
 
 // moveliq callback 
 const auctionFilledPromises = new Map();
-var MOVELIQ_PAUSE = true;
+var MOVELIQ_PAUSE = false;
 
 // admin & test keypairs
 var program: Program<MaxiAuction>;
@@ -1677,8 +1677,8 @@ describe("maxi-auction", () => {
 
     const newConfig = {
       admin: adminKp.publicKey,
-      defaultTokenSupply: new BN(TEST_TOKEN_SUPPLY),
-      defaultTokenDecimals: TEST_TOKEN_DECIMALS,
+      defaultTokenSupply: new BN(MAXIMEME_TOKEN_SUPPLY),
+      defaultTokenDecimals: MAXIMEME_TOKEN_DECIMALS,
       defaultStartPriceLamports: new BN(TEST_STARTPRICE_SOL * LAMPORTS_PER_SOL),
       feeAccount: TEST_FEE_ACCOUNT.publicKey,
       daoAccount: TEST_DAO_ACCOUNT.publicKey,
