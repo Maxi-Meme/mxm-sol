@@ -75,6 +75,10 @@ import { generateAndUploadTestTokenData, generateThemedTestToken, TestTokenData 
 
 const RENT_EXEMPT_MIN = 890880; // devnet 
 
+// Rate limiting configuration for batch processing
+const AUCTION_FETCH_BATCH_SIZE = 20; // Process n auctions at a time (increased from 10)
+const AUCTION_FETCH_BATCH_DELAY = 2500; // 500ms delay between batches (decreased from 1000ms)
+
 const DB_CONFIG: sql.config = {
   user: process.env.DB_USERNAME,
   password: process.env.DB_PASSWORD,
@@ -580,11 +584,32 @@ describe("maxi-auction", () => {
     const totalAuctions = Number(globalInfoAccount.auctionsNum);
     console.log(`Total auctions: ${totalAuctions}`);
     const auctionIds = Array.from({ length: totalAuctions }, (_, i) => i);
-    const promises = auctionIds.map(auctionId =>
-      getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed, auctionBidsSeed)
-    );
-    const results = await Promise.all(promises);
+
+    // Batch processing to avoid rate limits
+    const results = [];
+
+    console.log(`Processing ${totalAuctions} auctions in batches of ${AUCTION_FETCH_BATCH_SIZE}...`);
+
+    for (let i = 0; i < auctionIds.length; i += AUCTION_FETCH_BATCH_SIZE) {
+      const batch = auctionIds.slice(i, i + AUCTION_FETCH_BATCH_SIZE);
+      console.log(`Processing batch ${Math.floor(i / AUCTION_FETCH_BATCH_SIZE) + 1} of ${Math.ceil(auctionIds.length / AUCTION_FETCH_BATCH_SIZE)} (auctions ${i} to ${Math.min(i + AUCTION_FETCH_BATCH_SIZE - 1, auctionIds.length - 1)})`);
+
+      const batchPromises = batch.map(auctionId =>
+        getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed, auctionBidsSeed)
+      );
+
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
+
+      // Add delay between batches to avoid rate limiting
+      if (i + AUCTION_FETCH_BATCH_SIZE < auctionIds.length) {
+        console.log(`Waiting ${AUCTION_FETCH_BATCH_DELAY}ms before next batch to avoid rate limits...`);
+        await new Promise(resolve => setTimeout(resolve, AUCTION_FETCH_BATCH_DELAY));
+      }
+    }
+
     const auctions = results.filter(result => result !== null);
+    console.log(`Successfully fetched ${auctions.length} auctions`);
     //console.log("auctions", auctions.length);
 
     // Collect poolDbInfos and pool IDs from DB
@@ -607,11 +632,32 @@ describe("maxi-auction", () => {
     const totalAuctions = Number(globalInfoAccount.auctionsNum);
     console.log(`Total auctions: ${totalAuctions}`);
     const auctionIds = Array.from({ length: totalAuctions }, (_, i) => i); // [2]
-    const promises = auctionIds.map(auctionId =>
-      getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed, auctionBidsSeed)
-    );
-    const results = await Promise.all(promises);
+
+    // Batch processing to avoid rate limits
+    const results = [];
+
+    console.log(`Processing ${totalAuctions} auctions in batches of ${AUCTION_FETCH_BATCH_SIZE}...`);
+
+    for (let i = 0; i < auctionIds.length; i += AUCTION_FETCH_BATCH_SIZE) {
+      const batch = auctionIds.slice(i, i + AUCTION_FETCH_BATCH_SIZE);
+      console.log(`Processing batch ${Math.floor(i / AUCTION_FETCH_BATCH_SIZE) + 1} of ${Math.ceil(auctionIds.length / AUCTION_FETCH_BATCH_SIZE)} (auctions ${i} to ${Math.min(i + AUCTION_FETCH_BATCH_SIZE - 1, auctionIds.length - 1)})`);
+
+      const batchPromises = batch.map(auctionId =>
+        getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed, auctionBidsSeed)
+      );
+
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
+
+      // Add delay between batches to avoid rate limiting
+      if (i + AUCTION_FETCH_BATCH_SIZE < auctionIds.length) {
+        console.log(`Waiting ${AUCTION_FETCH_BATCH_DELAY}ms before next batch to avoid rate limits...`);
+        await new Promise(resolve => setTimeout(resolve, AUCTION_FETCH_BATCH_DELAY));
+      }
+    }
+
     const auctions = results.filter(result => result !== null);
+    console.log(`Successfully fetched ${auctions.length} auctions`);
 
     // Collect poolDbInfos and pool IDs from DB
     const { poolDbInfos, poolPpcInfosMapv2, poolPpcInfosMapv3 } = await getPoolDbAndRpcInfos(auctions);
@@ -650,12 +696,31 @@ describe("maxi-auction", () => {
     // Initialize Raydium SDK
     const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: true, blockhashCommitment: 'confirmed' });
 
-    // Fetch auction details in parallel
-    const promises = auctionIds.map(auctionId =>
-      getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed, auctionBidsSeed)
-    );
-    const results = await Promise.all(promises);
+    // Batch processing to avoid rate limits
+    const results = [];
+
+    console.log(`Processing ${totalAuctions} auctions in batches of ${AUCTION_FETCH_BATCH_SIZE}...`);
+
+    for (let i = 0; i < auctionIds.length; i += AUCTION_FETCH_BATCH_SIZE) {
+      const batch = auctionIds.slice(i, i + AUCTION_FETCH_BATCH_SIZE);
+      console.log(`Processing batch ${Math.floor(i / AUCTION_FETCH_BATCH_SIZE) + 1} of ${Math.ceil(auctionIds.length / AUCTION_FETCH_BATCH_SIZE)} (auctions ${i} to ${Math.min(i + AUCTION_FETCH_BATCH_SIZE - 1, auctionIds.length - 1)})`);
+
+      const batchPromises = batch.map(auctionId =>
+        getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed, auctionBidsSeed)
+      );
+
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
+
+      // Add delay between batches to avoid rate limiting
+      if (i + AUCTION_FETCH_BATCH_SIZE < auctionIds.length) {
+        console.log(`Waiting ${AUCTION_FETCH_BATCH_DELAY}ms before next batch to avoid rate limits...`);
+        await new Promise(resolve => setTimeout(resolve, AUCTION_FETCH_BATCH_DELAY));
+      }
+    }
+
     const auctions = results.filter(result => result !== null);
+    console.log(`Successfully fetched ${auctions.length} auctions`);
 
     // Collect poolDbInfos and pool IDs from DB
     const { poolDbInfos, poolPpcInfosMapv2, poolPpcInfosMapv3 } = await getPoolDbAndRpcInfos(auctions);
