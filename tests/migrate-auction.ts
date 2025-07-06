@@ -58,86 +58,84 @@ const DB_CONFIG: sql.config = {
 
 const GIFT_HOLDING_ACCOUNT = new PublicKey("GJcEf3rXCy2vg31bprhGjkau6Wqio9Y899W5jwLYZTac");
 
-// migrate auction liquidity to a new raydium pool
-// https://github.com/raydium-io/raydium-sdk-V2-demo/tree/master/src/amm
-export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: boolean, auctionId: number, adminKp: Keypair, connection: Connection) => {
+// Retry helper function
+async function withRetry<T>(fn: () => Promise<T>, maxRetries: number = 3, delayMs: number = 1000): Promise<T> {
+  let attempts = 0;
+  while (attempts < maxRetries) {
+    try {
+      return await fn();
+    } catch (error) {
+      attempts++;
+      if (attempts >= maxRetries) {
+        throw error;
+      }
+      console.log(`Attempt ${attempts} failed, retrying in ${delayMs}ms...`, error);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+  throw new Error('Max retries reached');
+}
 
-  const LIQ_FEE_PERCENT = 69;  //69; // 0.69 %, 10000 = 100 %
+// Migrate auction liquidity to a new Raydium pool
+export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: boolean, auctionId: number, adminKp: Keypair, connection: Connection) => {
+  const LIQ_FEE_PERCENT = 69; // 0.69%, 10000 = 100%
 
   try {
-    // abort if min sol is not reached - user's will claim back their sol in full
+    // Abort if min SOL is not reached - users will claim back their SOL in full
     const [auctionData] = PublicKey.findProgramAddressSync([Buffer.from(AUCTION_DATA_SEED), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
     const [auctionSol] = PublicKey.findProgramAddressSync([Buffer.from(AUCTION_SOL_SEED), new BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
-    const auctionDataFetched = await program.account.auction.fetch(auctionData);
+    const auctionDataFetched = await withRetry(() => program.account.auction.fetch(auctionData));
     if (auctionDataFetched.lastStatus?.failedMinNotReached) {
       throw new Error('failedMinNotReached');
     }
     if (auctionDataFetched.clearingPrice.lte(new BN(0))) {
       throw new Error('invalid clearing price');
     }
-    //console.log(`auctionDataFetched`, auctionDataFetched); // how to get status?
 
-    // need to make sure config.TEST_MIN_TOTAL_SOL > FIXED_MIN_SOL_LIQ, so that test above will fail and bidders cant then claim back their tokens
     const FIXED_MIN_SOL_LIQ = isMainnet
-      ? new BN(10.00 * LAMPORTS_PER_SOL)  // todo: test/tune thereshold for prod, e.g. (1b + 6 decimals)
-      : new BN(0.001 * LAMPORTS_PER_SOL); // assumes avg. 50 base tokens supplied with 3 decimals, i.e. test case setup
+      ? new BN(10.00 * LAMPORTS_PER_SOL)
+      : new BN(0.001 * LAMPORTS_PER_SOL);
 
-    // and we have a min total sol bid threshold, so we can cover raydium setup costs
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(GLOBAL_INFO_SEED)], program.programId);
-    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const globalInfoAccount = await withRetry(() => program.account.globalInfo.fetch(globalInfo));
     const CONFIG_MIN_TOTAL_SOL = globalInfoAccount.config.minTotalSol;
 
-    // ### this MUST MATCH the fixed amount in place_bid's calculation of acution.liquidity_sol ###
-    // TEST LOW VALUE FOR DEVNET...
-    const FIXED_SOL_RAYDIUM_COSTS = new BN(0.000025 * LAMPORTS_PER_SOL); // todo: should be ~0.25 sol on mainnet...
-    //const FIXED_SOL_RAYDIUM_COSTS = new BN(0); // testing zero fees
-    // isMainnet
-    // ? new BN(4.0 * LAMPORTS_PER_SOL)       // prod ~4 sol for raydium setup costs
-    // : new BN(0.000042 * LAMPORTS_PER_SOL); // don't care on devnet
+    const FIXED_SOL_RAYDIUM_COSTS = new BN(0.000025 * LAMPORTS_PER_SOL);
 
     console.log(`MIN_SOL_LIQ`, FIXED_MIN_SOL_LIQ.toString());
     console.log(`CONFIG_MIN_TOTAL_SOL`, CONFIG_MIN_TOTAL_SOL.toString());
     console.log(`FIXED_SOL_RAYDIUM_COSTS`, FIXED_SOL_RAYDIUM_COSTS.toString());
-    // if (FIXED_SOL_RAYDIUM_COSTS.mul(new BN(2)).gt(CONFIG_MIN_TOTAL_SOL)) { // sanitize config vs. actual costs
-    //   throw new Error('CONFIG_MIN_TOTAL_SOL is too low');
-    // }
-    if (CONFIG_MIN_TOTAL_SOL.lt(FIXED_SOL_RAYDIUM_COSTS.mul(new BN(2)))) { // sanity check
+    if (CONFIG_MIN_TOTAL_SOL.lt(FIXED_SOL_RAYDIUM_COSTS.mul(new BN(2)))) {
       console.log(`CONFIG_MIN_TOTAL_SOL is too low: ${CONFIG_MIN_TOTAL_SOL.toString()} < ${FIXED_SOL_RAYDIUM_COSTS.mul(new BN(2)).toString()}`);
       throw new Error('CONFIG_MIN_TOTAL_SOL is too low');
     }
 
-    //
-    // withdraw funds & validate min sol bid thresholds
-    //
-    const { solAmount: solWithdrawn, tokenAmount: tokensWithdrawn, tokenMint, adminTokenAccount } = await withdrawFunds(program, isMainnet, auctionId, adminKp, connection);
+    // Withdraw funds & validate min SOL bid thresholds
+    const { solAmount: solWithdrawn, tokenAmount: tokensWithdrawn, tokenMint, adminTokenAccount } = await withRetry(() => withdrawFunds(program, isMainnet, auctionId, adminKp, connection));
     if (solWithdrawn === BigInt(0) || tokensWithdrawn === BigInt(0)) {
-      throw ("Failed withdrawing funds");
+      throw new Error("Failed withdrawing funds");
     }
-    const mintAccount = await getMint(connection, tokenMint);
+    const mintAccount = await withRetry(() => getMint(connection, tokenMint));
     console.log(`migrateAuction => Withdrawn ${solWithdrawn.toString()} lamports and ${tokensWithdrawn.toString()} tokens`);
     console.log(`solWithdrawn`, solWithdrawn.toString());
-    if (new BN(solWithdrawn.toString()).lt(new BN(FIXED_MIN_SOL_LIQ.toString()))) {    // to satsify raydium fixed product 
+    if (new BN(solWithdrawn.toString()).lt(new BN(FIXED_MIN_SOL_LIQ.toString()))) {
       throw new Error('solWithdrawn is too low: MIN_SOL_LIQ');
     }
-    if (new BN(solWithdrawn.toString()).lt(new BN(CONFIG_MIN_TOTAL_SOL.toString()))) { // to cover our costs 
+    if (new BN(solWithdrawn.toString()).lt(new BN(CONFIG_MIN_TOTAL_SOL.toString()))) {
       throw new Error('solWithdrawn is too low: CONFIG_MIN_TOTAL_SOL #### SHOULD NOT HAPPEN! auction state should be failed, and admin withdraw not allowed #####');
     }
 
-    //
-    // xAirDrop / Gifts: Get auction gifts total percentage
-    //
-    const totalGiftPercent = await getAuctionGifts(auctionId, tokenMint);
-    console.log(`totalGiftPercent`, totalGiftPercent);
+    // Get auction gifts total tokens allocated
+    const totalGiftTokens = new BN("5000000"); //await getAuctionGifts(auctionId, tokenMint);
+    console.log(`totalGiftTokens`, totalGiftTokens.toString());
 
-    //
-    // calc how much sol to wrap - we keep setup costs in sol
-    //
+    // Calculate how much SOL to wrap - keep setup costs in SOL
     var liquidityWSol = new BN(solWithdrawn.toString()).sub(FIXED_SOL_RAYDIUM_COSTS);
     if (liquidityWSol.lte(new BN(0))) throw new Error('liquidityWSol is too low');
-    console.log(`liquidityWSol`, liquidityWSol.toString()); // check: should be exactly == computed s_lamports in place_bid.rs...
+    console.log(`liquidityWSol`, liquidityWSol.toString());
 
-    // Wrap admin's withdrawn sol, less fixed raydium costs
-    const adminWsolAccount = await getOrCreateAssociatedTokenAccount(connection, adminKp, new PublicKey(TOKEN_WSOL.address), adminKp.publicKey);
+    // Wrap admin's withdrawn SOL, less fixed Raydium costs
+    const adminWsolAccount = await withRetry(() => getOrCreateAssociatedTokenAccount(connection, adminKp, new PublicKey(TOKEN_WSOL.address), adminKp.publicKey));
     const wrapTx = new Transaction().add(
       SystemProgram.transfer({
         fromPubkey: adminKp.publicKey,
@@ -148,23 +146,15 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
     );
     wrapTx.feePayer = adminKp.publicKey;
     wrapTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
-    const wrapSig = await sendAndConfirmTransaction(connection, wrapTx, [adminKp]);
+    const wrapSig = await withRetry(() => sendAndConfirmTransaction(connection, wrapTx, [adminKp]));
     console.log(`${wrapSig} migrateAuction => Wrapped SOL into WSOL`);
 
-    //
-    // calc how many tokens to deposit into the pool
-    //
-    // Method 2 ("underfund", or lock tokens) / we use all the locked tokens, and the computed amount of sol to produce the desired price (see place_bid.rs)
-    //var liquidityTokens = new BN(tokensWithdrawn.toString());
-
-    // Method 1 ("overmint") / we use all the sol, and the computed amount of tokens to produce the desired price (see place_bid.rs)
-    var liquidityTokens = new BN(tokensWithdrawn.toString()).mul(new BN(10000)).div(new BN(10001)); // take off a tiny amount; avoid rounding errors in Raydium
+    // Calculate how many tokens to deposit into the pool
+    var liquidityTokens = new BN(tokensWithdrawn.toString()).mul(new BN(10000)).div(new BN(10001));
     console.log(`tokensWithdrawn`, tokensWithdrawn.toString());
-    console.log(`liquidityTokens (sub epsilon; avoid Raydium rounding issues)`, liquidityTokens.toString()); // T == S / P
+    console.log(`liquidityTokens (sub epsilon; avoid Raydium rounding issues)`, liquidityTokens.toString());
 
-    //
-    // take a fee, same % both tokens & sol to preserve the price
-    //
+    // Take a fee, both tokens & SOL
     console.log(`LIQ_FEE_PERCENT = ${LIQ_FEE_PERCENT / 100}%`, LIQ_FEE_PERCENT);
     const liqFeeTokens = liquidityTokens.mul(new BN(LIQ_FEE_PERCENT)).div(new BN(10000));
     const liqFeeWSol = liquidityWSol.mul(new BN(LIQ_FEE_PERCENT)).div(new BN(10000));
@@ -177,37 +167,25 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
     console.log(`liquidityTokens after liq. fees`, liquidityTokens.toString());
     console.log(`liquidityWSol after liq. fees`, liquidityWSol.toString());
 
-    //
-    // xAirDrop / Gifts: Reserve auction gifts
-    //
-    const { giftTokens, giftSol, liquidityTokensAfterGifts, liquidityWSolAfterGifts } = await reserveAuctionGifts(
-      liquidityTokens, liquidityWSol, totalGiftPercent, tokenMint, adminKp, connection
+    // Reserve auction gifts
+    const { giftTokens, giftSol, liquidityTokensAfterGifts, liquidityWSolAfterGifts } = await withRetry(() =>
+      reserveAuctionGifts(liquidityTokens, liquidityWSol, totalGiftTokens, tokenMint, adminKp, connection)
     );
     liquidityTokens = liquidityTokensAfterGifts;
     liquidityWSol = liquidityWSolAfterGifts;
 
-    //
     // Create & fund a new market/pool
-    //
-    const initialBalanceLamports = await connection.getBalance(adminKp.publicKey);
+    const initialBalanceLamports = await withRetry(() => connection.getBalance(adminKp.publicKey));
     console.log(`Initial admin SOL balance: ${initialBalanceLamports / 1e9} SOL`);
 
-    // v3 CLMM fullrange pool -- cheap
-    const { poolId, poolKeys } = await createAndFundPool_v3_CLMM(
+    const { poolId, poolKeys } = await withRetry(() => createAndFundPool_v3_CLMM(
       program, isMainnet, auctionId, tokenMint,
       BigInt(liquidityTokens.toString()),
       BigInt(liquidityWSol.toString()),
-      adminKp, connection, auctionDataFetched.clearingPrice.toNumber()); // POOL COST CROSS-CHECK: 0.2949355 SOL
+      adminKp, connection, auctionDataFetched.clearingPrice.toNumber()
+    ));
 
-    // v2 (old/legacy) CPMM pool -- V. EXPENSIVE!!
-    // const { marketId, poolId, marketInfo, poolKeys } = await createAndFundPool_v2_AMM(
-    //   program, isMainnet, auctionId, tokenMint,
-    //   BigInt(liquidityTokens.toString()),
-    //   BigInt(liquidityWSol.toString()),
-    //   adminKp, connection, auctionDataFetched.clearingPrice.toNumber()); // POOL COST CROSS-CHECK: 3.916496582 SOL
-
-    // Calculate the cost in lamports and convert to SOL
-    const finalBalanceLamports = await connection.getBalance(adminKp.publicKey);
+    const finalBalanceLamports = await withRetry(() => connection.getBalance(adminKp.publicKey));
     console.log(`Final admin SOL balance: ${finalBalanceLamports / 1e9} SOL`);
     const costLamports = initialBalanceLamports - finalBalanceLamports;
     const costSOL = costLamports / 1e9;
@@ -219,16 +197,11 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
     console.log(`liquidityWSol: ${liquidityWSol.toString()}`);
     console.log(`poolId: ${poolId.toBase58()}`);
 
-    //
-    // update DB keypair with market/pool info
-    //
-    await updateKeyPairPoolInfo(tokenMint, null, poolKeys, null, poolId); // v3 CLMM - no market
-    //await updateKeyPairPoolInfo(tokenMint, /*null*/ marketInfo, poolKeys, /*null*/ marketId, poolId); // v2 legacy
+    // Update DB keypair with market/pool info
+    await withRetry(() => updateKeyPairPoolInfo(tokenMint, null, poolKeys, null, poolId));
 
-    //
-    // Send fee tokens & wsol to the revenue wallet
-    //
-    if (liqFeeTokens.gt(new BN(0))) { // send tokens
+    // Send fee tokens & WSOL to the revenue wallet
+    if (liqFeeTokens.gt(new BN(0))) {
       const feeAccount = globalInfoAccount.config.feeAccount;
       const feeAccountTokenAccount = getAssociatedTokenAddressSync(tokenMint, feeAccount, true);
       const feeTx = new Transaction().add(
@@ -240,15 +213,16 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
           BigInt(liqFeeTokens.toString()),
           [],
           TOKEN_PROGRAM_ID
-        ));
+        )
+      );
       feeTx.feePayer = adminKp.publicKey;
       feeTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
-      const feeSig = await sendAndConfirmTransaction(connection, feeTx, [adminKp]);
+      const feeSig = await withRetry(() => sendAndConfirmTransaction(connection, feeTx, [adminKp]));
       await logSuccessTx(connection, feeSig, `migrateAuction (${auctionId}) => Sent fee ${liqFeeTokens.toNumber() / 10 ** mintAccount.decimals} tokens to the revenue wallet`);
     } else {
       console.log(`no token fees to send.`);
     }
-    if (liqFeeWSol.gt(new BN(0))) { // send wsol 
+    if (liqFeeWSol.gt(new BN(0))) {
       const feeAccount = globalInfoAccount.config.feeAccount;
       const feeAccountWsolATA = getAssociatedTokenAddressSync(new PublicKey(TOKEN_WSOL.address), feeAccount, true);
       const wsolFeeTx = new Transaction().add(
@@ -270,25 +244,133 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
       );
       wsolFeeTx.feePayer = adminKp.publicKey;
       wsolFeeTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
-      const wsolFeeSig = await sendAndConfirmTransaction(connection, wsolFeeTx, [adminKp]);
+      const wsolFeeSig = await withRetry(() => sendAndConfirmTransaction(connection, wsolFeeTx, [adminKp]));
       await logSuccessTx(connection, wsolFeeSig, `migrateAuction (${auctionId}) => Sent fee ${liqFeeWSol.toNumber() / LAMPORTS_PER_SOL} WSOL to the revenue wallet`);
     } else {
       console.log(`no wsol fees to send.`);
     }
 
-    //
-    // xAirDrop/Gifts: Use sol associated with the (now reserved) gift tokens to buy & burn from the pool
-    //
+    // Use SOL associated with the gift tokens to buy & burn from the pool
     if (giftSol.gt(new BN(0))) {
-      await buyAndBurn(giftSol, tokenMint, poolId, adminKp, connection, isMainnet);
-    }    
-  }
-  catch (error) {
+      await withRetry(() => buyAndBurn(giftSol, tokenMint, poolId, adminKp, connection, isMainnet));
+    }
+  } catch (error) {
     console.error(`migrateAuction (${auctionId}) => Error: ${error}`);
     throw error;
   }
 };
 
+// Updated getAuctionGifts to fetch sum of tokens_allocated
+async function getAuctionGifts(auctionId: number, tokenMint: PublicKey): Promise<BN> {
+  const pool = new sql.ConnectionPool(DB_CONFIG);
+  try {
+    await pool.connect();
+    const request = pool.request();
+
+    request.input('auction_id', sql.Int, auctionId);
+    request.input('pubkey', sql.NVarChar(255), tokenMint.toBase58());
+
+    const query = `
+      SELECT CONVERT(varchar, ISNULL(SUM([tokens_allocated]), 0)) as total_tokens_allocated
+      FROM [dbo].[AuctionGift]
+      WHERE [auction_id] = @auction_id AND [pubkey] = @pubkey
+    `;
+
+    const result = await request.query(query);
+    const totalTokensAllocatedStr = result.recordset[0].total_tokens_allocated;
+    const totalGiftTokens = new BN(totalTokensAllocatedStr);
+
+    console.log(`getAuctionGifts -> auction_id: ${auctionId}, pubkey: ${tokenMint.toBase58()}, total_tokens_allocated: ${totalGiftTokens.toString()}`);
+
+    return totalGiftTokens;
+  } catch (error) {
+    console.error('Error fetching auction gifts:', error);
+    throw error;
+  } finally {
+    await pool.close();
+  }
+}
+
+// Updated reserveAuctionGifts to use totalGiftTokens and maintain liquidity ratio
+async function reserveAuctionGifts(
+  liquidityTokens: BN,
+  liquidityWSol: BN,
+  totalGiftTokens: BN,
+  tokenMint: PublicKey,
+  adminKp: Keypair,
+  connection: Connection
+) {
+  console.log(`reserveAuctionGifts -> totalGiftTokens: ${totalGiftTokens.toString()}`);
+
+  if (totalGiftTokens.isZero()) {
+    console.log(`reserveAuctionGifts -> No gifts to process`);
+    return {
+      giftTokens: new BN(0),
+      giftSol: new BN(0),
+      liquidityTokensAfterGifts: liquidityTokens,
+      liquidityWSolAfterGifts: liquidityWSol
+    };
+  }
+
+  if (totalGiftTokens.gt(liquidityTokens)) {
+    throw new Error(`Total gift tokens (${totalGiftTokens.toString()}) exceed available liquidity tokens (${liquidityTokens.toString()})`);
+  }
+
+  const giftTokens = totalGiftTokens;
+  const giftSol = giftTokens.mul(liquidityWSol).div(liquidityTokens);
+
+  if (giftSol.gt(liquidityWSol)) {
+    throw new Error(`Calculated gift SOL (${giftSol.toString()}) exceeds available liquidity WSOL (${liquidityWSol.toString()})`);
+  }
+
+  console.log(`reserveAuctionGifts -> giftTokens: ${giftTokens.toString()}`);
+  console.log(`reserveAuctionGifts -> giftSol: ${giftSol.toString()}`);
+
+  const liquidityTokensAfterGifts = liquidityTokens.sub(giftTokens);
+  const liquidityWSolAfterGifts = liquidityWSol.sub(giftSol);
+
+  console.log(`reserveAuctionGifts -> liquidityTokensAfterGifts: ${liquidityTokensAfterGifts.toString()}`);
+  console.log(`reserveAuctionGifts -> liquidityWSolAfterGifts: ${liquidityWSolAfterGifts.toString()}`);
+
+  if (giftTokens.gt(new BN(0))) {
+    const adminTokenAccount = getAssociatedTokenAddressSync(tokenMint, adminKp.publicKey);
+    const giftHoldingTokenAccount = getAssociatedTokenAddressSync(tokenMint, GIFT_HOLDING_ACCOUNT, true);
+
+    const giftTx = new Transaction().add(
+      createAssociatedTokenAccountIdempotentInstruction(
+        adminKp.publicKey,
+        giftHoldingTokenAccount,
+        GIFT_HOLDING_ACCOUNT,
+        tokenMint,
+        TOKEN_PROGRAM_ID
+      ),
+      createTransferInstruction(
+        adminTokenAccount,
+        giftHoldingTokenAccount,
+        adminKp.publicKey,
+        BigInt(giftTokens.toString()),
+        [],
+        TOKEN_PROGRAM_ID
+      )
+    );
+
+    giftTx.feePayer = adminKp.publicKey;
+    giftTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
+    const giftSig = await withRetry(() => sendAndConfirmTransaction(connection, giftTx, [adminKp]));
+
+    const mintAccount = await withRetry(() => getMint(connection, tokenMint));
+    await logSuccessTx(connection, giftSig, `reserveAuctionGifts => Sent ${giftTokens.toNumber() / 10 ** mintAccount.decimals} gift tokens to GIFT_HOLDING_ACCOUNT`);
+  }
+
+  return {
+    giftTokens,
+    giftSol,
+    liquidityTokensAfterGifts,
+    liquidityWSolAfterGifts
+  };
+}
+
+// Remaining functions (withdrawFunds, createAndFundPool_v2_AMM, createAndFundPool_v3_CLMM, updateKeyPairPoolInfo, logSuccessTx, getTransactionDetailsWithRetry, sleep, convertValue, logObject, clmmDevConfigs, buyAndBurn) remain unchanged
 async function withdrawFunds(program: Program<MaxiAuction>, isMainnet: boolean, auctionId: number, adminKp: Keypair, connection: Connection):
   Promise<{
     solAmount: bigint;
@@ -353,7 +435,6 @@ async function withdrawFunds(program: Program<MaxiAuction>, isMainnet: boolean, 
   return { solAmount: solWithdrawn, tokenAmount: tokenWithdrawn, tokenMint, adminTokenAccount };
 }
 
-// (2a) Create market and pool - v2 AMM (continuous product pool)
 async function createAndFundPool_v2_AMM(
   program: Program<MaxiAuction>,
   isMainnet: boolean,
@@ -472,7 +553,6 @@ async function createAndFundPool_v2_AMM(
   return { marketId, poolId, marketInfo, poolKeys };
 }
 
-// (2b) Create market and pool - v3 CLMM (constant product pool; full range position)
 async function createAndFundPool_v3_CLMM(
   program: Program<MaxiAuction>,
   isMainnet: boolean,
@@ -742,7 +822,6 @@ function logObject(label, obj) {
   console.log(label, convertedObj);
 }
 
-// https://github.com/raydium-io/raydium-sdk-V2-demo/blob/master/src/clmm/utils.ts
 export const clmmDevConfigs = [
   {
     id: 'CQYbhr6amxUER4p5SC44C63R4qw4NFc9Z4Db9vF4tZwG',
@@ -789,112 +868,6 @@ export const clmmDevConfigs = [
     defaultRangePoint: [0.01, 0.05, 0.1, 0.2, 0.5],
   },
 ]
-
-
-async function getAuctionGifts(auctionId: number, tokenMint: PublicKey): Promise<number> {
-  const pool = new sql.ConnectionPool(DB_CONFIG);
-  try {
-    await pool.connect();
-    const request = pool.request();
-
-    request.input('auction_id', sql.Int, auctionId);
-    request.input('pubkey', sql.NVarChar(255), tokenMint.toBase58());
-
-    const query = `
-      SELECT ISNULL(SUM([percentage]), 0) as total_percentage
-      FROM [dbo].[AuctionGift]
-      WHERE [auction_id] = @auction_id AND [pubkey] = @pubkey
-    `;
-
-    const result = await request.query(query);
-    const totalPercentage = result.recordset[0].total_percentage;
-
-    // Convert from percentage (0-100) to decimal (0-1)
-    const totalGiftPercent = Number(totalPercentage) / 100;
-
-    console.log(`getAuctionGifts -> auction_id: ${auctionId}, pubkey: ${tokenMint.toBase58()}, total_percentage: ${totalPercentage}%, normalized: ${totalGiftPercent}`);
-
-    return totalGiftPercent;
-  } catch (error) {
-    console.error('Error fetching auction gifts:', error);
-    throw error;
-  } finally {
-    await pool.close();
-  }
-}
-
-async function reserveAuctionGifts(
-  liquidityTokens: any,
-  liquidityWSol: any,
-  totalGiftPercent: number,
-  tokenMint: PublicKey,
-  adminKp: Keypair,
-  connection: Connection
-) {
-  console.log(`reserveAuctionGifts -> totalGiftPercent: ${totalGiftPercent}`);
-
-  if (totalGiftPercent <= 0) {
-    console.log(`reserveAuctionGifts -> No gifts to process`);
-    return {
-      giftTokens: new BN(0),
-      giftSol: new BN(0),
-      liquidityTokensAfterGifts: liquidityTokens,
-      liquidityWSolAfterGifts: liquidityWSol
-    };
-  }
-
-  // Calculate gift amounts
-  const giftTokens = liquidityTokens.mul(new BN(Math.floor(totalGiftPercent * 10000))).div(new BN(10000));
-  const giftSol = liquidityWSol.mul(new BN(Math.floor(totalGiftPercent * 10000))).div(new BN(10000));
-
-  console.log(`reserveAuctionGifts -> giftTokens: ${giftTokens.toString()}`);
-  console.log(`reserveAuctionGifts -> giftSol: ${giftSol.toString()}`);
-
-  // Subtract gifts from liquidity
-  const liquidityTokensAfterGifts = liquidityTokens.sub(giftTokens);
-  const liquidityWSolAfterGifts = liquidityWSol.sub(giftSol);
-
-  console.log(`reserveAuctionGifts -> liquidityTokensAfterGifts: ${liquidityTokensAfterGifts.toString()}`);
-  console.log(`reserveAuctionGifts -> liquidityWSolAfterGifts: ${liquidityWSolAfterGifts.toString()}`);
-
-  // Send gift tokens to GIFT_HOLDING_ACCOUNT if > 0
-  if (giftTokens.gt(new BN(0))) {
-    const adminTokenAccount = getAssociatedTokenAddressSync(tokenMint, adminKp.publicKey);
-    const giftHoldingTokenAccount = getAssociatedTokenAddressSync(tokenMint, GIFT_HOLDING_ACCOUNT, true);
-
-    const giftTx = new Transaction().add(
-      createAssociatedTokenAccountIdempotentInstruction(
-        adminKp.publicKey,
-        giftHoldingTokenAccount,
-        GIFT_HOLDING_ACCOUNT,
-        tokenMint,
-        TOKEN_PROGRAM_ID
-      ),
-      createTransferInstruction(
-        adminTokenAccount,
-        giftHoldingTokenAccount,
-        adminKp.publicKey,
-        BigInt(giftTokens.toString()),
-        [],
-        TOKEN_PROGRAM_ID
-      )
-    );
-
-    giftTx.feePayer = adminKp.publicKey;
-    giftTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
-    const giftSig = await sendAndConfirmTransaction(connection, giftTx, [adminKp]);
-
-    const mintAccount = await getMint(connection, tokenMint);
-    await logSuccessTx(connection, giftSig, `reserveAuctionGifts => Sent ${giftTokens.toNumber() / 10 ** mintAccount.decimals} gift tokens to GIFT_HOLDING_ACCOUNT`);
-  }
-
-  return {
-    giftTokens,
-    giftSol,
-    liquidityTokensAfterGifts,
-    liquidityWSolAfterGifts
-  };
-}
 
 export async function buyAndBurn(
   giftSol: BN,

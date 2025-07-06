@@ -2879,8 +2879,8 @@ async function logAuctionInfo(
     const poolPpcInfov2 = poolDbInfo?.pool_id ? poolPpcInfosMapv2.get(poolDbInfo.pool_id) : undefined;
     const poolPpcInfov3 = poolDbInfo?.pool_id ? poolPpcInfosMapv3.get(poolDbInfo.pool_id) : undefined;
     const poolPrice = Number(poolPpcInfov2?.poolPrice || poolPpcInfov3?.currentPrice);
-    const baseReserve = poolPpcInfov2?.baseReserve ? new BN(poolPpcInfov2?.baseReserve, 16) : null;
-    const quoteReserve = poolPpcInfov2?.quoteReserve ? new BN(poolPpcInfov2?.quoteReserve, 16) : null;
+    const baseReserve_v2 = poolPpcInfov2?.baseReserve ? new BN(poolPpcInfov2?.baseReserve, 16) : null;
+    const quoteReserve_v2 = poolPpcInfov2?.quoteReserve ? new BN(poolPpcInfov2?.quoteReserve, 16) : null;
     // var lpProviders = "N/A (1)";
     // try {
     //   if (poolPpcInfo) {
@@ -2901,8 +2901,8 @@ async function logAuctionInfo(
       `CP: ${(x.clearingPrice ? (x.clearingPrice.toNumber() / LAMPORTS_PER_SOL).toFixed(10) : "-").padEnd(12)} ` +
       (poolPpcInfov2 || poolPpcInfov3
         ? (`> PRICE: ${(1 / poolPrice).toFixed(10)} ` +
-          (baseReserve && quoteReserve
-            ? `LIQv2: [${baseReserve.toString()} T - lamports, ${(Number(quoteReserve.toString()) / LAMPORTS_PER_SOL).toFixed(9)} WSOL]` //LP Providers: [${lpProviders}]`
+          (baseReserve_v2 && quoteReserve_v2
+            ? `LIQv2: [${baseReserve_v2.toString()} T - lamports, ${(Number(quoteReserve_v2.toString()) / LAMPORTS_PER_SOL).toFixed(9)} WSOL]` //LP Providers: [${lpProviders}]`
             : 'LIQv3: TBC'))
         : '')
     );
