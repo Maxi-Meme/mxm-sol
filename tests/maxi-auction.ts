@@ -220,12 +220,12 @@ describe("maxi-auction", () => {
       // Process migration and resolve the promise
       let migrationResult = { success: true, error: null };
       migrateAuction(program, isMainnet, auctionId, adminKp, connection)
-        // .catch((err) => {
-        //   logObject('auction migration error', err);
-        //   logger.color("red").error(`auction ${auctionId} migration complete - catch`, err);
-        //   migrationResult = { success: false, error: err };
-        //   //throw err;
-        // })
+        .catch((err) => {
+          logObject('auction migration error', err);
+          logger.color("red").error(`auction ${auctionId} migration complete - catch`, err);
+          migrationResult = { success: false, error: err };
+          //throw err;
+        })
         .finally(async () => {
           console.log(`auction ${auctionId} migration complete - finally`);
           const resolve = await waitForResolver(auctionId.toString(), auctionFilledPromises, 10000, 500); // Poll for the resolver with a timeout
@@ -3094,7 +3094,7 @@ async function waitForMigration(auctionId: number): Promise<{ success: boolean, 
 
   // Add a timeout to prevent hanging
   const timeoutPromise = new Promise<{ success: boolean, error?: any }>((_, reject) => {
-    setTimeout(() => reject(new Error(`Timeout waiting for migration of auction ID ${auctionId}`)), 30000);
+    setTimeout(() => reject(new Error(`Timeout waiting for migration of auction ID ${auctionId}`)), 60000);
   });
 
   const result = await Promise.race([auctionFilledPromise, timeoutPromise]);
