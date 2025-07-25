@@ -1036,6 +1036,41 @@
         {
           "name": "rent",
           "address": "SysvarRent111111111111111111111111111111111"
+        },
+        {
+          "name": "referral_mappings",
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  102,
+                  101,
+                  114,
+                  114,
+                  97,
+                  108,
+                  95,
+                  109,
+                  97,
+                  112,
+                  112,
+                  105,
+                  110,
+                  103,
+                  115
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "referrer",
+          "writable": true,
+          "optional": true
         }
       ],
       "args": [
@@ -1109,6 +1144,103 @@
               "name": "Config"
             }
           }
+        }
+      ]
+    },
+    {
+      "name": "set_referral",
+      "discriminator": [
+        213,
+        23,
+        157,
+        74,
+        199,
+        152,
+        182,
+        8
+      ],
+      "accounts": [
+        {
+          "name": "global_info",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  105,
+                  110,
+                  102,
+                  111,
+                  95,
+                  115,
+                  101,
+                  101,
+                  100
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "referral_mappings",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  102,
+                  101,
+                  114,
+                  114,
+                  97,
+                  108,
+                  95,
+                  109,
+                  97,
+                  112,
+                  112,
+                  105,
+                  110,
+                  103,
+                  115
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "referred_account",
+          "type": "pubkey"
+        },
+        {
+          "name": "referrer_account",
+          "type": "pubkey"
         }
       ]
     },
@@ -1335,6 +1467,19 @@
         62,
         44,
         62
+      ]
+    },
+    {
+      "name": "ReferralMappings",
+      "discriminator": [
+        243,
+        173,
+        130,
+        213,
+        234,
+        11,
+        237,
+        10
       ]
     }
   ],
@@ -1573,6 +1718,11 @@
       "code": 6030,
       "name": "InsufficientFunds",
       "msg": "Insufficient funds."
+    },
+    {
+      "code": 6031,
+      "name": "InvalidReferralMapping",
+      "msg": "Invalid referral mapping - self-referral not allowed"
     }
   ],
   "types": [
@@ -1879,6 +2029,10 @@
           {
             "name": "min_total_sol",
             "type": "u64"
+          },
+          {
+            "name": "ref_bid_fee_perc_share",
+            "type": "u64"
           }
         ]
       }
@@ -1938,6 +2092,40 @@
           {
             "name": "bid_fee",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReferralMapping",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "referred_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "referrer_account",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReferralMappings",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "referrals",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "ReferralMapping"
+                }
+              }
+            }
           }
         ]
       }

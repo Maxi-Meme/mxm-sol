@@ -81,4 +81,9 @@ pub mod maxi_auction {
     pub fn init_auction_bids(ctx: Context<InitAuctionBids>) -> Result<()> {
         ctx.accounts.process()
     }
+
+    // [REF] - Admin-only function to set referral mappings
+    pub fn set_referral(ctx: Context<SetReferral>, referred_account: Pubkey, referrer_account: Pubkey) -> Result<()> {
+        ctx.accounts.process(referred_account, referrer_account)
+    }
 }

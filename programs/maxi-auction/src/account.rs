@@ -1,6 +1,13 @@
 use crate::states::{Bid, Config, AuctionStatus};
 use anchor_lang::prelude::*;
 
+// [REF] - Referral mapping data structure
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct ReferralMapping {
+    pub referred_account: Pubkey,    // refd_account - the user being referred
+    pub referrer_account: Pubkey,    // refby_account - the referrer who gets rewards
+}
+
 /// Global state for the auction system.
 #[account]
 pub struct GlobalInfo {
@@ -47,4 +54,10 @@ pub struct Auction {
     //pub buyback_price: u64,   // 8 - method 2 - todo
     //pub buyback_period_days: u64, // 2 - method 2 - todo
     //pub is_dao_claimed: bool, // 1 - method 2 - todo
+}
+
+// [REF] - Global referral mappings account structure
+#[account]
+pub struct ReferralMappings {
+    pub referrals: Vec<ReferralMapping>,  // Vector to store referral mappings, allowing dynamic growth
 }

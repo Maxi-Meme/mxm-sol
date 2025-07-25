@@ -97,4 +97,8 @@ pub enum CustomError {
 
     #[msg("Insufficient funds.")]
     InsufficientFunds,
+    
+    // [REF] - Referral system specific errors
+    #[msg("Invalid referral mapping - self-referral not allowed")]
+    InvalidReferralMapping,
 }

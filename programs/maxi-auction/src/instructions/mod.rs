@@ -28,5 +28,9 @@ pub use finalize::*;
 pub mod init_auction_bids;
 pub use init_auction_bids::*;
 
+// [REF] - Referral system instruction
+pub mod set_referral;
+pub use set_referral::*;
+
 //pub mod raydium_migrate;
 //pub use raydium_migrate::*;

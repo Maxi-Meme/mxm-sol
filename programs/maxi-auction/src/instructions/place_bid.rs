@@ -1,6 +1,6 @@
 use crate::{
-    account::{Auction, GlobalInfo, Bids},
-    constants::{GLOBAL_INFO_SEED, AUCTION_DATA_SEED, AUCTION_SOL_SEED, BIDS_SEED},
+    account::{Auction, GlobalInfo, Bids, ReferralMappings}, // [REF] - Added ReferralMappings
+    constants::{GLOBAL_INFO_SEED, AUCTION_DATA_SEED, AUCTION_SOL_SEED, BIDS_SEED, REFERRAL_MAPPINGS_SEED}, // [REF] - Added REFERRAL_MAPPINGS_SEED
     errors::CustomError,
     states::AuctionStatus,
     events::{AuctionFilled, NewBid},
@@ -69,6 +69,18 @@ pub struct PlaceBid<'info> {
 
     // Added to calculate rent costs for resizing
     pub rent: Sysvar<'info, Rent>,
+    
+    // [REF] - Referral mappings account (optional - checked in logic)
+    #[account(
+        seeds = [REFERRAL_MAPPINGS_SEED.as_ref()],
+        bump
+    )]
+    pub referral_mappings: Option<Account<'info, ReferralMappings>>,
+    
+    // [REF] - Referrer account (optional - receives referral fees)
+    /// CHECK: Referrer account - validated against referral mappings
+    #[account(mut)]
+    pub referrer: Option<AccountInfo<'info>>,
 }
 
 impl<'info> PlaceBid<'info> {
@@ -198,13 +210,66 @@ impl<'info> PlaceBid<'info> {
             auction_amount,
         )?;
 
-        // Transfer fee to fee_account
-        sol_transfer_user(
-            self.bidder.to_account_info(),
-            self.fee_account.to_account_info(),
-            self.system_program.to_account_info(),
-            fee,
-        )?;
+        // [REF] - Handle fee transfer with potential referral split
+        let ref_bid_fee_perc_share = self.global_info.config.ref_bid_fee_perc_share;
+        
+        // [REF] - Check if referral system is enabled and bidder has a referrer
+        let mut referrer_fee = 0u64;
+        let mut platform_fee = fee;
+        
+        if ref_bid_fee_perc_share > 0 && self.referral_mappings.is_some() && self.referrer.is_some() {
+            // [REF] - Look up referrer for this bidder
+            let referral_mappings = self.referral_mappings.as_ref().unwrap();
+            let referrer_account_info = self.referrer.as_ref().unwrap();
+            
+            // [REF] - Find the referrer for this bidder
+            let mut found_referrer = false;
+            for mapping in &referral_mappings.referrals {
+                if mapping.referred_account == self.bidder.key() {
+                    // [REF] - Verify the referrer account matches the mapping
+                    if mapping.referrer_account == referrer_account_info.key() {
+                        found_referrer = true;
+                        
+                        // [REF] - Calculate referrer's share (ref_bid_fee_perc_share is 0-1000 for 0.0%-100.0%)
+                        referrer_fee = ((fee as u128 * ref_bid_fee_perc_share as u128) / 1000) as u64;
+                        platform_fee = fee.saturating_sub(referrer_fee);
+                        
+                        msg!("[REF] place_bid - Referral found: bidder {} -> referrer {}", 
+                             self.bidder.key(), referrer_account_info.key());
+                        msg!("[REF] place_bid - Fee split: total={}, referrer={}, platform={}", 
+                             fee, referrer_fee, platform_fee);
+                    }
+                    break;
+                }
+            }
+            
+            if !found_referrer {
+                msg!("[REF] place_bid - Warning: Referrer account provided but doesn't match mapping");
+            }
+        }
+        
+        // [REF] - Transfer platform's share of the fee
+        if platform_fee > 0 {
+            sol_transfer_user(
+                self.bidder.to_account_info(),
+                self.fee_account.to_account_info(),
+                self.system_program.to_account_info(),
+                platform_fee,
+            )?;
+        }
+        
+        // [REF] - Transfer referrer's share if applicable
+        if referrer_fee > 0 && self.referrer.is_some() {
+            let referrer_account_info = self.referrer.as_ref().unwrap();
+            sol_transfer_user(
+                self.bidder.to_account_info(),
+                referrer_account_info.to_account_info(),
+                self.system_program.to_account_info(),
+                referrer_fee,
+            )?;
+            msg!("[REF] place_bid - Transferred {} lamports to referrer {}", 
+                 referrer_fee, referrer_account_info.key());
+        }
 
         // Record the bid with adjusted current_price and fee
         let bids = &mut self.bids_account.bids; // mutuable borrow
