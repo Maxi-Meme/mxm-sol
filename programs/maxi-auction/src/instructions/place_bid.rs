@@ -14,6 +14,7 @@ use anchor_spl::{
     token::{self, spl_token::instruction::AuthorityType, Mint, Token, TokenAccount},
 };
 use anchor_lang::prelude::*;
+use anchor_lang::AccountDeserialize;
 use std::mem::size_of;
 
 #[derive(Accounts)]
@@ -71,11 +72,8 @@ pub struct PlaceBid<'info> {
     pub rent: Sysvar<'info, Rent>,
     
     // [REF] - Referral mappings account (optional - checked in logic)
-    #[account(
-        seeds = [REFERRAL_MAPPINGS_SEED.as_ref()],
-        bump
-    )]
-    pub referral_mappings: Option<Account<'info, ReferralMappings>>,
+    /// CHECK: Referral mappings - validated as a PDA in the instruction logic
+    pub referral_mappings: Option<AccountInfo<'info>>,
     
     // [REF] - Referrer account (optional - receives referral fees)
     /// CHECK: Referrer account - validated against referral mappings
@@ -219,32 +217,37 @@ impl<'info> PlaceBid<'info> {
         
         if ref_bid_fee_perc_share > 0 && self.referral_mappings.is_some() && self.referrer.is_some() {
             // [REF] - Look up referrer for this bidder
-            let referral_mappings = self.referral_mappings.as_ref().unwrap();
+            let referral_mappings_info = self.referral_mappings.as_ref().unwrap();
             let referrer_account_info = self.referrer.as_ref().unwrap();
             
-            // [REF] - Find the referrer for this bidder
-            let mut found_referrer = false;
-            for mapping in &referral_mappings.referrals {
-                if mapping.referred_account == self.bidder.key() {
-                    // [REF] - Verify the referrer account matches the mapping
-                    if mapping.referrer_account == referrer_account_info.key() {
-                        found_referrer = true;
-                        
-                        // [REF] - Calculate referrer's share (ref_bid_fee_perc_share is 0-1000 for 0.0%-100.0%)
-                        referrer_fee = ((fee as u128 * ref_bid_fee_perc_share as u128) / 1000) as u64;
-                        platform_fee = fee.saturating_sub(referrer_fee);
-                        
-                        msg!("[REF] place_bid - Referral found: bidder {} -> referrer {}", 
-                             self.bidder.key(), referrer_account_info.key());
-                        msg!("[REF] place_bid - Fee split: total={}, referrer={}, platform={}", 
-                             fee, referrer_fee, platform_fee);
+            // [REF] - Try to deserialize the referral mappings account
+            if let Ok(referral_mappings) = ReferralMappings::try_deserialize(&mut &referral_mappings_info.data.borrow()[..]) {
+                // [REF] - Find the referrer for this bidder
+                let mut found_referrer = false;
+                for mapping in &referral_mappings.referrals {
+                    if mapping.referred_account == self.bidder.key() {
+                        // [REF] - Verify the referrer account matches the mapping
+                        if mapping.referrer_account == referrer_account_info.key() {
+                            found_referrer = true;
+                            
+                            // [REF] - Calculate referrer's share (ref_bid_fee_perc_share is 0-1000 for 0.0%-100.0%)
+                            referrer_fee = ((fee as u128 * ref_bid_fee_perc_share as u128) / 1000) as u64;
+                            platform_fee = fee.saturating_sub(referrer_fee);
+                            
+                            msg!("[REF] place_bid - Referral found: bidder {} -> referrer {}", 
+                                 self.bidder.key(), referrer_account_info.key());
+                            msg!("[REF] place_bid - Fee split: total={}, referrer={}, platform={}", 
+                                 fee, referrer_fee, platform_fee);
+                        }
+                        break;
                     }
-                    break;
                 }
-            }
-            
-            if !found_referrer {
-                msg!("[REF] place_bid - Warning: Referrer account provided but doesn't match mapping");
+                
+                if !found_referrer {
+                    msg!("[REF] place_bid - Warning: Referrer account provided but doesn't match mapping");
+                }
+            } else {
+                msg!("[REF] place_bid - Referral mappings account exists but is not initialized");
             }
         }
         

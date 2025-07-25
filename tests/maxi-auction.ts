@@ -293,9 +293,9 @@ describe("maxi-auction", () => {
         }
       };
       const airdropPromises = USER_KPs.map(account =>
-        airdropAndConfirm(account, 1 * LAMPORTS_PER_SOL)
+        airdropAndConfirm(account, 10 * LAMPORTS_PER_SOL)
       );
-      airdropPromises.push(airdropAndConfirm(adminKp, 5 * LAMPORTS_PER_SOL));
+      airdropPromises.push(airdropAndConfirm(adminKp, 50 * LAMPORTS_PER_SOL));
       await Promise.all(airdropPromises);
 
       /*logger.color("green").log("Airdrop SOL to user1");
@@ -1942,8 +1942,7 @@ describe("maxi-auction", () => {
         configA.feeAccount.equals(configB.feeAccount) &&
         configA.daoAccount.equals(configB.daoAccount) &&
         configA.minTotalSol.eq(configB.minTotalSol) &&
-        // [REF] - Include referral configuration comparison
-        configA.refBidFeePercShare.eq(configB.refBidFeePercShare)
+        configA.refBidFeePercShare.eq(configB.refBidFeePercShare) // [REF] - Include referral configuration comparison
       );
     };
 
@@ -3009,49 +3008,54 @@ describe("maxi-auction", () => {
   }
 
   // [REF] - Referral system test cases
-  describe("referrals - admin functions", () => {
-    it("admin - sets referral mapping successfully", async () => {
+  it("admin - adds referral mapping successfully", async () => {
       const referrer = USER_KPs[1];
       const referred = USER_KPs[2];
       await test_set_referral(referrer, referred);
       
       const mappings = await test_get_referral_mappings();
       const mapping = mappings.find(m => m.referredAccount.equals(referred.publicKey));
-      assert(mapping !== undefined, "Referral mapping should exist");
-      assert(mapping.referrerAccount.equals(referrer.publicKey), "Referrer should match");
-    });
+      assert.ok(mapping !== undefined, "Referral mapping should exist");
+      assert.ok(mapping.referrerAccount.equals(referrer.publicKey), "Referrer should match");
+  });
 
-    it("admin - updates existing referral mapping", async () => {
+  it("admin - updates existing referral mapping", async () => {
       const oldReferrer = USER_KPs[1];
       const newReferrer = USER_KPs[3];  
       const referred = USER_KPs[2];
       
       // Set initial mapping
       await test_set_referral(oldReferrer, referred);
+      
       // Update with new referrer
       await test_set_referral(newReferrer, referred);
       
       const mappings = await test_get_referral_mappings();
       const mapping = mappings.find(m => m.referredAccount.equals(referred.publicKey));
-      assert(mapping !== undefined, "Referral mapping should exist");
-      assert(mapping.referrerAccount.equals(newReferrer.publicKey), "Referrer should be updated");
-    });
+      assert.ok(mapping !== undefined, "Referral mapping should exist");
+      assert.ok(mapping.referrerAccount.equals(newReferrer.publicKey), "Referrer should be updated");
   });
 
-  describe("referrals - bid fees (with zero config)", () => {
-    it("referrals - bid with referrer when config is zero behaves normally", async () => {
+  it("referrals - bid with referrer when config is zero behaves normally", async () => {
       await test_create_auction_KP0({});
       const bidder = USER_KPs[1];
       const referrer = USER_KPs[2];
       
-      // [REF] - With zero config, should behave like normal bid
-      await test_bid_with_referral(bidder, referrer, 1, 10, 50);
+      // [REF] - Set referral mapping first
+      await test_set_referral(referrer, bidder);
+      
+      // [REF] - Then place a normal bid (should behave like normal with zero config)
+      await test_bid_auction({ 
+        fill_percent: 0.1, 
+        bidderKp: bidder,
+        fee_perc: 0.01
+      });
       
       // [REF] - No additional referral fee logic should be triggered since config is 0
       logger.color("green").log("[REF] Bid with zero referral config completed successfully");
-    });
+  });
 
-    it("referrals - normal claim still works with referral mapping set", async () => {
+  it("referrals - normal claim still works with referral mapping set", async () => {
       await test_create_auction_KP0({});
       const claimer = USER_KPs[1];
       const referrer = USER_KPs[2];
@@ -3060,19 +3064,267 @@ describe("maxi-auction", () => {
       await test_set_referral(referrer, claimer);
       
       // Bid first
-      await test_bid_auction({ auction_id: 1, bid_qty: 10, signerKp: claimer, fee_perc: 50 });
+      const bidResult = await test_bid_auction({ 
+        fill_percent: 1.0, 
+        bidderKp: claimer, 
+        fee_perc: 0.01
+      });
       
       // Wait for auction to end and claim
       await new Promise(resolve => setTimeout(resolve, 2000));
       
       // [REF] - Normal claim should still work (no referral logic in claim)
-      const result = await test_claim_auction(claimer, true);
+      const result = await test_claim_auction(claimer, true, bidResult);
       
       logger.color("green").log("[REF] Normal claim with referral mapping completed successfully");
-    });
   });
 
-});
+  // [REF] - Happy path tests with non-zero referral fee share
+  it("referrals - referrer receives 20% of platform fees", async () => {
+      // Temporarily set referral fee share to 20%
+      await test_init_with_ref_fee_share(200); // 200 = 20.0%
+      
+      await test_create_auction_KP0({});
+      const bidder = USER_KPs[1];
+      const referrer = USER_KPs[2];
+      
+      // Set referral mapping
+      await test_set_referral(referrer, bidder);
+      
+      // Get balances before bid
+      const referrerBalanceBefore = await connection.getBalance(referrer.publicKey);
+      const feeAccountBalanceBefore = await connection.getBalance(TEST_FEE_ACCOUNT.publicKey);
+      
+      // Place bid with 1% platform fee
+      const bidAmount = 1 * LAMPORTS_PER_SOL; // 1 SOL bid
+      const feePerc = 0.01; // 1% fee
+      const expectedTotalFee = bidAmount * feePerc;
+      const expectedReferrerFee = expectedTotalFee * 0.2; // 20% of fees
+      const expectedPlatformFee = expectedTotalFee * 0.8; // 80% of fees
+      
+      await test_bid_auction({ 
+        fill_percent: 0.1,
+        bidderKp: bidder,
+        fee_perc: feePerc
+      });
+      
+      // Get balances after bid
+      const referrerBalanceAfter = await connection.getBalance(referrer.publicKey);
+      const feeAccountBalanceAfter = await connection.getBalance(TEST_FEE_ACCOUNT.publicKey);
+      
+      // Verify referrer received their share
+      const referrerIncrease = referrerBalanceAfter - referrerBalanceBefore;
+      const feeAccountIncrease = feeAccountBalanceAfter - feeAccountBalanceBefore;
+      
+      assert.ok(
+        Math.abs(referrerIncrease - expectedReferrerFee) < 1000, // Allow small rounding difference
+        `Referrer should receive ~${expectedReferrerFee} lamports, got ${referrerIncrease}`
+      );
+      
+      assert.ok(
+        Math.abs(feeAccountIncrease - expectedPlatformFee) < 1000,
+        `Platform should receive ~${expectedPlatformFee} lamports, got ${feeAccountIncrease}`
+      );
+      
+      logger.color("green").log(`[REF] Referrer received ${referrerIncrease} lamports (20% of ${expectedTotalFee} fee)`);
+      
+      // Reset to zero for other tests
+      await test_init_with_ref_fee_share(0);
+  });
+
+  it("referrals - multiple bidders same referrer accumulates fees", async () => {
+      // Set referral fee share to 30%
+      await test_init_with_ref_fee_share(300); // 300 = 30.0%
+      
+      await test_create_auction_KP0({});
+      const referrer = USER_KPs[3];
+      const bidder1 = USER_KPs[1];
+      const bidder2 = USER_KPs[2];
+      
+      // Set both bidders to same referrer
+      await test_set_referral(referrer, bidder1);
+      await test_set_referral(referrer, bidder2);
+      
+      const referrerBalanceBefore = await connection.getBalance(referrer.publicKey);
+      
+      // Both bidders place bids
+      await test_bid_auction({ 
+        fill_percent: 0.3,
+        bidderKp: bidder1,
+        fee_perc: 0.01
+      });
+      
+      await test_bid_auction({ 
+        fill_percent: 0.2,
+        bidderKp: bidder2,
+        fee_perc: 0.01
+      });
+      
+      const referrerBalanceAfter = await connection.getBalance(referrer.publicKey);
+      const totalReferrerFees = referrerBalanceAfter - referrerBalanceBefore;
+      
+      assert.ok(
+        totalReferrerFees > 0,
+        "Referrer should accumulate fees from multiple referred bidders"
+      );
+      
+      logger.color("green").log(`[REF] Referrer accumulated ${totalReferrerFees} lamports from 2 bidders`);
+      
+      // Reset
+      await test_init_with_ref_fee_share(0);
+  });
+
+  it("referrals - 100% fee share gives all fees to referrer", async () => {
+      // Set referral fee share to 100%
+      await test_init_with_ref_fee_share(1000); // 1000 = 100.0%
+      
+      await test_create_auction_KP0({});
+      const bidder = USER_KPs[1];
+      const referrer = USER_KPs[2];
+      
+      await test_set_referral(referrer, bidder);
+      
+      const referrerBalanceBefore = await connection.getBalance(referrer.publicKey);
+      const feeAccountBalanceBefore = await connection.getBalance(TEST_FEE_ACCOUNT.publicKey);
+      
+      // Place bid
+      const result = await test_bid_auction({ 
+        fill_percent: 0.1,
+        bidderKp: bidder,
+        fee_perc: 0.02 // 2% fee
+      });
+      
+      const referrerBalanceAfter = await connection.getBalance(referrer.publicKey);
+      const feeAccountBalanceAfter = await connection.getBalance(TEST_FEE_ACCOUNT.publicKey);
+      
+      const referrerIncrease = referrerBalanceAfter - referrerBalanceBefore;
+      const feeAccountIncrease = feeAccountBalanceAfter - feeAccountBalanceBefore;
+      const totalFee = result.actualBidFeeBN.toNumber();
+      
+      assert.ok(
+        Math.abs(referrerIncrease - totalFee) < 1000,
+        `Referrer should receive entire fee of ${totalFee} lamports`
+      );
+      
+      assert.ok(
+        feeAccountIncrease === 0,
+        "Platform should receive 0 when referral share is 100%"
+      );
+      
+      logger.color("green").log(`[REF] Referrer received entire fee: ${referrerIncrease} lamports`);
+      
+      // Reset
+      await test_init_with_ref_fee_share(0);
+  });
+
+  // [REF] - Helper to reinitialize with different referral fee share
+  async function test_init_with_ref_fee_share(refBidFeePercShare: number) {
+  const signer = adminKp;
+  
+  const newConfig = {
+    admin: adminKp.publicKey,
+    defaultTokenSupply: new BN(MAXIMEME_TOKEN_SUPPLY),
+    defaultTokenDecimals: MAXIMEME_TOKEN_DECIMALS,
+    defaultStartPriceLamports: new BN(TEST_STARTPRICE_SOL * LAMPORTS_PER_SOL),
+    feeAccount: TEST_FEE_ACCOUNT.publicKey,
+    daoAccount: TEST_DAO_ACCOUNT.publicKey,
+    minTotalSol: new BN(TEST_MIN_TOTAL_SOL * LAMPORTS_PER_SOL),
+    ref_bid_fee_perc_share: new BN(refBidFeePercShare), // [REF] - Custom referral share
+  };
+  
+  const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+  
+  try {
+    const tx = await program.methods
+      .init(newConfig)
+      .accounts({ globalInfo, admin: signer.publicKey })
+      .signers([signer])
+      .transaction();
+    
+    tx.feePayer = signer.publicKey;
+    tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+    
+    const sig = await sendAndConfirmTransaction(connection, tx, [signer]);
+    logger.color("cyan").log(`[REF] Reinitialized with ref_bid_fee_perc_share: ${refBidFeePercShare}`);
+  } catch (error) {
+    logger.color("yellow").log("[REF] Config reinit failed (may already be set):", error.message);
+  }
+  }
+
+  // [REF] - Referral system helper functions
+  async function test_set_referral(referrer_kp: Keypair, referred_kp: Keypair) {
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const [referralMappings] = PublicKey.findProgramAddressSync([Buffer.from(referralMappingsSeed)], program.programId);
+
+    logger.color("cyan").log(`[REF] Setting referral mapping: ${referred_kp.publicKey.toBase58()} -> ${referrer_kp.publicKey.toBase58()}`);
+
+    const tx = await program.methods
+      .setReferral(referred_kp.publicKey, referrer_kp.publicKey)
+      .accounts({
+        globalInfo,
+        admin: adminKp.publicKey,
+        referralMappings,
+        systemProgram: anchor.web3.SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      })
+      .signers([adminKp])
+      .transaction();
+
+    tx.feePayer = adminKp.publicKey;
+    tx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
+
+    try {
+      const sig = await sendAndConfirmTransaction(connection, tx, [adminKp]);
+      await logSuccessTx(connection, sig, `[REF] set_referral: ${referred_kp.publicKey.toBase58().slice(0,8)} -> ${referrer_kp.publicKey.toBase58().slice(0,8)}`);
+      return sig;
+    } catch (err) {
+      logger.color("red").log("[REF] set_referral failed:", err.getLogs ? err.getLogs() : err);
+      throw err;
+    }
+  }
+
+  async function test_get_referral_mappings() {
+    const [referralMappings] = PublicKey.findProgramAddressSync([Buffer.from(referralMappingsSeed)], program.programId);
+    
+    try {
+      const mappingsAccount = await program.account.referralMappings.fetch(referralMappings);
+      return mappingsAccount.referrals;
+    } catch (error) {
+      logger.color("yellow").log("[REF] Referral mappings account not found or empty");
+      return [];
+    }
+  }
+
+  // [REF] - Helper function to find referrer for a given account
+  async function test_get_referrer_for_account(account: PublicKey): Promise<PublicKey | null> {
+    const mappings = await test_get_referral_mappings();
+    
+    for (const mapping of mappings) {
+      if (mapping.referredAccount.equals(account)) {
+        return mapping.referrerAccount;
+      }
+    }
+    
+    return null;
+  }
+
+  async function test_bid_with_referral(bidder_kp: Keypair, referrer_kp: Keypair, auctionId: number, bidQty: number = 10, feePerc: number = 50) {
+    // [REF] - First set the referral mapping
+    await test_set_referral(referrer_kp, bidder_kp);
+    
+    // [REF] - Then place the bid (the referral logic will be triggered in place_bid)
+    const result = await test_bid_auction({
+      useAuctionId: auctionId,
+      fill_percent: bidQty / 100, // Convert to percentage
+      bidderKp: bidder_kp,
+      fee_perc: feePerc / 100, // Convert to 0-1 range
+    });
+    
+    logger.color("cyan").log(`[REF] Bid placed with referral - Bidder: ${bidder_kp.publicKey.toBase58().slice(0,8)}, Referrer: ${referrer_kp.publicKey.toBase58().slice(0,8)}`);
+    return result;
+  }
+
+}); // End of "maxi-auction" describe block
 
 async function getPoolDbAndRpcInfos(successfulResults: { auctionId: any; solBalanceAuctionData: any; solBalanceAuctionSol: any; solBalanceAuctionTokenAccount: any; rentExemptionAuctionData: any; rentExemptionAuctionSol: any; rentExemptionAuctionTokenAccount: any; tokenBalance: string; status: any; isFinalized: any; tokenMintPublicKey: any; }[]) {
 
@@ -3649,79 +3901,6 @@ async function getBids(program: Program<MaxiAuction>, auctionId: number) {
   }
   const bidsAccount = await program.account.bids.fetch(bidsPda);
   return bidsAccount.bids;
-}
-
-// [REF] - Referral system helper functions
-async function test_set_referral(referrer_kp: Keypair, referred_kp: Keypair) {
-  const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
-  const [referralMappings] = PublicKey.findProgramAddressSync([Buffer.from(referralMappingsSeed)], program.programId);
-
-  logger.color("cyan").log(`[REF] Setting referral mapping: ${referred_kp.publicKey.toBase58()} -> ${referrer_kp.publicKey.toBase58()}`);
-
-  const tx = await program.methods
-    .setReferral(referred_kp.publicKey, referrer_kp.publicKey)
-    .accounts({
-      globalInfo,
-      admin: adminKp.publicKey,
-      referralMappings,
-      systemProgram: anchor.web3.SystemProgram.programId,
-      rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-    })
-    .signers([adminKp])
-    .transaction();
-
-  tx.feePayer = adminKp.publicKey;
-  tx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
-
-  try {
-    const sig = await sendAndConfirmTransaction(connection, tx, [adminKp]);
-    await logSuccessTx(connection, sig, `[REF] set_referral: ${referred_kp.publicKey.toBase58().slice(0,8)} -> ${referrer_kp.publicKey.toBase58().slice(0,8)}`);
-    return sig;
-  } catch (err) {
-    logger.color("red").log("[REF] set_referral failed:", err.getLogs ? err.getLogs() : err);
-    throw err;
-  }
-}
-
-async function test_get_referral_mappings() {
-  const [referralMappings] = PublicKey.findProgramAddressSync([Buffer.from(referralMappingsSeed)], program.programId);
-  
-  try {
-    const mappingsAccount = await program.account.referralMappings.fetch(referralMappings);
-    return mappingsAccount.referrals;
-  } catch (error) {
-    logger.color("yellow").log("[REF] Referral mappings account not found or empty");
-    return [];
-  }
-}
-
-// [REF] - Helper function to find referrer for a given account
-async function test_get_referrer_for_account(account: PublicKey): Promise<PublicKey | null> {
-  const mappings = await test_get_referral_mappings();
-  
-  for (const mapping of mappings) {
-    if (mapping.referredAccount.equals(account)) {
-      return mapping.referrerAccount;
-    }
-  }
-  
-  return null;
-}
-
-async function test_bid_with_referral(bidder_kp: Keypair, referrer_kp: Keypair, auctionId: number, bidQty: number = 10, feePerc: number = 50) {
-  // [REF] - First set the referral mapping
-  await test_set_referral(referrer_kp, bidder_kp);
-  
-  // [REF] - Then place the bid (the referral logic will be triggered in place_bid)
-  const result = await test_bid_auction({
-    useAuctionId: auctionId,
-    fill_percent: bidQty / 100, // Convert to percentage
-    bidderKp: bidder_kp,
-    fee_perc: feePerc / 100, // Convert to 0-1 range
-  });
-  
-  logger.color("cyan").log(`[REF] Bid placed with referral - Bidder: ${bidder_kp.publicKey.toBase58().slice(0,8)}, Referrer: ${referrer_kp.publicKey.toBase58().slice(0,8)}`);
-  return result;
 }
 
 // [REF] - Removed claim referral function since we only do bid fee referrals

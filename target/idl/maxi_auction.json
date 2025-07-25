@@ -1039,33 +1039,7 @@
         },
         {
           "name": "referral_mappings",
-          "optional": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  102,
-                  101,
-                  114,
-                  114,
-                  97,
-                  108,
-                  95,
-                  109,
-                  97,
-                  112,
-                  112,
-                  105,
-                  110,
-                  103,
-                  115
-                ]
-              }
-            ]
-          }
+          "optional": true
         },
         {
           "name": "referrer",
