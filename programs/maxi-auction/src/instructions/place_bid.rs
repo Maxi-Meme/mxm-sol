@@ -230,8 +230,8 @@ impl<'info> PlaceBid<'info> {
                         if mapping.referrer_account == referrer_account_info.key() {
                             found_referrer = true;
                             
-                            // [REF] - Calculate referrer's share (ref_bid_fee_perc_share is 0-1000 for 0.0%-100.0%)
-                            referrer_fee = ((fee as u128 * ref_bid_fee_perc_share as u128) / 1000) as u64;
+                            // [REF] - Calculate referrer's share (ref_bid_fee_perc_share is 0-10000 for 0.00%-100.00%)
+                            referrer_fee = ((fee as u128 * ref_bid_fee_perc_share as u128) / 10000) as u64;
                             platform_fee = fee.saturating_sub(referrer_fee);
                             
                             msg!("[REF] place_bid - Referral found: bidder {} -> referrer {}", 

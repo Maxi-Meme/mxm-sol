@@ -11,7 +11,7 @@ pub struct Config {
     pub dao_account: Pubkey,
     pub min_total_sol: u64,
     // [REF] - Referral system configuration field
-    pub ref_bid_fee_perc_share: u64,     // 0-1000 (0.0% to 100.0%) - referrer's share of bid fees
+    pub ref_bid_fee_perc_share: u64,     // 0-10000 (0.00% to 100.00%) - referrer's share of bid fees
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Default, Debug)]
