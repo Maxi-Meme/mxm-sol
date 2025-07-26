@@ -2004,6 +2004,15 @@ describe("maxi-auction", () => {
 
       await setupAccount(connection, adminKp, newConfig.feeAccount);
       await setupAccount(connection, adminKp, newConfig.daoAccount);
+
+      // [REF] - Explicitly initialize referral mappings account
+      try {
+        logger.color("cyan").log("[REF] Initializing referral mappings account...");
+        await test_init_referral_mappings();
+        logger.color("green").log("[REF] Referral mappings account initialized successfully");
+      } catch (err) {
+        logger.color("yellow").log("[REF] Referral mappings already initialized or failed:", err.message);
+      }
     } else {
       CONTRACT_CONFIG = currentConfig;
       console.log("Configuration is already up to date. No initialization needed.");
@@ -3271,6 +3280,26 @@ describe("maxi-auction", () => {
       await test_init_with_ref_fee_share(0);
   });
 
+  it("referrals - gets and logs all referral mappings", async () => {
+      logger.color("cyan").log("[REF] Getting all referral mappings from contract...");
+      
+      const mappings = await test_get_referral_mappings();
+      
+      logger.color("green").log(`[REF] Found ${mappings.length} referral mappings:`);
+      
+      if (mappings.length === 0) {
+          logger.color("yellow").log("[REF] No referral mappings found in contract");
+      } else {
+          mappings.forEach((mapping, index) => {
+              logger.color("blue").log(`[REF] Mapping ${index + 1}:`);
+              logger.color("blue").log(`  Referred Account: ${mapping.referredAccount.toBase58()}`);
+              logger.color("blue").log(`  Referrer Account: ${mapping.referrerAccount.toBase58()}`);
+          });
+      }
+      
+      logger.color("green").log(`[REF] Successfully retrieved and logged ${mappings.length} referral mappings`);
+  });
+
   // [REF] - Helper to reinitialize with different referral fee share
   async function test_init_with_ref_fee_share(refBidFeePercShare: number) {
   const signer = adminKp;
@@ -3308,16 +3337,56 @@ describe("maxi-auction", () => {
   }
 
   // [REF] - Referral system helper functions
+  async function test_init_referral_mappings() {
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const [referralMappings] = PublicKey.findProgramAddressSync([Buffer.from(referralMappingsSeed)], program.programId);
+
+    logger.color("cyan").log(`[REF] Explicitly initializing referral mappings account...`);
+
+    // Create a dummy referral mapping to initialize the account
+    const dummyReferrer = Keypair.generate();
+    const dummyReferred = Keypair.generate();
+
+    const tx = await (program.methods as any)
+      .setReferral(dummyReferred.publicKey, dummyReferrer.publicKey)
+      .accounts({
+        globalInfo,
+        admin: adminKp.publicKey,
+        referralMappings,
+        systemProgram: anchor.web3.SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      })
+      .signers([adminKp])
+      .transaction();
+
+    tx.feePayer = adminKp.publicKey;
+    tx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
+
+    try {
+      const sig = await sendAndConfirmTransaction(connection, tx, [adminKp]);
+      await logSuccessTx(connection, sig, `[REF] init referral mappings with dummy mapping`);
+      
+      // Verify the account is now properly initialized
+      const mappings = await test_get_referral_mappings();
+      logger.color("green").log(`[REF] Referral mappings account initialized with ${mappings.length} mappings`);
+      
+      return sig;
+    } catch (err) {
+      logger.color("red").log("[REF] init referral mappings failed:", err.getLogs ? err.getLogs() : err);
+      throw err;
+    }
+  }
+
   async function test_set_referral(referrer_kp: Keypair, referred_kp: Keypair) {
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const [referralMappings] = PublicKey.findProgramAddressSync([Buffer.from(referralMappingsSeed)], program.programId);
 
     logger.color("cyan").log(`[REF] Setting referral mapping: ${referred_kp.publicKey.toBase58()} -> ${referrer_kp.publicKey.toBase58()}`);
 
-    const tx = await program.methods
+    const tx = await (program.methods as any)
       .setReferral(referred_kp.publicKey, referrer_kp.publicKey)
       .accounts({
-        //globalInfo,
+        globalInfo,
         admin: adminKp.publicKey,
         referralMappings,
         systemProgram: anchor.web3.SystemProgram.programId,

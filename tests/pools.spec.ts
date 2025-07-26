@@ -373,23 +373,23 @@ describe('CLMM Pools', () => {
         //console.log(`expirationTime: ${new Date(expirationTime * 1000).toLocaleString()} (Unix: ${expirationTime})`);
 
         // currentPrice: Log as tokens per SOL (assuming mintA = SOL)
-        console.log(`currentPrice: ${currentPrice.toFixed(12)} tokens per SOL`);
+        console.log(`currentPrice: ${currentPrice.toFixed(9)} tokens per SOL`);
 
         // executionPrice: Log as tokens per SOL
-        console.log(`executionPrice: ${executionPrice.toFixed(12)} tokens per SOL`);
+        console.log(`executionPrice: ${executionPrice.toFixed(9)} tokens per SOL`);
 
         // priceImpact: Convert to percentage
         console.log(`priceImpact: ${(priceImpact.mul(100)).toFixed(4)}%`);
 
         // fee: Convert lamports to SOL (assuming fee is in input token, SOL)
         const feeSol = fee.raw.toNumber() / 1e9;
-        console.log(`fee: ${feeSol.toFixed(12)} SOL`);
+        console.log(`fee: ${feeSol.toFixed(9)} SOL`);
 
         // Step 8: Calculate the implied price from the swap preview (without slippage)
         const inputAmountSol = amountIn.toNumber() / 1e9; // 1000 / 10^9 = 0.000001 SOL
         const outputAmountTokens = amountOut.amount.raw.toNumber() / Math.pow(10, tokenDecimals);
         const impliedPrice = outputAmountTokens / inputAmountSol; // tokens per SOL
-        console.log(`\nSwap price: ${impliedPrice.toFixed(12)} tokens per SOL (output / input; before slippage)`);
+        console.log(`\nSwap price: ${impliedPrice.toFixed(9)} tokens per SOL (output / input; before slippage)`);
         // Additional debug logs
         //console.log(`mintA decimals: ${poolInfo.mintA.decimals}`); // 9
         //console.log(`mintB decimals: ${poolInfo.mintB.decimals}`); // 6
@@ -446,7 +446,7 @@ describe('CLMM Pools', () => {
         console.log(`Open Time: ${openDate.toLocaleString()}`);
 
         // Log TVL as a currency
-        console.log(`Total Value Locked (TVL): $${poolInfo.tvl.toFixed(12)}`);
+        console.log(`Total Value Locked (TVL): $${poolInfo.tvl.toFixed(9)}`);
 
         // Log day, week, and month metrics
         console.log('Daily Metrics:');
