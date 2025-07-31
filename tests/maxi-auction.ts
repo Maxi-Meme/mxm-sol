@@ -2102,16 +2102,17 @@ describe("maxi-auction", () => {
     const [auctionSolAccount] = PublicKey.findProgramAddressSync([Buffer.from(auctionSolSeed), new BN(nextAuctionId).toArrayLike(Buffer, "le", 8)], program.programId);
     const auctionTokenAccount = await getAssociatedTokenAddress(token.publicKey, auctionSolAccount, true);
 
-    // Log balances before transaction
-    const [adminBalance, signerBalance, tokenBalance] = await Promise.all([
+    // 🏷️ [COST] Store balances before auction creation for cost measurement
+    const [adminBalanceBefore, signerBalanceBefore, tokenBalanceBefore] = await Promise.all([
       connection.getBalance(adminKp.publicKey),
       connection.getBalance(signer.publicKey),
       connection.getBalance(token.publicKey),
     ]);
-    console.log("Balances before creating auction (in SOL):");
-    console.log(`Admin (${adminKp.publicKey.toBase58()}): ${(adminBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-    console.log(`Signer (${signer.publicKey.toBase58()}): ${(signerBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
-    console.log(`Token mint (${token.publicKey.toBase58()}): ${(tokenBalance / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+
+    logger.info("🔍 [test_create_auction_KP0] Balances before creating auction:");
+    logger.info(`🔍 [test_create_auction_KP0] Admin (${adminKp.publicKey.toBase58()}): ${(adminBalanceBefore / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
+    logger.info(`🔍 [test_create_auction_KP0] Signer/FeePayer (${signer.publicKey.toBase58()}): ${(signerBalanceBefore / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
+    logger.info(`🔍 [test_create_auction_KP0] Token mint (${token.publicKey.toBase58()}): ${(tokenBalanceBefore / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
     console.log(`distPercent: ${distPercent} = ${distPercent.toNumber() / 100}%`);
     console.log('durationHours', durationHours.toNumber());
 
@@ -2156,7 +2157,53 @@ describe("maxi-auction", () => {
 
     try {
       const sig = await sendAndConfirmTransaction(connection, tx, [adminKp, signer, token]);
+
+          // 🏷️ [TX] Clear transaction info for on-chain verification
+          logger.color("green").log(`✅ [CREATE AUCTION TX] SUCCESS - Transaction confirmed!`);
+          logger.color("green").log(`🔗 [CREATE AUCTION TX] Signature: ${sig}`);
+          logger.color("blue").log(`🔍 [CREATE AUCTION TX] Verify on explorer: https://solscan.io/tx/${sig}`);
+
       await logSuccessTx(connection, sig, "createAuction and initAuctionBids");
+
+          // 🏷️ [COST] Measure exact SOL cost of auction creation
+          const [adminBalanceAfter, signerBalanceAfter, tokenBalanceAfter] = await Promise.all([
+            connection.getBalance(adminKp.publicKey),
+            connection.getBalance(signer.publicKey),
+            connection.getBalance(token.publicKey),
+          ]);
+
+          // Calculate costs in lamports first for precision, then convert to SOL
+          const adminCostLamports = adminBalanceBefore - adminBalanceAfter;
+          const signerCostLamports = signerBalanceBefore - signerBalanceAfter;
+          const tokenCostLamports = tokenBalanceBefore - tokenBalanceAfter;
+          const totalCostLamports = adminCostLamports + signerCostLamports + tokenCostLamports;
+
+          const adminCost = adminCostLamports / LAMPORTS_PER_SOL;
+          const signerCost = signerCostLamports / LAMPORTS_PER_SOL;
+          const tokenCost = tokenCostLamports / LAMPORTS_PER_SOL;
+          const totalCost = totalCostLamports / LAMPORTS_PER_SOL;
+
+          // Current SOL price for USD conversion (approximate market price)
+          const solPriceUSD = 181.0; // Current SOL price from CoinMarketCap
+          const totalCostUSD = totalCost * solPriceUSD;
+          const adminCostUSD = adminCost * solPriceUSD;
+          const signerCostUSD = signerCost * solPriceUSD;
+          const tokenCostUSD = tokenCost * solPriceUSD;
+
+          logger.info("🔍 [test_create_auction_KP0] Balances after creating auction:");
+          logger.info(`🔍 [test_create_auction_KP0] Admin (${adminKp.publicKey.toBase58()}): ${(adminBalanceAfter / LAMPORTS_PER_SOL).toFixed(6)} SOL (cost: ${adminCostLamports} lamports = ${adminCost.toFixed(6)} SOL = $${adminCostUSD.toFixed(4)})`);
+          logger.info(`🔍 [test_create_auction_KP0] Signer/FeePayer (${signer.publicKey.toBase58()}): ${(signerBalanceAfter / LAMPORTS_PER_SOL).toFixed(6)} SOL (cost: ${signerCostLamports} lamports = ${signerCost.toFixed(6)} SOL = $${signerCostUSD.toFixed(4)})`);
+          logger.info(`🔍 [test_create_auction_KP0] Token mint (${token.publicKey.toBase58()}): ${(tokenBalanceAfter / LAMPORTS_PER_SOL).toFixed(6)} SOL (cost: ${tokenCostLamports} lamports = ${tokenCost.toFixed(6)} SOL = $${tokenCostUSD.toFixed(4)})`);
+
+          logger.color("yellow").log(`💰 [AUCTION COST SUMMARY]`);
+          logger.color("yellow").log(`💰 Total cost: ${totalCostLamports} lamports = ${totalCost.toFixed(6)} SOL = $${totalCostUSD.toFixed(4)} USD`);
+          logger.color("cyan").log(`💰 Breakdown by account:`);
+          logger.color("cyan").log(`💰   • Admin: ${adminCostLamports} lamports (${adminCost.toFixed(6)} SOL = $${adminCostUSD.toFixed(4)})`);
+          logger.color("cyan").log(`💰   • FeePayer: ${signerCostLamports} lamports (${signerCost.toFixed(6)} SOL = $${signerCostUSD.toFixed(4)})`);
+          logger.color("cyan").log(`💰   • TokenMint: ${tokenCostLamports} lamports (${tokenCost.toFixed(6)} SOL = $${tokenCostUSD.toFixed(4)})`);
+          logger.color("magenta").log(`💰 [VERIFICATION] Use transaction signature above to verify costs on Solscan explorer`);
+          logger.color("magenta").log(`💰 [RATE] USD conversion based on SOL price of $${solPriceUSD} (Jan 2025)`);
+
     } catch (err) {
       console.error("Error during transaction:", err);
       if (err.logs) console.error("Transaction logs:", err.logs);
