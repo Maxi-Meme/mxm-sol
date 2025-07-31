@@ -272,7 +272,7 @@ async function getAuctionGifts(auctionId: number, tokenMint: PublicKey): Promise
 
     const query = `
       SELECT CONVERT(varchar, ISNULL(SUM([tokens_allocated]), 0)) as total_tokens_allocated
-      FROM [dbo].[AuctionGift]
+      FROM [dbo].[auction_airdrop]
       WHERE [auction_id] = @auction_id AND [pubkey] = @pubkey
     `;
 
