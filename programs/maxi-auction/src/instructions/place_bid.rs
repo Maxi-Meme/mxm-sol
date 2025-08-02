@@ -1,6 +1,6 @@
 use crate::{
     account::{Auction, GlobalInfo, Bids, ReferralMappings}, // [REF] - Added ReferralMappings
-    constants::{GLOBAL_INFO_SEED, AUCTION_DATA_SEED, AUCTION_SOL_SEED, BIDS_SEED, REFERRAL_MAPPINGS_SEED}, // [REF] - Added REFERRAL_MAPPINGS_SEED
+    constants::{GLOBAL_INFO_SEED, AUCTION_SOL_SEED, BIDS_SEED}, // [REF] - Added REFERRAL_MAPPINGS_SEED
     errors::CustomError,
     states::AuctionStatus,
     events::{AuctionFilled, NewBid},
@@ -10,7 +10,6 @@ use crate::{
     states::Bid,
 };
 use anchor_spl::{
-    associated_token::AssociatedToken,
     token::{self, spl_token::instruction::AuthorityType, Mint, Token, TokenAccount},
 };
 use anchor_lang::prelude::*;
@@ -18,6 +17,7 @@ use anchor_lang::AccountDeserialize;
 use std::mem::size_of;
 
 #[derive(Accounts)]
+#[instruction(bid_quantity: u64, x_id: u64, fee_perc: u64)]
 pub struct PlaceBid<'info> {
     #[account(
         mut,
@@ -40,13 +40,6 @@ pub struct PlaceBid<'info> {
 
     #[account(mut)]
     pub auction_data_account: Box<Account<'info, Auction>>,
-
-    /// CHECK: admin knows what he's passing in
-    #[account(
-        mut,
-        address = global_info.config.fee_account
-    )]
-    pub fee_account: AccountInfo<'info>,    
 
     #[account(mut)] 
     pub token_mint: Account<'info, Mint>,
@@ -79,11 +72,14 @@ pub struct PlaceBid<'info> {
     /// CHECK: Referrer account - validated against referral mappings
     #[account(mut)]
     pub referrer: Option<AccountInfo<'info>>,
+    
+    // Fee accounts passed as remaining accounts
+    // These will be validated in the process method
 }
 
 impl<'info> PlaceBid<'info> {
-    pub fn process(&mut self, bid_quantity: u64, x_id: u64, fee_perc: u64) -> Result<()> {
-    let rent = Rent::get()?;
+    pub fn process(&mut self, bid_quantity: u64, x_id: u64, fee_perc: u64, remaining_accounts: &[AccountInfo<'info>]) -> Result<()> {
+        let rent = Rent::get()?;
 
         let auction = &mut self.auction_data_account;
         let default_start_price = self.global_info.config.default_start_price_lamports;
@@ -118,17 +114,17 @@ impl<'info> PlaceBid<'info> {
         );
 
         // Calculate current price and remaining tokens
-        let mut current_price = 
+        let current_price = 
             get_current_price(auction, clock.unix_timestamp, default_start_price)
             .unwrap_or(default_start_price);
         let remaining_tokens = get_remaining_tokens(auction, &self.bids_account.bids);
         require!(bid_quantity <= remaining_tokens, CustomError::NotEnoughTokensLeft);
 
         // Calculate total cost, and auction amount (ex. fee)
-        let mut total_cost = bid_quantity.checked_mul(current_price).ok_or(CustomError::Overflow)?;
+        let total_cost = bid_quantity.checked_mul(current_price).ok_or(CustomError::Overflow)?;
         require!(fee_perc < 10000, CustomError::InvalidFeePercentage);
-        let mut fee = ((total_cost as u128 * fee_perc as u128) / 10000) as u64; // let mut fee = 0; // testing zero fees
-        let mut auction_amount = total_cost - fee;
+        let fee = ((total_cost as u128 * fee_perc as u128) / 10000) as u64; // let mut fee = 0; // testing zero fees
+        let auction_amount = total_cost - fee;
 
         // Adjust total_cost if auction_amount is below min_rent
         // let min_rent = rent.minimum_balance(0);
@@ -251,14 +247,56 @@ impl<'info> PlaceBid<'info> {
             }
         }
         
-        // [REF] - Transfer platform's share of the fee
+        // [REF] - Transfer platform's share of the fee based on configured percentages
         if platform_fee > 0 {
-            sol_transfer_user(
-                self.bidder.to_account_info(),
-                self.fee_account.to_account_info(),
-                self.system_program.to_account_info(),
-                platform_fee,
-            )?;
+            let fee_accounts = &self.global_info.config.fee_accounts;
+            let num_fee_accounts = fee_accounts.len();
+            
+            if num_fee_accounts > 0 {
+                // Get fee accounts from remaining_accounts
+                let ctx_remaining = remaining_accounts;
+                
+                // Validate we have enough remaining accounts for fee accounts
+                require!(
+                    ctx_remaining.len() >= num_fee_accounts,
+                    CustomError::InvalidAccountInput
+                );
+                
+                let mut total_transferred: u64 = 0;
+                
+                // Transfer fees to each account based on percentage
+                for (i, fee_account_config) in fee_accounts.iter().enumerate() {
+                    let fee_account_info = &ctx_remaining[i];
+                    
+                    // Verify the account matches the expected fee account
+                    require!(
+                        fee_account_info.key() == fee_account_config.pubkey,
+                        CustomError::InvalidFeeAccount
+                    );
+                    
+                    // Calculate amount for this account based on percentage
+                    // For last account, give any remainder to ensure total equals platform_fee
+                    let amount = if i == num_fee_accounts - 1 {
+                        // Last account gets remainder to handle rounding
+                        platform_fee.saturating_sub(total_transferred)
+                    } else {
+                        // Calculate based on percentage (share is 0-10000 for 0-100%)
+                        ((platform_fee as u128 * fee_account_config.share as u128) / 10000) as u64
+                    };
+                    
+                    if amount > 0 {
+                        sol_transfer_user(
+                            self.bidder.to_account_info(),
+                            fee_account_info.to_account_info(),
+                            self.system_program.to_account_info(),
+                            amount,
+                        )?;
+                        total_transferred = total_transferred.saturating_add(amount);
+                        msg!("Transferred {} lamports to fee account {} ({}%)", 
+                             amount, fee_account_config.pubkey, fee_account_config.share / 100);
+                    }
+                }
+            }
         }
         
         // [REF] - Transfer referrer's share if applicable
@@ -497,14 +535,4 @@ impl<'info> PlaceBid<'info> {
 
         Ok(())
     }
-}
-
-// Function to count trailing zeros in a u64
-fn count_trailing_zeros(mut num: u64) -> u32 {
-    let mut count = 0;
-    while num > 0 && num % 10 == 0 {
-        count += 1;
-        num /= 10;
-    }
-    count
 }

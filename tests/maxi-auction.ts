@@ -48,6 +48,10 @@ import {
   TEST_MIN_TOTAL_SOL,
   // [REF] - Import referral percentage constant
   TEST_REF_BID_FEE_PERC_SHARE,
+  // Fee accounts configuration
+  FEE_ACCOUNTS,
+  //TEST_FEE_ACCOUNT,
+  TEST_DAO_ACCOUNT,
 } from "./config";
 //import { createMarket } from "./create-market";
 
@@ -104,9 +108,6 @@ var connection;
 var isLocal = false;
 var isDevnet = false;
 var isMainnet = false;
-
-const TEST_FEE_ACCOUNT = Keypair.fromSecretKey(bs58.decode("4hbfT4t6HZtcBVUq983nHXnXs7KdQXxrNUdkCVPaNYT82qSd3hH7eVJkgVicHX9MtatidQuEi3E5nXJ5UbE9ExHp")); // 12MhCcaTUtiG86K5ahiAmYSZ4Z9VCsxUKSTcAQjimaxi
-const TEST_DAO_ACCOUNT = Keypair.fromSecretKey(bs58.decode("5eGYNKTZty4AWiDXXkEmM9D4dwGTAZoYxBLHd8XWsGkF3Q32yesom9ituWQERMAQHBa41wXHzHYgEDEnaskMgQmx")); // VgzE1W2szAaKkH6ynnqM8wPHtd4Kf8MTjPJP5HRmaxi
 const DEVNET_USER_KEYPAIRS = [
   Keypair.fromSecretKey(bs58.decode("4kbfHLgTTVT23ezNackE3a6m3BCQg3vYmEqZNbHLvZbWs8Dd68FqM7QmbH1w2r7BZHrb6bAjevB1dwpfgz9Psdw8")), // 1246q8oDCgE77wEbJx5XxAPkw51YesEGqUkRGbZ3maxi
   Keypair.fromSecretKey(bs58.decode("2rAK3bLbA2VeR5sFFVYhamZ7Muhz2TgkG7RBAnDVXwvhXmsiZwwL8ohZNiqWCzZcBDgL4PhRvTuKZMxoJSVxWwGW")), // 124N6YAiiKRi8ze2aDBhVo4h5ratuczB321xrU3Cmaxi
@@ -1952,8 +1953,11 @@ describe("maxi-auction", () => {
       defaultTokenSupply: new BN(MAXIMEME_TOKEN_SUPPLY),
       defaultTokenDecimals: MAXIMEME_TOKEN_DECIMALS,
       defaultStartPriceLamports: new BN(TEST_STARTPRICE_SOL * LAMPORTS_PER_SOL),
-      feeAccount: TEST_FEE_ACCOUNT.publicKey,
-      daoAccount: TEST_DAO_ACCOUNT.publicKey,
+      feeAccounts: FEE_ACCOUNTS.map(account => ({
+        pubkey: account.pubkey,
+        share: new BN(account.share)
+      })),
+      daoAccount: TEST_DAO_ACCOUNT.publicKey, // unused actually
       minTotalSol: new BN((mintotal_sol || TEST_MIN_TOTAL_SOL) * LAMPORTS_PER_SOL),
       refBidFeePercShare: new BN(TEST_REF_BID_FEE_PERC_SHARE), // [REF] - Referral system configuration - initialized to zero for backward compatibility
     };
@@ -1969,12 +1973,21 @@ describe("maxi-auction", () => {
 
     const configsAreEqual = (configA, configB) => {
       if (!configA || !configB) return false;
+
+      // Check fee accounts array with FeeAccount structure
+      const feeAccountsEqual = configA.feeAccounts && configB.feeAccounts &&
+        configA.feeAccounts.length === configB.feeAccounts.length &&
+        configA.feeAccounts.every((accA, idx) => {
+          const accB = configB.feeAccounts[idx];
+          return accA.pubkey.equals(accB.pubkey) && accA.share.eq(accB.share);
+        });
+
       return (
         configA.admin.equals(configB.admin) &&
         configA.defaultTokenSupply.eq(configB.defaultTokenSupply) &&
         configA.defaultTokenDecimals === configB.defaultTokenDecimals &&
         configA.defaultStartPriceLamports.eq(configB.defaultStartPriceLamports) &&
-        configA.feeAccount.equals(configB.feeAccount) &&
+        feeAccountsEqual &&
         configA.daoAccount.equals(configB.daoAccount) &&
         configA.minTotalSol.eq(configB.minTotalSol) &&
         configA.refBidFeePercShare.eq(configB.refBidFeePercShare) // [REF] - Include referral configuration comparison
@@ -2002,7 +2015,10 @@ describe("maxi-auction", () => {
         throw err;
       }
 
-      await setupAccount(connection, adminKp, newConfig.feeAccount);
+      // Setup all fee accounts
+      for (const feeAccountConfig of newConfig.feeAccounts) {
+        await setupAccount(connection, adminKp, feeAccountConfig.pubkey);
+      }
       await setupAccount(connection, adminKp, newConfig.daoAccount);
 
       // [REF] - Explicitly initialize referral mappings account
@@ -2024,7 +2040,12 @@ describe("maxi-auction", () => {
     duration_hours_div100 = undefined,
     useDynamicTestData = false,
     testDataTheme = undefined
-  }) {
+  }: {
+    auction_distribution_percent?: any,
+    duration_hours_div100?: any,
+    useDynamicTestData?: boolean,
+    testDataTheme?: any
+  } = {}) {
     const signer = USER_KPs[0];
     logger.color("magenta").log(`${signer.publicKey.toBase58()} is creating auction...`);
 
@@ -2222,6 +2243,12 @@ describe("maxi-auction", () => {
     assert.equal(auctionDataFetched.tokenMint, token.publicKey.toBase58(), "tokenMint comparison");
 
     await markMaxiKeyUsed(token.publicKey.toBase58());
+    
+    // Return auction details
+    return {
+      auctionId: auctionId,
+      tokenMint: token.publicKey
+    };
   }
 
   async function test_bid_auction({
@@ -2259,8 +2286,11 @@ describe("maxi-auction", () => {
     const adminBalanceBefore = await connection.getBalance(adminKp.publicKey);
     const bidderBalanceBefore = await connection.getBalance(signer.publicKey);
     const auctionSolBalanceBefore = await connection.getBalance(auctionSol);
-    const feeAccountBalanceBefore = await connection.getBalance(CONTRACT_CONFIG.feeAccount); // Initial fee account balance
-    //console.log(`Balances before bid: Bidder (${signer.publicKey.toBase58()}): ${(bidderBalanceBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL, Auction (${auctionSol.toBase58()}): ${(auctionSolBalanceBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL, Fee Account: ${(feeAccountBalanceBefore / LAMPORTS_PER_SOL).toFixed(2)} SOL`);
+    // Get fee account balances before for all accounts
+    const feeAccountsBalancesBefore = await Promise.all(
+      CONTRACT_CONFIG.feeAccounts.map(feeAccountConfig => connection.getBalance(feeAccountConfig.pubkey))
+    );
+    const feeAccountBalanceBefore = feeAccountsBalancesBefore.reduce((sum, bal) => sum + bal, 0); // Total fee account balance
 
     // Check if bid fills auction
     const totalBidTokens = (await getBids(program, auctionId)).reduce((acc, bid) => {  //auctionPre.bids.reduce((acc, bid) => {
@@ -2291,6 +2321,13 @@ describe("maxi-auction", () => {
     
     const publicKeyBase58 = bidderKp.publicKey.toBase58(); // for dummy/test xId
     const firstFourChars = publicKeyBase58.slice(4);
+    // Prepare fee accounts for remaining_accounts
+    const feeAccountMetas: AccountMeta[] = CONTRACT_CONFIG.feeAccounts.map((feeAccountConfig) => ({
+      pubkey: feeAccountConfig.pubkey,
+      isSigner: false,
+      isWritable: true,
+    }));
+
     const tx = await program.methods.placeBid(
       bidQty, 
       new BN(base58ToInt(firstFourChars)), // dummy xid from pub key
@@ -2309,7 +2346,6 @@ describe("maxi-auction", () => {
         bidder: signer.publicKey,
         auctionDataAccount: auctionData,
         auctionSolAccount: auctionSol,
-        feeAccount: CONTRACT_CONFIG.feeAccount,
 
         // for overmint:
         tokenMint: auctionPre.tokenMint,
@@ -2320,6 +2356,7 @@ describe("maxi-auction", () => {
         referralMappings: referralMappings,
         referrer: referrer || null,
       })
+      .remainingAccounts(feeAccountMetas)
       .transaction();
     tx.feePayer = signer.publicKey;
     tx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
@@ -2388,7 +2425,11 @@ describe("maxi-auction", () => {
     const adminBalanceAfter = await connection.getBalance(adminKp.publicKey);
     const bidderBalanceAfter = await connection.getBalance(signer.publicKey);
     const auctionSolBalanceAfter = await connection.getBalance(auctionSol);
-    const feeAccountBalanceAfter = await connection.getBalance(CONTRACT_CONFIG.feeAccount); // Final fee account balance
+    // Get fee account balances after for all accounts
+    const feeAccountsBalancesAfter = await Promise.all(
+      CONTRACT_CONFIG.feeAccounts.map(feeAccountConfig => connection.getBalance(feeAccountConfig.pubkey))
+    );
+    const feeAccountBalanceAfter = feeAccountsBalancesAfter.reduce((sum, bal) => sum + bal, 0); // Total fee account balance
     const auctionPost = await program.account.auction.fetch(auctionData);
     const auctionPostBids = await getBids(program, auctionId);
     const txDetails = await getTransactionDetailsWithRetry(connection, sig);
@@ -2439,6 +2480,50 @@ describe("maxi-auction", () => {
     // **Validate that feeAccount increases by expected amount (accounting for referral split)**
     if (!skipValidations) {
       assert.ok(feeIncreaseBN.sub(minExpectedFeeBN).abs().lte(new BN(1)), `Fee account should increase by expected amount (±1 lamport tolerance). Actual increase: ${feeIncreaseBN.toString()}, Expected: ${minExpectedFeeBN.toString()}`);
+      
+      // **Validate fee distribution across multiple fee accounts**
+      logger.color("yellow").log("=== FEE DISTRIBUTION VALIDATION ===");
+      
+      // Calculate individual fee account increases
+      const feeAccountIncreases = feeAccountsBalancesAfter.map((balAfter, idx) =>
+        balAfter - feeAccountsBalancesBefore[idx]
+      );
+      
+      // Log each fee account's increase
+      CONTRACT_CONFIG.feeAccounts.forEach((feeAccountConfig, idx) => {
+        const expectedShare = Math.floor((minExpectedFeeBN.toNumber() * feeAccountConfig.share.toNumber()) / 10000);
+        const actualIncrease = feeAccountIncreases[idx];
+        const percentage = feeAccountConfig.share.toNumber() / 100;
+        
+        // For the last account, it should get the remainder
+        let expectedAmount = expectedShare;
+        if (idx === CONTRACT_CONFIG.feeAccounts.length - 1) {
+          const sumOfOthers = feeAccountIncreases.slice(0, -1).reduce((sum, inc) => sum + inc, 0);
+          expectedAmount = minExpectedFeeBN.toNumber() - sumOfOthers;
+        }
+        
+        logger.color("yellow").log(
+          `Fee Account ${idx + 1} (${feeAccountConfig.pubkey.toBase58().slice(0, 8)}...) [${percentage}%]: ` +
+          `expected ~${expectedAmount} lamports, got ${actualIncrease} lamports`
+        );
+        
+        // Validate each account got approximately the right amount
+        assert.ok(
+          Math.abs(actualIncrease - expectedAmount) <= 1,
+          `Fee account ${idx + 1} should receive ${percentage}% of fees (expected ~${expectedAmount}, got ${actualIncrease})`
+        );
+      });
+      
+      // Verify total distribution matches expected
+      const totalDistributed = feeAccountIncreases.reduce((sum, inc) => sum + inc, 0);
+      logger.color("yellow").log(`Total distributed: ${totalDistributed} lamports, Expected: ${minExpectedFeeBN.toString()} lamports`);
+      
+      assert.ok(
+        Math.abs(totalDistributed - minExpectedFeeBN.toNumber()) <= CONTRACT_CONFIG.feeAccounts.length,
+        `Total distributed (${totalDistributed}) should match expected fee (${minExpectedFeeBN.toString()}) within rounding tolerance`
+      );
+      
+      logger.color("yellow").log("=== FEE DISTRIBUTION VALIDATED ===");
     }
 
     // Validate based on bid type
@@ -3198,7 +3283,10 @@ describe("maxi-auction", () => {
       
       // Get balances before bid
       const referrerBalanceBefore = await connection.getBalance(referrer.publicKey);
-      const feeAccountBalanceBefore = await connection.getBalance(TEST_FEE_ACCOUNT.publicKey);
+    const feeAccountsBalancesBefore = await Promise.all(
+      CONTRACT_CONFIG.feeAccounts.map(feeAccountConfig => connection.getBalance(feeAccountConfig.pubkey))
+    );
+    const totalFeeBalanceBefore = feeAccountsBalancesBefore.reduce((sum, bal) => sum + bal, 0);
       
       // Place bid and get actual results
       const fillPercent = 0.1;
@@ -3220,11 +3308,14 @@ describe("maxi-auction", () => {
       
       // Get balances after bid
       const referrerBalanceAfter = await connection.getBalance(referrer.publicKey);
-      const feeAccountBalanceAfter = await connection.getBalance(TEST_FEE_ACCOUNT.publicKey);
+    const feeAccountsBalancesAfter = await Promise.all(
+      CONTRACT_CONFIG.feeAccounts.map(feeAccountConfig => connection.getBalance(feeAccountConfig.pubkey))
+    );
+    const totalFeeBalanceAfter = feeAccountsBalancesAfter.reduce((sum, bal) => sum + bal, 0);
       
       // Verify referrer received their share (with small tolerance for rounding/lamport diffs)
       const referrerIncrease = referrerBalanceAfter - referrerBalanceBefore;
-      const feeAccountIncrease = feeAccountBalanceAfter - feeAccountBalanceBefore;
+    const feeAccountIncrease = totalFeeBalanceAfter - totalFeeBalanceBefore;
       
       assert.ok(
         Math.abs(referrerIncrease - expectedReferrerFee) <= 1, // Tolerance for flooring/rounding
@@ -3295,7 +3386,10 @@ describe("maxi-auction", () => {
       await test_set_referral(referrer, bidder);
       
       const referrerBalanceBefore = await connection.getBalance(referrer.publicKey);
-      const feeAccountBalanceBefore = await connection.getBalance(TEST_FEE_ACCOUNT.publicKey);
+    const feeAccountsBalancesBefore = await Promise.all(
+      CONTRACT_CONFIG.feeAccounts.map(feeAccountConfig => connection.getBalance(feeAccountConfig.pubkey))
+    );
+    const totalFeeBalanceBefore = feeAccountsBalancesBefore.reduce((sum, bal) => sum + bal, 0);
       
       // Place bid
       const result = await test_bid_auction({ 
@@ -3305,10 +3399,13 @@ describe("maxi-auction", () => {
       });
       
       const referrerBalanceAfter = await connection.getBalance(referrer.publicKey);
-      const feeAccountBalanceAfter = await connection.getBalance(TEST_FEE_ACCOUNT.publicKey);
+    const feeAccountsBalancesAfter = await Promise.all(
+      CONTRACT_CONFIG.feeAccounts.map(feeAccountConfig => connection.getBalance(feeAccountConfig.pubkey))
+    );
+    const totalFeeBalanceAfter = feeAccountsBalancesAfter.reduce((sum, bal) => sum + bal, 0);
       
       const referrerIncrease = referrerBalanceAfter - referrerBalanceBefore;
-      const feeAccountIncrease = feeAccountBalanceAfter - feeAccountBalanceBefore;
+    const feeAccountIncrease = totalFeeBalanceAfter - totalFeeBalanceBefore;
       const totalFee = result.actualBidFeeBN.toNumber();
       
       assert.ok(
@@ -3325,6 +3422,267 @@ describe("maxi-auction", () => {
       
       // Reset
       await test_init_with_ref_fee_share(0);
+  });
+
+  it("fees - bid fees across multiple fee accounts", async () => {
+    await test_create_auction_KP0({});
+    const bidder = USER_KPs[1];
+
+    // Get initial balances
+    const feeAccountsBalancesBefore = await Promise.all(
+      FEE_ACCOUNTS.map(feeAccountConfig => connection.getBalance(feeAccountConfig.pubkey))
+    );
+
+    // Place a bid with 1% fee
+    const result = await test_bid_auction({
+      fill_percent: 0.2,
+      bidderKp: bidder,
+      fee_perc: 0.01
+    });
+
+    // Get final balances
+    const feeAccountsBalancesAfter = await Promise.all(
+      FEE_ACCOUNTS.map(feeAccountConfig => connection.getBalance(feeAccountConfig.pubkey))
+    );
+
+    // Calculate increases for each fee account
+    const feeAccountIncreases = feeAccountsBalancesAfter.map((balAfter, idx) =>
+      balAfter - feeAccountsBalancesBefore[idx]
+    );
+
+    const totalFee = result.actualBidFeeBN.toNumber();
+
+    // Calculate expected amounts based on configured percentages
+    let totalAllocated = 0;
+    const expectedAmounts = FEE_ACCOUNTS.map((feeAccountConfig, idx) => {
+      if (idx === FEE_ACCOUNTS.length - 1) {
+        // Last account gets remainder to handle rounding
+        return totalFee - totalAllocated;
+      } else {
+        const amount = Math.floor((totalFee * feeAccountConfig.share) / 10000);
+        totalAllocated += amount;
+        return amount;
+      }
+    });
+
+    // Verify each fee account received the correct percentage
+    FEE_ACCOUNTS.forEach((feeAccountConfig, idx) => {
+      const expectedAmount = expectedAmounts[idx];
+      const actualAmount = feeAccountIncreases[idx];
+      const percentage = feeAccountConfig.share / 100;
+
+      logger.color("yellow").log(`Fee Account ${idx + 1} (${percentage}%): expected ~${expectedAmount}, got ${actualAmount}`);
+
+      assert.ok(
+        Math.abs(actualAmount - expectedAmount) <= 1,
+        `Fee account ${idx + 1} should receive ${percentage}% of ${totalFee} lamports (expected ~${expectedAmount}, got ${actualAmount})`
+      );
+    });
+
+    // Verify total equals the bid fee
+    const totalDistributed = feeAccountIncreases.reduce((sum, increase) => sum + increase, 0);
+    assert.equal(
+      totalDistributed,
+      totalFee,
+      `Total distributed (${totalDistributed}) should equal total fee (${totalFee})`
+    );
+
+    logger.color("yellow").log(`Fee distribution validated: ${feeAccountIncreases.join(', ')} lamports (total: ${totalFee})`);
+  });
+
+  it("fees - migration fees across multiple accounts", async () => {
+    if (isLocal) {
+      console.log("Skipping migration fee test on local validator (no Raydium)");
+      return;
+    }
+
+    logger.color("yellow").log("Testing migration fee distribution...");
+
+    // Create auction with 3 minute duration
+    const auctionResult = await test_create_auction_KP0({
+      duration_hours_div100: 5 // 5/100 = 0.05 hours = 3 minutes
+    });
+    const auctionId = auctionResult.auctionId;
+    const tokenMint = auctionResult.tokenMint;
+
+    // Get initial fee account token balances
+    const feeAccountsTokenBalancesBefore = await Promise.all(
+      FEE_ACCOUNTS.map(async (feeAccountConfig) => {
+        const ata = getAssociatedTokenAddressSync(tokenMint, feeAccountConfig.pubkey, true);
+        try {
+          const balance = await connection.getTokenAccountBalance(ata);
+          return new BN(balance.value.amount);
+        } catch {
+          return new BN(0); // Account doesn't exist yet
+        }
+      })
+    );
+
+    // Get initial fee account WSOL balances
+    const feeAccountsWsolBalancesBefore = await Promise.all(
+      FEE_ACCOUNTS.map(async (feeAccountConfig) => {
+        const ata = getAssociatedTokenAddressSync(NATIVE_MINT, feeAccountConfig.pubkey, true);
+        try {
+          const balance = await connection.getTokenAccountBalance(ata);
+          return new BN(balance.value.amount);
+        } catch {
+          return new BN(0); // Account doesn't exist yet
+        }
+      })
+    );
+
+    logger.color("yellow").log("Initial token balances:", feeAccountsTokenBalancesBefore.map(b => b.toString()));
+    logger.color("yellow").log("Initial WSOL balances:", feeAccountsWsolBalancesBefore.map(b => b.toString()));
+
+    // Place bids to fill the auction
+    await test_bid_auction({ 
+      fill_percent: 0.4, 
+      bidderKp: USER_KPs[0],
+      skipMigrationWait: true
+    });
+    await test_bid_auction({ 
+      fill_percent: 0.4, 
+      bidderKp: USER_KPs[1],
+      skipMigrationWait: true
+    });
+    
+    // Final bid that triggers migration
+    await test_bid_auction({ 
+      fill_percent: 0.2, 
+      bidderKp: USER_KPs[2],
+      skipMigrationWait: true
+    });
+
+    // Wait for migration to complete
+    logger.color("yellow").log("Waiting for migration to complete...");
+    const migrationResult = await waitForMigration(auctionId);
+    assert.ok(migrationResult.error == null, "Migration should succeed");
+    
+    // Get final fee account token balances
+    const feeAccountsTokenBalancesAfter = await Promise.all(
+      FEE_ACCOUNTS.map(async (feeAccountConfig) => {
+        const ata = getAssociatedTokenAddressSync(tokenMint, feeAccountConfig.pubkey, true);
+        const balance = await connection.getTokenAccountBalance(ata);
+        return new BN(balance.value.amount);
+      })
+    );
+
+    // Get final fee account WSOL balances
+    const feeAccountsWsolBalancesAfter = await Promise.all(
+      FEE_ACCOUNTS.map(async (feeAccountConfig) => {
+        const ata = getAssociatedTokenAddressSync(NATIVE_MINT, feeAccountConfig.pubkey, true);
+        const balance = await connection.getTokenAccountBalance(ata);
+        return new BN(balance.value.amount);
+      })
+    );
+
+    logger.color("yellow").log("Final token balances:", feeAccountsTokenBalancesAfter.map(b => b.toString()));
+    logger.color("yellow").log("Final WSOL balances:", feeAccountsWsolBalancesAfter.map(b => b.toString()));
+
+    // Calculate increases
+    const tokenIncreases = feeAccountsTokenBalancesAfter.map((after, idx) => 
+      after.sub(feeAccountsTokenBalancesBefore[idx])
+    );
+    const wsolIncreases = feeAccountsWsolBalancesAfter.map((after, idx) => 
+      after.sub(feeAccountsWsolBalancesBefore[idx])
+    );
+
+    // Calculate total fees collected
+    const totalTokenFees = tokenIncreases.reduce((sum, inc) => sum.add(inc), new BN(0));
+    const totalWsolFees = wsolIncreases.reduce((sum, inc) => sum.add(inc), new BN(0));
+
+    logger.color("yellow").log(`Total token fees collected: ${totalTokenFees.toString()}`);
+    logger.color("yellow").log(`Total WSOL fees collected: ${totalWsolFees.toString()}`);
+
+    // Verify fees were collected (0.69% of liquidity)
+    assert.ok(totalTokenFees.gt(new BN(0)), "Token fees should be collected");
+    assert.ok(totalWsolFees.gt(new BN(0)), "WSOL fees should be collected");
+
+    // Verify percentage distribution for tokens
+    logger.color("yellow").log("\nValidating token fee distribution:");
+    FEE_ACCOUNTS.forEach((feeAccountConfig, idx) => {
+      const expectedShare = totalTokenFees.mul(new BN(feeAccountConfig.share)).div(new BN(10000));
+      const actualShare = tokenIncreases[idx];
+      const percentage = feeAccountConfig.share / 100;
+      
+      // For the last account, it should have received the remainder
+      if (idx === FEE_ACCOUNTS.length - 1) {
+        const sumOfOthers = tokenIncreases.slice(0, -1).reduce((sum, inc) => sum.add(inc), new BN(0));
+        const expectedRemainder = totalTokenFees.sub(sumOfOthers);
+        
+        logger.color("yellow").log(
+          `Fee Account ${idx + 1} (${percentage}%): expected ~${expectedShare.toString()} or remainder ${expectedRemainder.toString()}, got ${actualShare.toString()}`
+        );
+        
+        // Allow for rounding differences
+        const diff = actualShare.sub(expectedRemainder).abs();
+        assert.ok(
+          diff.lte(new BN(1)),
+          `Token fee account ${idx + 1} should receive remainder to handle rounding`
+        );
+      } else {
+        logger.color("yellow").log(
+          `Fee Account ${idx + 1} (${percentage}%): expected ~${expectedShare.toString()}, got ${actualShare.toString()}`
+        );
+        
+        const diff = actualShare.sub(expectedShare).abs();
+        assert.ok(
+          diff.lte(new BN(1)),
+          `Token fee account ${idx + 1} should receive ${percentage}% of fees`
+        );
+      }
+    });
+
+    // Verify percentage distribution for WSOL
+    logger.color("yellow").log("\nValidating WSOL fee distribution:");
+    FEE_ACCOUNTS.forEach((feeAccountConfig, idx) => {
+      const expectedShare = totalWsolFees.mul(new BN(feeAccountConfig.share)).div(new BN(10000));
+      const actualShare = wsolIncreases[idx];
+      const percentage = feeAccountConfig.share / 100;
+      
+      // For the last account, it should have received the remainder
+      if (idx === FEE_ACCOUNTS.length - 1) {
+        const sumOfOthers = wsolIncreases.slice(0, -1).reduce((sum, inc) => sum.add(inc), new BN(0));
+        const expectedRemainder = totalWsolFees.sub(sumOfOthers);
+        
+        logger.color("yellow").log(
+          `Fee Account ${idx + 1} (${percentage}%): expected ~${expectedShare.toString()} or remainder ${expectedRemainder.toString()}, got ${actualShare.toString()}`
+        );
+        
+        const diff = actualShare.sub(expectedRemainder).abs();
+        assert.ok(
+          diff.lte(new BN(1)),
+          `WSOL fee account ${idx + 1} should receive remainder to handle rounding`
+        );
+      } else {
+        logger.color("yellow").log(
+          `Fee Account ${idx + 1} (${percentage}%): expected ~${expectedShare.toString()}, got ${actualShare.toString()}`
+        );
+        
+        const diff = actualShare.sub(expectedShare).abs();
+        assert.ok(
+          diff.lte(new BN(1)),
+          `WSOL fee account ${idx + 1} should receive ${percentage}% of fees`
+        );
+      }
+    });
+
+    // Verify totals match
+    const tokenTotal = tokenIncreases.reduce((sum, inc) => sum.add(inc), new BN(0));
+    const wsolTotal = wsolIncreases.reduce((sum, inc) => sum.add(inc), new BN(0));
+    
+    assert.ok(
+      tokenTotal.eq(totalTokenFees),
+      `Sum of token distributions (${tokenTotal.toString()}) should equal total fees (${totalTokenFees.toString()})`
+    );
+    assert.ok(
+      wsolTotal.eq(totalWsolFees),
+      `Sum of WSOL distributions (${wsolTotal.toString()}) should equal total fees (${totalWsolFees.toString()})`
+    );
+
+    logger.color("green").log("\nMigration fee distribution validated successfully!");
+    logger.color("green").log(`Token fees: ${tokenIncreases.map(i => i.toString()).join(', ')}`);
+    logger.color("green").log(`WSOL fees: ${wsolIncreases.map(i => i.toString()).join(', ')}`);
   });
 
   it("referrals - gets and logs all referral mappings", async () => {
@@ -3356,7 +3714,10 @@ describe("maxi-auction", () => {
     defaultTokenSupply: new BN(MAXIMEME_TOKEN_SUPPLY),
     defaultTokenDecimals: MAXIMEME_TOKEN_DECIMALS,
     defaultStartPriceLamports: new BN(TEST_STARTPRICE_SOL * LAMPORTS_PER_SOL),
-    feeAccount: TEST_FEE_ACCOUNT.publicKey,
+    feeAccounts: FEE_ACCOUNTS.map(account => ({
+      pubkey: account.pubkey,
+      share: new BN(account.share)
+    })),
     daoAccount: TEST_DAO_ACCOUNT.publicKey,
     minTotalSol: new BN(TEST_MIN_TOTAL_SOL * LAMPORTS_PER_SOL),
     refBidFeePercShare: new BN(refBidFeePercShare), // [REF] - Custom referral share
@@ -3921,7 +4282,7 @@ async function finalizeAuction(auctionId) {
   const tokenMint = auction.tokenMint;
   const auctionTokenAccount = await getAssociatedTokenAddress(tokenMint, auctionSol, true); // Allow off-curve for PDA
   const adminTokenAccount = await getAssociatedTokenAddress(tokenMint, adminKp.publicKey);
-  const feeAccount = TEST_FEE_ACCOUNT;
+  //const feeAccount = TEST_FEE_ACCOUNT;
 
   // Log initial state for debugging
   logger.color("magenta").log(`Admin is aborting auction ${auctionId}...`);
@@ -3937,7 +4298,7 @@ async function finalizeAuction(auctionId) {
     .finalize()
     .accounts({
       admin: adminKp.publicKey,
-      feeAccount: feeAccount.publicKey,
+      //feeAccount: feeAccount.publicKey,
       auctionDataAccount: auctionData,
       auctionSolAccount: auctionSol,
       auctionTokenAccount: auctionTokenAccount,
@@ -3948,7 +4309,7 @@ async function finalizeAuction(auctionId) {
   tx.feePayer = adminKp.publicKey;
   tx.recentBlockhash = (await retryWithBackoff(async () => await connection.getLatestBlockhash('finalized'))).blockhash;
   try {
-    const sig = await retryWithBackoff(async () => await sendAndConfirmTransaction(connection, tx, [adminKp, feeAccount]));  // dual sig
+    const sig = await retryWithBackoff(async () => await sendAndConfirmTransaction(connection, tx, [adminKp]));  // admin sig only
     await logSuccessTx(connection, sig, "finalize");
   } catch (error) {
     console.log('finalize - error', error);

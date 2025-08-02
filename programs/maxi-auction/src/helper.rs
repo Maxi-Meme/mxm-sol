@@ -6,7 +6,7 @@ use crate::errors::CustomError;
 use crate::states::Bid;
 
 pub fn get_net_sol_raised(
-    auction: &Auction,
+    _auction: &Auction,
     bids: &[Bid],
     clearing_price: u64,
     rent_exempt_minimum: u64,

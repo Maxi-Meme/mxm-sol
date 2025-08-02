@@ -11,8 +11,9 @@ pub mod states;
 
 use instructions::*;
 use states::Config;
+use errors::CustomError;
 
-declare_id!("EbGcVWYedx2AAHrs1M1H7643ahPmNWqScj7S55eh2oM1");
+declare_id!("3UGQHeMjgnGn5wCnekaVZNEEp5j1oVt1dj5q7dTiw8ZF");
 
 #[program]
 pub mod maxi_auction {
@@ -54,8 +55,14 @@ pub mod maxi_auction {
         )
     }
 
-    pub fn place_bid(ctx: Context<PlaceBid>, bid_qty: u64, x_id: u64, fee_perc: u64) -> Result<()> {
-        ctx.accounts.process(bid_qty, x_id, fee_perc)
+    pub fn place_bid<'info>(ctx: Context<'_, '_, '_, 'info, PlaceBid<'info>>, bid_qty: u64, x_id: u64, fee_perc: u64) -> Result<()> {
+        let num_fee_accounts = ctx.accounts.global_info.config.fee_accounts.len();
+        let remaining = ctx.remaining_accounts;
+        require!(
+            remaining.len() >= num_fee_accounts,
+            CustomError::InvalidAccountInput
+        );
+        ctx.accounts.process(bid_qty, x_id, fee_perc, remaining)
     }
 
     pub fn cancel_bid(ctx: Context<CancelBid>) -> Result<()> {

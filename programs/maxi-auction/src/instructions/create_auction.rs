@@ -1,6 +1,6 @@
 use crate::{
-    account::{Auction, GlobalInfo, Bids},
-    constants::{AUCTION_DATA_SEED, AUCTION_SOL_SEED, GLOBAL_INFO_SEED, METADATA_SEED, BIDS_SEED},
+    account::{Auction, GlobalInfo},
+    constants::{AUCTION_DATA_SEED, AUCTION_SOL_SEED, GLOBAL_INFO_SEED, METADATA_SEED},
     events::AuctionCreated,
     states::AuctionStatus,
 };
@@ -8,7 +8,7 @@ use anchor_lang::{prelude::*, system_program};
 use anchor_spl::{
     associated_token::{self, AssociatedToken},
     metadata::{self, mpl_token_metadata::types::DataV2, Metadata},
-    token::{self, spl_token::instruction::AuthorityType, Mint, Token, TokenAccount},
+    token::{self, Mint, Token, TokenAccount},
 };
 use core::mem::size_of;
 use crate::errors::CustomError;
@@ -104,7 +104,7 @@ impl<'info> CreateAuction<'info> {
         duration_hours: u64, // actually 1/100 of an hour ~= 36s
         dist_percent: u64,
         delay_in_seconds: u64,
-        buyback_period_days: u64,
+        _buyback_period_days: u64,
     ) -> Result<()> {
         msg!("Calling create_auction...");
 
@@ -169,7 +169,6 @@ impl<'info> CreateAuction<'info> {
         )?;
 
         // method 1 - we're using liquidity movement (overmint) - we need to keep mint authority and revoke it on the last bid
-        ;
 
         // method 2 (underfund) - revoke token mint authority 
         /*token::set_authority(

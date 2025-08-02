@@ -1,5 +1,5 @@
 {
-  "address": "EbGcVWYedx2AAHrs1M1H7643ahPmNWqScj7S55eh2oM1",
+  "address": "3UGQHeMjgnGn5wCnekaVZNEEp5j1oVt1dj5q7dTiw8ZF",
   "metadata": {
     "name": "maxi_auction",
     "version": "0.2.0",
@@ -707,11 +707,6 @@
           "signer": true
         },
         {
-          "name": "fee_account",
-          "writable": true,
-          "signer": true
-        },
-        {
           "name": "auction_data_account",
           "writable": true
         },
@@ -984,10 +979,6 @@
         },
         {
           "name": "auction_data_account",
-          "writable": true
-        },
-        {
-          "name": "fee_account",
           "writable": true
         },
         {
@@ -1697,6 +1688,21 @@
       "code": 6031,
       "name": "InvalidReferralMapping",
       "msg": "Invalid referral mapping - self-referral not allowed"
+    },
+    {
+      "code": 6032,
+      "name": "InvalidFeeAccount",
+      "msg": "Invalid fee account"
+    },
+    {
+      "code": 6033,
+      "name": "InvalidAccountInput",
+      "msg": "Invalid account input"
+    },
+    {
+      "code": 6034,
+      "name": "InvalidFeeAccountPercentages",
+      "msg": "Fee account percentages must sum to exactly 10000 (100%)"
     }
   ],
   "types": [
@@ -1993,8 +1999,14 @@
             "type": "u64"
           },
           {
-            "name": "fee_account",
-            "type": "pubkey"
+            "name": "fee_accounts",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "FeeAccount"
+                }
+              }
+            }
           },
           {
             "name": "dao_account",
@@ -2006,6 +2018,22 @@
           },
           {
             "name": "ref_bid_fee_perc_share",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeAccount",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pubkey",
+            "type": "pubkey"
+          },
+          {
+            "name": "share",
             "type": "u64"
           }
         ]

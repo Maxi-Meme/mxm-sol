@@ -200,52 +200,91 @@ export const migrateAuction = async (program: Program<MaxiAuction>, isMainnet: b
     // Update DB keypair with market/pool info
     await withRetry(() => updateKeyPairPoolInfo(tokenMint, null, poolKeys, null, poolId));
 
-    // Send fee tokens & WSOL to the revenue wallet
+    // Send fee tokens to the revenue wallets (based on configured percentages)
     if (liqFeeTokens.gt(new BN(0))) {
-      const feeAccount = globalInfoAccount.config.feeAccount;
-      const feeAccountTokenAccount = getAssociatedTokenAddressSync(tokenMint, feeAccount, true);
-      const feeTx = new Transaction().add(
-        createAssociatedTokenAccountIdempotentInstruction(adminKp.publicKey, feeAccountTokenAccount, feeAccount, tokenMint, TOKEN_PROGRAM_ID),
-        createTransferInstruction(
-          adminTokenAccount,
-          feeAccountTokenAccount,
-          adminKp.publicKey,
-          BigInt(liqFeeTokens.toString()),
-          [],
-          TOKEN_PROGRAM_ID
-        )
-      );
-      feeTx.feePayer = adminKp.publicKey;
-      feeTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
-      const feeSig = await withRetry(() => sendAndConfirmTransaction(connection, feeTx, [adminKp]));
-      await logSuccessTx(connection, feeSig, `migrateAuction (${auctionId}) => Sent fee ${liqFeeTokens.toNumber() / 10 ** mintAccount.decimals} tokens to the revenue wallet`);
+      const feeAccounts = globalInfoAccount.config.feeAccounts;
+      const numFeeAccounts = feeAccounts.length;
+      
+      if (numFeeAccounts > 0) {
+        let totalTransferred = new BN(0);
+        
+        for (let i = 0; i < numFeeAccounts; i++) {
+          const feeAccountConfig = feeAccounts[i];
+          const feeAccountTokenAccount = getAssociatedTokenAddressSync(tokenMint, feeAccountConfig.pubkey, true);
+          
+          // Calculate amount based on percentage
+          // For last account, give any remainder to ensure total equals liqFeeTokens
+          const amount = i === numFeeAccounts - 1
+            ? liqFeeTokens.sub(totalTransferred)
+            : liqFeeTokens.mul(new BN(feeAccountConfig.share)).div(new BN(10000));
+          
+          if (amount.gt(new BN(0))) {
+            const feeTx = new Transaction().add(
+              createAssociatedTokenAccountIdempotentInstruction(adminKp.publicKey, feeAccountTokenAccount, feeAccountConfig.pubkey, tokenMint, TOKEN_PROGRAM_ID),
+              createTransferInstruction(
+                adminTokenAccount,
+                feeAccountTokenAccount,
+                adminKp.publicKey,
+                BigInt(amount.toString()),
+                [],
+                TOKEN_PROGRAM_ID
+              )
+            );
+            feeTx.feePayer = adminKp.publicKey;
+            feeTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
+            const feeSig = await withRetry(() => sendAndConfirmTransaction(connection, feeTx, [adminKp]));
+            await logSuccessTx(connection, feeSig, `migrateAuction (${auctionId}) => Sent fee ${amount.toNumber() / 10 ** mintAccount.decimals} tokens to fee account ${i+1}/${numFeeAccounts} (${feeAccountConfig.share.toNumber()/100}%)`);
+            totalTransferred = totalTransferred.add(amount);
+          }
+        }
+      }
     } else {
       console.log(`no token fees to send.`);
     }
+    // Send WSOL fees to the revenue wallets (based on configured percentages)
     if (liqFeeWSol.gt(new BN(0))) {
-      const feeAccount = globalInfoAccount.config.feeAccount;
-      const feeAccountWsolATA = getAssociatedTokenAddressSync(new PublicKey(TOKEN_WSOL.address), feeAccount, true);
-      const wsolFeeTx = new Transaction().add(
-        createAssociatedTokenAccountIdempotentInstruction(
-          adminKp.publicKey,
-          feeAccountWsolATA,
-          feeAccount,
-          new PublicKey(TOKEN_WSOL.address),
-          TOKEN_PROGRAM_ID
-        ),
-        createTransferInstruction(
-          adminWsolAccount.address,
-          feeAccountWsolATA,
-          adminKp.publicKey,
-          BigInt(liqFeeWSol.toString()),
-          [],
-          TOKEN_PROGRAM_ID
-        )
-      );
-      wsolFeeTx.feePayer = adminKp.publicKey;
-      wsolFeeTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
-      const wsolFeeSig = await withRetry(() => sendAndConfirmTransaction(connection, wsolFeeTx, [adminKp]));
-      await logSuccessTx(connection, wsolFeeSig, `migrateAuction (${auctionId}) => Sent fee ${liqFeeWSol.toNumber() / LAMPORTS_PER_SOL} WSOL to the revenue wallet`);
+      const feeAccounts = globalInfoAccount.config.feeAccounts;
+      const numFeeAccounts = feeAccounts.length;
+      
+      if (numFeeAccounts > 0) {
+        let totalTransferred = new BN(0);
+        
+        for (let i = 0; i < numFeeAccounts; i++) {
+          const feeAccountConfig = feeAccounts[i];
+          const feeAccountWsolATA = getAssociatedTokenAddressSync(new PublicKey(TOKEN_WSOL.address), feeAccountConfig.pubkey, true);
+          
+          // Calculate amount based on percentage
+          // For last account, give any remainder to ensure total equals liqFeeWSol
+          const amount = i === numFeeAccounts - 1
+            ? liqFeeWSol.sub(totalTransferred)
+            : liqFeeWSol.mul(new BN(feeAccountConfig.share)).div(new BN(10000));
+          
+          if (amount.gt(new BN(0))) {
+            const wsolFeeTx = new Transaction().add(
+              createAssociatedTokenAccountIdempotentInstruction(
+                adminKp.publicKey,
+                feeAccountWsolATA,
+                feeAccountConfig.pubkey,
+                new PublicKey(TOKEN_WSOL.address),
+                TOKEN_PROGRAM_ID
+              ),
+              createTransferInstruction(
+                adminWsolAccount.address,
+                feeAccountWsolATA,
+                adminKp.publicKey,
+                BigInt(amount.toString()),
+                [],
+                TOKEN_PROGRAM_ID
+              )
+            );
+            wsolFeeTx.feePayer = adminKp.publicKey;
+            wsolFeeTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
+            const wsolFeeSig = await withRetry(() => sendAndConfirmTransaction(connection, wsolFeeTx, [adminKp]));
+            await logSuccessTx(connection, wsolFeeSig, `migrateAuction (${auctionId}) => Sent fee ${amount.toNumber() / LAMPORTS_PER_SOL} WSOL to fee account ${i+1}/${numFeeAccounts} (${feeAccountConfig.share.toNumber()/100}%)`);
+            totalTransferred = totalTransferred.add(amount);
+          }
+        }
+      }
     } else {
       console.log(`no wsol fees to send.`);
     }

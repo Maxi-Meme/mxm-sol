@@ -101,4 +101,13 @@ pub enum CustomError {
     // [REF] - Referral system specific errors
     #[msg("Invalid referral mapping - self-referral not allowed")]
     InvalidReferralMapping,
+    
+    #[msg("Invalid fee account")]
+    InvalidFeeAccount,
+    
+    #[msg("Invalid account input")]
+    InvalidAccountInput,
+    
+    #[msg("Fee account percentages must sum to exactly 10000 (100%)")]
+    InvalidFeeAccountPercentages,
 }

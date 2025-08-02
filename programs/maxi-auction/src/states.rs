@@ -2,12 +2,18 @@ use anchor_lang::prelude::*;
 use core::fmt::Debug;
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub struct FeeAccount {
+    pub pubkey: Pubkey,
+    pub share: u64,  // 0-10000 (0.00% to 100.00%) - this account's share of platform fees
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
 pub struct Config {
     pub admin: Pubkey,
     pub default_token_supply: u64,
     pub default_token_decimals: u8,
     pub default_start_price_lamports: u64,
-    pub fee_account: Pubkey,
+    pub fee_accounts: Vec<FeeAccount>,  // Array of fee accounts with their percentage shares
     pub dao_account: Pubkey,
     pub min_total_sol: u64,
     // [REF] - Referral system configuration field

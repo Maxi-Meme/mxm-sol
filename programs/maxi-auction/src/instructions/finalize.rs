@@ -6,11 +6,8 @@ use crate::{
 };
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount};
-use solana_program::{
-    entrypoint::ProgramResult,
-    program::{invoke, invoke_signed},
-};
 use anchor_lang::solana_program;
+use solana_program::program::invoke_signed;
 
 #[derive(Accounts)]
 pub struct Finalize<'info> {
@@ -25,12 +22,6 @@ pub struct Finalize<'info> {
         address = global_info.config.admin @ CustomError::Unauthorized
     )]
     pub admin: Signer<'info>,
-
-    #[account(
-        mut,
-        address = global_info.config.fee_account @ CustomError::Unauthorized
-    )]
-    pub fee_account: Signer<'info>,
 
     #[account(mut, close = admin)]
     pub auction_data_account: Box<Account<'info, Auction>>,
