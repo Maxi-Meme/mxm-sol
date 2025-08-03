@@ -3927,6 +3927,62 @@ describe("maxi-auction", () => {
     console.log(`Total Fee Share: ${totalFeeSharesPercent}%`);
     console.log(`Config Valid: ${totalFeeSharesBasisPoints === 10000 ? '✅' : '❌'} (should be 100.00%)`);
 
+    // Check referralMappings account status
+    console.log("\n🔗 REFERRAL MAPPINGS ACCOUNT:");
+    console.log("─".repeat(40));
+
+    const [referralMappings] = PublicKey.findProgramAddressSync([Buffer.from(referralMappingsSeed)], program.programId);
+    console.log(`PDA Address: ${referralMappings.toBase58()}`);
+
+    try {
+      const referralMappingsAccount = await connection.getAccountInfo(referralMappings);
+      if (referralMappingsAccount) {
+        console.log(`✅ Account EXISTS`);
+        console.log(`   Owner: ${referralMappingsAccount.owner.toBase58()}`);
+        console.log(`   Data Length: ${referralMappingsAccount.data.length} bytes`);
+        console.log(`   Lamports: ${referralMappingsAccount.lamports}`);
+        console.log(`   Executable: ${referralMappingsAccount.executable}`);
+
+        // Try to deserialize the account data
+        if (referralMappingsAccount.data.length > 8) {
+          try {
+            const referralData = await program.account.referralMappings.fetch(referralMappings);
+            console.log(`   Initialized: ✅ YES`);
+            console.log(`   Mappings Count: ${referralData.referrals ? referralData.referrals.length : 0}`);
+
+            if (referralData.referrals && referralData.referrals.length > 0) {
+              console.log(`   Sample Mappings:`);
+              referralData.referrals.slice(0, 3).forEach((mapping, index) => {
+                console.log(`     ${index + 1}. Referred: ${mapping.referredAccount.toBase58()}`);
+                console.log(`        Referrer: ${mapping.referrerAccount.toBase58()}`);
+              });
+              if (referralData.referrals.length > 3) {
+                console.log(`     ... and ${referralData.referrals.length - 3} more mappings`);
+              }
+            }
+          } catch (deserializeError) {
+            console.log(`   Initialized: ❌ NO (deserialization failed)`);
+            console.log(`   Error: ${deserializeError.message}`);
+            console.log(`   Raw Data (first 32 bytes): ${referralMappingsAccount.data.slice(0, 32).toString('hex')}`);
+          }
+        } else {
+          console.log(`   Initialized: ❌ NO (data too short - only ${referralMappingsAccount.data.length} bytes)`);
+        }
+
+        // Check if the account is owned by our program
+        const expectedOwner = program.programId.toBase58();
+        const actualOwner = referralMappingsAccount.owner.toBase58();
+        console.log(`   Owner Match: ${actualOwner === expectedOwner ? '✅' : '❌'} (expected: ${expectedOwner})`);
+
+      } else {
+        console.log(`❌ Account DOES NOT EXIST`);
+        console.log(`   This means referralMappings PDA has not been initialized yet`);
+        console.log(`   You should run the referral initialization before placing bids`);
+      }
+    } catch (accountError) {
+      console.log(`❌ Error fetching account: ${accountError.message}`);
+    }
+
     console.log("\n" + "=".repeat(60));
     console.log("✅ CONFIG VIEW COMPLETE");
     console.log("=".repeat(60) + "\n");
