@@ -3857,6 +3857,86 @@ describe("maxi-auction", () => {
     return result;
   }
 
+  // Admin - view current global config
+  async function test_view_current_config() {
+    console.log("\n" + "=".repeat(60));
+    console.log("📋 VIEWING CURRENT GLOBAL CONFIG");
+    console.log("=".repeat(60));
+
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+
+    let currentConfig;
+    try {
+      const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+      currentConfig = globalInfoAccount.config;
+    } catch (error) {
+      console.log("❌ Failed to fetch global config:", error.message);
+      return;
+    }
+
+    if (!currentConfig) {
+      console.log("⚠️  No global config found - contract may not be initialized");
+      return;
+    }
+
+    // Helper function to format large numbers with commas
+    const formatNumber = (num) => {
+      return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    };
+
+    // Helper function to convert basis points to percentage
+    const basisPointsToPercent = (basisPoints) => {
+      return (basisPoints / 100).toFixed(2);
+    };
+
+    // Helper function to format token supply with decimals
+    const formatTokenSupply = (supply, decimals) => {
+      const actualSupply = supply.toNumber() / Math.pow(10, decimals);
+      return formatNumber(actualSupply.toFixed(2));
+    };
+
+    // Format and display the config in human readable format
+    console.log("\n🔧 CONTRACT CONFIGURATION:");
+    console.log("─".repeat(40));
+
+    console.log(`👤 Admin: ${currentConfig.admin.toBase58()}`);
+    console.log(`💰 Default Token Supply: ${formatTokenSupply(currentConfig.defaultTokenSupply, currentConfig.defaultTokenDecimals)} tokens`);
+    console.log(`🔢 Default Token Decimals: ${currentConfig.defaultTokenDecimals}`);
+
+    const startPriceSol = currentConfig.defaultStartPriceLamports.toNumber() / LAMPORTS_PER_SOL;
+    console.log(`💵 Default Start Price: ${startPriceSol.toFixed(9)} SOL`);
+
+    console.log(`🏛️  DAO Account: ${currentConfig.daoAccount.toBase58()}`);
+
+    const minTotalSol = (currentConfig.minTotalSol.toNumber() / LAMPORTS_PER_SOL).toFixed(6);
+    console.log(`📉 Min Total SOL: ${minTotalSol} SOL (minimum SOL raised for auction success - below this = FailedMinNotReached)`);
+    console.log(`🔗 Referral Bid Fee Share: ${basisPointsToPercent(currentConfig.refBidFeePercShare.toNumber())}%`);
+
+    console.log("\n💸 FEE ACCOUNTS:");
+    console.log("─".repeat(40));
+    currentConfig.feeAccounts.forEach((feeAccount, index) => {
+      const sharePercent = basisPointsToPercent(feeAccount.share.toNumber());
+      console.log(`  ${index + 1}. ${feeAccount.pubkey.toBase58()} - ${sharePercent}% share`);
+    });
+
+    console.log("\n📊 CONFIGURATION SUMMARY:");
+    console.log("─".repeat(40));
+    console.log(`Total Fee Accounts: ${currentConfig.feeAccounts.length}`);
+    const totalFeeSharesBasisPoints = currentConfig.feeAccounts.reduce((sum, acc) => sum + acc.share.toNumber(), 0);
+    const totalFeeSharesPercent = basisPointsToPercent(totalFeeSharesBasisPoints);
+    console.log(`Total Fee Share: ${totalFeeSharesPercent}%`);
+    console.log(`Config Valid: ${totalFeeSharesBasisPoints === 10000 ? '✅' : '❌'} (should be 100.00%)`);
+
+    console.log("\n" + "=".repeat(60));
+    console.log("✅ CONFIG VIEW COMPLETE");
+    console.log("=".repeat(60) + "\n");
+  }
+
+  // Admin config viewing test
+  it("admin - view current config", async () => {
+    await test_view_current_config();
+  });
+
 }); // End of "maxi-auction" describe block
 
 async function getPoolDbAndRpcInfos(successfulResults: { auctionId: any; solBalanceAuctionData: any; solBalanceAuctionSol: any; solBalanceAuctionTokenAccount: any; rentExemptionAuctionData: any; rentExemptionAuctionSol: any; rentExemptionAuctionTokenAccount: any; tokenBalance: string; status: any; isFinalized: any; tokenMintPublicKey: any; }[]) {
