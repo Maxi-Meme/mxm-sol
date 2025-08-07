@@ -399,41 +399,41 @@ describe("maxi-auction", () => {
     await test_bid_auction({ fill_percent: 1.0, bidderKp: adminKp });
   });
 
-  // TODO: test again one last time, make sure the bids after expiry don't work!!
   it("base - bids continuously", async () => {
-    const duration36Secs = 5; // units of 36s
-    const targetIntervalSecs = 9; // target time between bid starts
-    const nBidsInTimerPeriod = Number(duration36Secs * 36 / targetIntervalSecs);
-    const bidPerc = (1 / (nBidsInTimerPeriod - 1)); // we won't fill the auction with the last bid - it will end failed
-    console.log(`nBids: ${nBidsInTimerPeriod}, bidPerc: ${bidPerc}, targetInterval: ${targetIntervalSecs}s`);
+    const duration36Secs = 3; // units of 36s
+    const nBids = 5;
+    const targetIntervalSecs = ((duration36Secs * 36) + 10 /* +10s buffer - we want to try to bid *after expiry* */) / nBids; // target time between bids
+    //const nBidsInTimerPeriod = nBids; //Number(duration36Secs * 36 / targetIntervalSecs);
+    const bidPerc = (1 / nBids / 2); // we will fill ~50% of the auction amount; last bid will be late, but quantity will be valid
+    console.log(`nBids: ${nBids}, bidPerc: ${bidPerc}, targetInterval: ${targetIntervalSecs}s`);
     await test_create_auction_KP0({ duration_hours_div100: duration36Secs }); // units of 36s
 
     let successfulBids = 0;
     let expectedFailuresStarted = false;
 
-    const totalBids = nBidsInTimerPeriod + 1;
-    for (let i = 0; i < nBidsInTimerPeriod + 1; i++) { // Add 1 extra bids beyond expected duration to test time validation
+    //const totalBids = nBids;  //nBidsInTimerPeriod + 1;
+    for (let i = 0; i < nBids + 1; i++) { 
       const bidStartTime = Date.now();
 
       try {
         await test_bid_auction({ fill_percent: bidPerc, skipValidations: true });
         successfulBids++;
-        console.log(`Bid ${i + 1} (of ${totalBids}) successful - time remaining should be positive`);
+        console.log(`Bid ${i + 1} (of ${nBids}) successful - time remaining should be positive`);
 
         // If we already started seeing failures, this shouldn't succeed
         if (expectedFailuresStarted) {
-          console.error(`Unexpected success after auction expiry for bid ${i + 1} (of ${totalBids})`);
+          console.error(`Unexpected success after auction expiry for bid ${i + 1} (of ${nBids})`);
           assert.fail("Bid should have failed after auction time expired");
         }
       } catch (err) {
-        console.log(`Bid ${i + 1} (of ${totalBids}) failed as expected - auction time expired:`, err.toString());
+        console.log(`Bid ${i + 1} (of ${nBids}) failed as expected - auction time expired:`, err.toString());
 
         // Verify it's the right type of error (auction ended due to time)
         if (err.toString().includes("AuctionEnded")) {
           expectedFailuresStarted = true;
-          console.log(`✓ Time validation working: bid ${i + 1} (of ${totalBids}) correctly rejected after auction expiry`);
+          console.log(`✓ Time validation working: bid ${i + 1} (of ${nBids}) correctly rejected after auction expiry`);
         } else {
-          console.error(`Unexpected error type for bid ${i + 1} (of ${totalBids}):`, err);
+          console.error(`Unexpected error type for bid ${i + 1} (of ${nBids}):`, err);
           throw err; // Re-throw if it's not the expected auction time error
         }
       }
@@ -451,7 +451,7 @@ describe("maxi-auction", () => {
       }
     }
 
-    console.log(`Test completed: ${successfulBids} successful bids (of ${totalBids}), failures started correctly after auction expiry`);
+    console.log(`Test completed: ${successfulBids} successful bids (of ${nBids}), failures started correctly after auction expiry`);
 
     // Verify we got some successful bids and some failures
     assert.ok(successfulBids > 0, "Should have had some successful bids within auction period");
@@ -459,12 +459,12 @@ describe("maxi-auction", () => {
   });
 
   it("base - bids and cancels continuously", async () => {
-    const durationSecs = 60 * 5;
-    const everySecs = 10;
+    const durationSecs = 60 * 1;
+    const everySecs = 2;
     const nCycles = Number(durationSecs / everySecs);
     const bidPerc = (1 / (nCycles - 1));
     console.log(`nCycles: ${nCycles}, bidPerc: ${bidPerc}`);
-    await test_create_auction_KP0({ duration_hours_div100: durationSecs / 36 });
+    await test_create_auction_KP0({ duration_hours_div100: (durationSecs / 36) + 30 }); // buffer 30s
     for (let i = 0; i < nCycles; i++) {
       await test_bid_auction({ fill_percent: bidPerc });
       await sleep(everySecs / 2);
@@ -488,13 +488,13 @@ describe("maxi-auction", () => {
   });
 
   it("base - user 1 fills & claims auction", async () => {
-    await test_create_auction_KP0({ auction_distribution_percent: /*0.9631*/0.8, duration_hours_div100: 1 }); // 3.69% token lock, 36s
+    await test_create_auction_KP0({ /*auction_distribution_percent: 0.8,*/ duration_hours_div100: 1 }); // 3.69% token lock, 36s
     const bidResult = await test_bid_auction({ fill_percent: 1.0, bidderKp: USER_KPs[0] });
     await test_claim_auction(USER_KPs[0], true, bidResult);
   });
 
   it("cancels - only during auction period", async () => {
-    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 36s
+    await test_create_auction_KP0({ /*auction_distribution_percent: 0.95,*/ duration_hours_div100: 1 }); // 36s
 
     const bidResult1 = await test_bid_auction({ fill_percent: 0.1, bidderKp: USER_KPs[1] });
     await test_cancel_bid(USER_KPs[1]); // cancel the first bid within the auction period (should succeed)
@@ -561,7 +561,7 @@ describe("maxi-auction", () => {
   });
 
   it("base - places a late bid", async () => {
-    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // ~36 secs, 95% distribution
+    await test_create_auction_KP0({ /*auction_distribution_percent: 0.95,*/ duration_hours_div100: 1 }); // ~36 secs, 95% distribution
     await sleep(32);
     await test_bid_auction({ fill_percent: 0.1 });
   });
@@ -1085,7 +1085,7 @@ describe("maxi-auction", () => {
   });
 
   it("claims - full supply not bid", async () => {
-    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0({ /*auction_distribution_percent: 0.95,*/ duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
     const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
     logger.color("magenta").log("sleeping 36s...");
@@ -1113,7 +1113,7 @@ describe("maxi-auction", () => {
   it("claims - failedMinNotReached", async () => {
     await test_init(10000); // 10k SOL minimum needed to move liquidity - will cause this auction to finished failed
 
-    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0({ /*auction_distribution_percent: 0.95,*/ duration_hours_div100: 1 /*36s*/ }); 
 
     // Derive auction-related accounts after creating the auction
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
@@ -1177,9 +1177,9 @@ describe("maxi-auction", () => {
     assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction"); // claim (refund) will reduce sol account to 0
   });
 
-  it("claims - two bids failedMinNotReached", async () => {
+  it("claims - same user two bids failedMinNotReached", async () => {
     await test_init(10000); // 10k SOL minimum needed to move liquidity - will cause this auction to finished failed
-    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0({ /*auction_distribution_percent: 0.95,*/ duration_hours_div100: 1 /*36s*/ });
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
     const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
     const bidResult3 = await test_bid_auction({ fill_percent: 0.2, bidderKp: USER_KPs[2], skipLiqMoveAssumption: true }); // will finish failed
@@ -1205,7 +1205,7 @@ describe("maxi-auction", () => {
   });
 
   it("claims - only after auction is finished", async () => {
-    await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0({ /*auction_distribution_percent: 0.95,*/ duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
     const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
 
@@ -1226,12 +1226,13 @@ describe("maxi-auction", () => {
     await test_e2e_auction_low_settlement_price();
   });
 
-  it("claims - e2e - low clearing price auction", async () => {
+  it("claims - e2e - failed low clearing price", async () => {
+    await test_init(10000); // 10k SOL minimum needed to move liquidity - will cause this auction to finished failed
     await test_e2e_auction_success({ lowClearingPrice: true, });
   });
 
   it("claims - auction creator bids & claims", async () => {
-    await test_create_auction_KP0({ auction_distribution_percent: 0.9631, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0({ /*auction_distribution_percent: 0.9631,*/ duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
     const bidResult2 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
     await test_claim_auction(USER_KPs[0], true, bidResult1); // creator claims
@@ -1416,14 +1417,11 @@ describe("maxi-auction", () => {
     logger.color("green").log(`Successfully completed stress test with ${numBids} bids`);
 }
 
-
-  
-
   async function test_e2e_auction_success({
-    lowClearingPrice = false,
+    lowClearingPrice = false, // we also test this explicitly and clearly elsewhere; but this tests too that we don't moveliq
     migrateAfterClaims = false // default/mainpath is to migrate *before* claims
   } = {}) {
-    await test_create_auction_KP0({ auction_distribution_percent: 0.9631, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
+    await test_create_auction_KP0({ /*auction_distribution_percent: 0.9631,*/ duration_hours_div100: 1 /* 36s */ });
 
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
@@ -1435,9 +1433,9 @@ describe("maxi-auction", () => {
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[0] });
 
     await sleep(3);
-    const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] }); // last filling bid
+    const bidResult2 = await test_bid_auction({ fill_percent: 0.3, bidderKp: USER_KPs[1] });
 
-    await sleep(lowClearingPrice ? 30 : 3); // bid at end of auction for low clearing price
+    await sleep(lowClearingPrice ? 25 : 3); // bid at end of auction for low clearing price -- we'll also set a crazy high MIN_TOTAL_SOL when we run with this param
     if (migrateAfterClaims) { // pause moveliq if requested - to test claims *after* migration (secondary case - main flow is moveliq, then claims)
       logger.color("yellow").log("migrateAfterClaims - pausing moveliq...");
       MOVELIQ_PAUSE = true;
@@ -1574,7 +1572,7 @@ describe("maxi-auction", () => {
     logger.color("cyan").log("Starting low settlement price test - single bid at last moment...");
 
     // Create auction with 36s duration (1 unit)
-    await test_create_auction_KP0({ auction_distribution_percent: 0.9631, duration_hours_div100: 1 }); // 5% lock, 36s duration
+    await test_create_auction_KP0({ /*auction_distribution_percent: 0.9631,*/ duration_hours_div100: 1 }); // 5% lock, 36s duration
 
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
@@ -2036,12 +2034,12 @@ describe("maxi-auction", () => {
   }
 
   async function test_create_auction_KP0({
-    auction_distribution_percent = undefined,
+    //auction_distribution_percent = undefined,
     duration_hours_div100 = undefined,
     useDynamicTestData = false,
     testDataTheme = undefined
   }: {
-    auction_distribution_percent?: any,
+      //auction_distribution_percent?: any,
     duration_hours_div100?: any,
     useDynamicTestData?: boolean,
     testDataTheme?: any
@@ -2290,8 +2288,8 @@ describe("maxi-auction", () => {
     // DM - ## ACHTUNG ## this may fail to get exactly the remaining supply; we've seen off by one errors here 
     // with previous implicit Math.floor(); Math.round() may be working here more by luck than design to avoid off by 1s.
     // Calculate bid quantity using integer math: (supply * fillBasisPoints) / 10000
-    const bidQty = tokenSupplyWithoutDecimals.mul(new BN(fillBasisPoints)).div(new BN(10000));
-    //console.log("signer", signer.publicKey.toBase58(), "tokenSupply", auctionPre.tokenSupply.toString(), "bidQty", bidQty.toString());
+    var bidQty = tokenSupplyWithoutDecimals.mul(new BN(fillBasisPoints)).div(new BN(10000));
+
 
     // Get initial balances
     const adminBalanceBefore = await connection.getBalance(adminKp.publicKey);
@@ -2307,12 +2305,29 @@ describe("maxi-auction", () => {
     const totalBidTokens = (await getBids(program, auctionId)).reduce((acc, bid) => {  //auctionPre.bids.reduce((acc, bid) => {
       return acc.add(bid.bidQty.mul(new BN(Math.pow(10, auctionPre.tokenDecimals))));
     }, new BN(0));
-    const remainingTokens = auctionPre.tokenSupply.sub(totalBidTokens);
-    const bidQtyLamports = bidQty.mul(new BN(Math.pow(10, auctionPre.tokenDecimals)));
-    const isFinalBid = bidQtyLamports.gte(remainingTokens);
-    //console.log('remainingTokens:', remainingTokens.toString());
-    //console.log('bidQtyLamports:', bidQtyLamports.toString());
-    //console.log('isFinalBid:', isFinalBid);
+    const remainingTokenLamports = auctionPre.tokenSupply.sub(totalBidTokens);
+    const remainingTokens = remainingTokenLamports.div(new BN(Math.pow(10, auctionPre.tokenDecimals)));
+    var bidQtyLamports = bidQty.mul(new BN(Math.pow(10, auctionPre.tokenDecimals)));
+
+    // There are only two hard things...
+    if (bidQty.sub(remainingTokens).abs().eq(new BN(1)) && bidQty.gt(new BN(0))) {
+      console.warn('fixup JS float errors; off by exactly one token lamport - assuming intent was to exactly fill remaining supply');
+
+      console.log('before fix - bidQty', bidQty.toString());
+      console.log('before fix - remainingTokens', remainingTokens.toString());
+
+      bidQty = remainingTokens;
+      bidQtyLamports = bidQty.mul(new BN(Math.pow(10, auctionPre.tokenDecimals)));
+
+      console.log('after fix - bidQty', bidQty.toString());
+      console.log('after fix - remainingTokens', remainingTokens.toString());
+    }
+
+    console.log('bidQty', bidQty.toString());
+    const isFinalBid = bidQtyLamports.gte(remainingTokenLamports);
+    console.log('remainingTokens:', remainingTokenLamports.toString());
+    console.log('bidQtyLamports:', bidQtyLamports.toString());
+    console.log('isFinalBid:', isFinalBid);
 
     // get new bids account lamports - before the bid
     const [bidsPda] = PublicKey.findProgramAddressSync([Buffer.from(auctionBidsSeed), new anchor.BN(auctionId).toArrayLike(Buffer, "le", 8)], program.programId);
@@ -2404,7 +2419,8 @@ describe("maxi-auction", () => {
       // Optional: Verify exact total supply if liquidityOvermint is available
       const auctionPost = await program.account.auction.fetch(auctionData);
       console.log('auctionPost.liquidityOvermint', auctionPost.liquidityOvermint);
-      if (auctionPost.liquidityOvermint) {
+      console.log('Object.keys(auctionPost.lastStatus)[0]', Object.keys(auctionPost.lastStatus)[0]);
+      if (auctionPost.liquidityOvermint && Object.keys(auctionPost.lastStatus)[0] == "succeeded") {
         const tokenMintPublicKey = auctionPre.tokenMint; // Use the token mint from auction data
         const mintInfo = await getMint(connection, tokenMintPublicKey); // Fetch mint info
         const totalSupply = mintInfo.supply; // Total supply in smallest unit (bigint)
