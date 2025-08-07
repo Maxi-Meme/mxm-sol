@@ -1,4 +1,4 @@
-// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
 //
 // Instruction module aggregator and re-exporter
 // Makes all instruction handlers available to lib.rs via single import

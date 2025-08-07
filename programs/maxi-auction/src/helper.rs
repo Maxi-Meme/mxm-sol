@@ -1,4 +1,4 @@
-// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
 //
 // Core calculation engine for Dutch auction mechanics
 // get_current_price implements linear decay from start_price to 1 lamport over duration
@@ -96,7 +96,7 @@ pub(crate) fn get_status_and_clearing_price(
     bids: &[Bid],
     current_time: i64,
     min_total_sol: u64,
-) -> (AuctionStatus, Option<u64>) {
+) -> Result<(AuctionStatus, Option<u64>)> {
     // Calculate total allocated (bid) tokens and sol
     let allocated_qty_opt: Option<u64> = bids.iter().try_fold(0u64, |acc, b| acc.checked_add(b.bid_qty));
     let total_sol_after_fees_opt: Option<u64> = bids.iter().try_fold(0u64, |acc, b| {
@@ -105,8 +105,10 @@ pub(crate) fn get_status_and_clearing_price(
             .and_then(|product| product.checked_sub(b.bid_fee))
             .and_then(|net| acc.checked_add(net))
     });
-    let allocated_qty = allocated_qty_opt.unwrap_or(0);
-    let total_sol_after_fees = total_sol_after_fees_opt.unwrap_or(0);
+    
+    // Return error if calculations overflow instead of silently defaulting to 0
+    let allocated_qty = allocated_qty_opt.ok_or(CustomError::Overflow)?;
+    let total_sol_after_fees = total_sol_after_fees_opt.ok_or(CustomError::Overflow)?;
 
     // Calculate total unclaimed refunds
     let mut total_change = 0u64;
@@ -181,7 +183,7 @@ pub(crate) fn get_status_and_clearing_price(
         AuctionStatus::Finalized => None,
     };
 
-    (status, clearing_price)
+    Ok((status, clearing_price))
 }
 
 fn get_clearing_price(auction: &Auction, bids: &[Bid]) -> Option<u64> {

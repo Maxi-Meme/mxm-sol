@@ -1,4 +1,4 @@
-// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
 //
 // Cancels bids and refunds SOL before auction ends or fails
 // Only allows cancellation when auction is Live or Failed status, not after success
@@ -121,9 +121,9 @@ impl<'info> CancelBid<'info> {
             auction, bids,
             Clock::get().unwrap().unix_timestamp,
             self.global_info.config.min_total_sol,
-        );
+        )?;
         auction.last_status = auction_status;
-        auction.clearing_price = clearing_price_wrapped.unwrap_or(0);
+        auction.clearing_price = clearing_price_wrapped.unwrap_or(0); // 0 is valid for cancelled state
         msg!("cancel_bid - updated auction_status: {:?}", auction.last_status);
 
         Ok(())

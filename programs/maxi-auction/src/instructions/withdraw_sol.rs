@@ -1,4 +1,4 @@
-// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
 //
 // Admin withdraws net SOL raised from successful auctions
 // Calculates total minus unclaimed refunds and rent-exempt minimum, one-time withdrawal only
@@ -67,8 +67,8 @@ impl<'info> WithdrawSol<'info> {
             auction, bids,
             Clock::get()?.unix_timestamp,
             self.global_info.config.min_total_sol,
-        );
-        let clearing_price = clearing_price_wrapped.unwrap_or(0);
+        )?;
+        let clearing_price = clearing_price_wrapped.ok_or(CustomError::InvalidClearingPrice)?;
         if Clock::get()?.unix_timestamp >= auction.end_timestamp {
             auction.is_finished = true;
         }

@@ -1,4 +1,4 @@
-// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
 //
 // Initializes dynamically-sized bid storage account for an auction
 // Creates Bids PDA with empty vector, automatically resized as bids are placed

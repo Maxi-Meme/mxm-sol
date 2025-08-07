@@ -1,4 +1,4 @@
-// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
 //
 // Claims tokens for successful auctions or refunds SOL for failed ones
 // Uses uniform clearing price - bidders who bid above clearing get partial SOL refund
@@ -90,8 +90,8 @@ impl<'info> Claim<'info> {
             auction, bids,
             Clock::get()?.unix_timestamp,
             min_total_sol,
-        );
-        let clearing_price = clearing_price_wrapped.unwrap_or(0);
+        )?;
+        let clearing_price = clearing_price_wrapped.unwrap_or(0); // 0 is valid for failed auctions
         msg!("claim - Auction status: {:?}", auction_status);
         msg!("claim - Clearing price: {}", clearing_price);
 
@@ -237,7 +237,7 @@ impl<'info> Claim<'info> {
 
         // Update and log auction state
         auction.last_status = auction_status;
-        auction.clearing_price = clearing_price_wrapped.unwrap_or(0);
+        auction.clearing_price = clearing_price; // Already handled above
         msg!("claim - Updated auction status: {:?}", auction.last_status);
         msg!("claim - Updated clearing price: {}", auction.clearing_price);
 

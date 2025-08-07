@@ -1,4 +1,4 @@
-// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
 //
 // Final cleanup after all claims processed, prepares for Raydium pool creation
 // Only callable after auction ends and all bids claimed, transfers remaining SOL/tokens to admin

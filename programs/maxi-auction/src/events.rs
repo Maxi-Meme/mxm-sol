@@ -1,4 +1,4 @@
-// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
 //
 // Events emitted for off-chain indexing and monitoring
 // AuctionCreated includes token_mint for tracking, NewBid contains full bid details including x_id

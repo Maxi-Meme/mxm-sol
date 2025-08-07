@@ -1,4 +1,4 @@
-// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
 //
 // Account structures for auction system PDAs
 // GlobalInfo: singleton system config with admin/fees, Auction: per-auction state with token mint

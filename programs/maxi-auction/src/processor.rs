@@ -1,4 +1,4 @@
-// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
 //
 // SOL transfer utilities wrapping system_instruction::transfer
 // sol_transfer_user for simple transfers, sol_transfer_with_signer for PDA-owned accounts

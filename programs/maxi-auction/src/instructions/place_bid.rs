@@ -1,4 +1,4 @@
-// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
 //
 // Handles bid placement in Dutch auctions with descending price mechanics
 // Admin co-signs every bid to verify Twitter OAuth - x_id parameter comes from validated OAuth token
@@ -359,12 +359,9 @@ impl<'info> PlaceBid<'info> {
                 auction, bids,
                 clock.unix_timestamp,
                 self.global_info.config.min_total_sol,
-            );
+            )?;
             if auction_status == AuctionStatus::Succeeded {
-                let clearing_price = clearing_price_wrapped.unwrap_or(0);
-                if clearing_price == 0 {
-                    return err!(CustomError::InvalidClearingPrice);
-                }
+                let clearing_price = clearing_price_wrapped.ok_or(CustomError::InvalidClearingPrice)?;
 
                 //
                 // Method (3) -- todo??
@@ -537,9 +534,9 @@ impl<'info> PlaceBid<'info> {
             auction, bids,
             clock.unix_timestamp,
             self.global_info.config.min_total_sol
-        );
+        )?;
         auction.last_status = auction_status;
-        auction.clearing_price = clearing_price_wrapped.unwrap_or(0);
+        auction.clearing_price = clearing_price_wrapped.unwrap_or(0); // 0 is valid for live/pending auctions
         msg!("place_bid - updated auction_status: {:?}", auction.last_status);
 
         Ok(())

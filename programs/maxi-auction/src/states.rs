@@ -1,4 +1,4 @@
-// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
 //
 // Core data structures for auction configuration and bid tracking
 // Config holds system params with fee accounts that must sum to 10000 (100%), Bid struct tracks individual bids

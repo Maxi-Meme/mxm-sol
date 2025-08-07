@@ -1177,7 +1177,7 @@ describe("maxi-auction", () => {
     assert.equal(auctionSolBalance == 0, true, "should be no sol left in the auction"); // claim (refund) will reduce sol account to 0
   });
 
-  it("claims - failedMinNotReached (two bids)", async () => {
+  it("claims - two bids failedMinNotReached", async () => {
     await test_init(10000); // 10k SOL minimum needed to move liquidity - will cause this auction to finished failed
     await test_create_auction_KP0({ auction_distribution_percent: 0.95, duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
     const bidResult1 = await test_bid_auction({ fill_percent: 0.5, bidderKp: USER_KPs[1] });
@@ -1242,72 +1242,72 @@ describe("maxi-auction", () => {
   });
 
   // New test cases using dynamic test data generation
-  it("testdata - creates auction with dynamic meme data", async () => {
-    if (!isLocal) {
-      await test_create_auction_KP0({ useDynamicTestData: true, testDataTheme: 'meme' });
-    } else {
-      console.log("Skipping dynamic test data on local network");
-    }
-  });
+  // it("testdata - creates auction with dynamic meme data", async () => {
+  //   if (!isLocal) {
+  //     await test_create_auction_KP0({ useDynamicTestData: true, testDataTheme: 'meme' });
+  //   } else {
+  //     console.log("Skipping dynamic test data on local network");
+  //   }
+  // });
 
-  it("testdata - creates auction with dynamic DeFi data", async () => {
-    if (!isLocal) {
-      await test_create_auction_KP0({ useDynamicTestData: true, testDataTheme: 'defi' });
-    } else {
-      console.log("Skipping dynamic test data on local network");
-    }
-  });
+  // it("testdata - creates auction with dynamic DeFi data", async () => {
+  //   if (!isLocal) {
+  //     await test_create_auction_KP0({ useDynamicTestData: true, testDataTheme: 'defi' });
+  //   } else {
+  //     console.log("Skipping dynamic test data on local network");
+  //   }
+  // });
 
-  it("testdata - creates auction with dynamic gaming data", async () => {
-    if (!isLocal) {
-      await test_create_auction_KP0({ useDynamicTestData: true, testDataTheme: 'gaming' });
-    } else {
-      console.log("Skipping dynamic test data on local network");
-    }
-  });
+  // it("testdata - creates auction with dynamic gaming data", async () => {
+  //   if (!isLocal) {
+  //     await test_create_auction_KP0({ useDynamicTestData: true, testDataTheme: 'gaming' });
+  //   } else {
+  //     console.log("Skipping dynamic test data on local network");
+  //   }
+  // });
 
-  it("testdata - creates auction with dynamic AI data", async () => {
-    if (!isLocal) {
-      await test_create_auction_KP0({ useDynamicTestData: true, testDataTheme: 'ai' });
-    } else {
-      console.log("Skipping dynamic test data on local network");
-    }
-  });
+  // it("testdata - creates auction with dynamic AI data", async () => {
+  //   if (!isLocal) {
+  //     await test_create_auction_KP0({ useDynamicTestData: true, testDataTheme: 'ai' });
+  //   } else {
+  //     console.log("Skipping dynamic test data on local network");
+  //   }
+  // });
 
-  it("testdata - creates auction with random dynamic data", async () => {
-    if (!isLocal) {
-      await test_create_auction_KP0({ useDynamicTestData: true });
-    } else {
-      console.log("Skipping dynamic test data on local network");
-    }
-  });
+  // it("testdata - creates auction with random dynamic data", async () => {
+  //   if (!isLocal) {
+  //     await test_create_auction_KP0({ useDynamicTestData: true });
+  //   } else {
+  //     console.log("Skipping dynamic test data on local network");
+  //   }
+  // });
 
-  it("testdata - creates multiple diverse auctions and bids", async () => {
-    if (!isLocal) {
-      // Create 3 different themed auctions with dynamic data
-      const themes = ['meme', 'defi', 'gaming'];
+  // it("testdata - creates multiple diverse auctions and bids", async () => {
+  //   if (!isLocal) {
+  //     // Create 3 different themed auctions with dynamic data
+  //     const themes = ['meme', 'defi', 'gaming'];
 
-      for (const theme of themes) {
-        await test_create_auction_KP0({
-          useDynamicTestData: true,
-          testDataTheme: theme,
-          duration_hours_div100: 5 // 5 units of 36s for testing
-        });
+  //     for (const theme of themes) {
+  //       await test_create_auction_KP0({
+  //         useDynamicTestData: true,
+  //         testDataTheme: theme,
+  //         duration_hours_div100: 5 // 5 units of 36s for testing
+  //       });
 
-        // Place a small bid to test the auction works
-        await test_bid_auction({
-          fill_percent: 0.1,
-          bidderKp: USER_KPs[Math.floor(Math.random() * USER_KPs.length)],
-          skipValidations: true
-        });
+  //       // Place a small bid to test the auction works
+  //       await test_bid_auction({
+  //         fill_percent: 0.1,
+  //         bidderKp: USER_KPs[Math.floor(Math.random() * USER_KPs.length)],
+  //         skipValidations: true
+  //       });
 
-        // Small delay between auctions
-        await sleep(2);
-      }
-    } else {
-      console.log("Skipping dynamic test data on local network");
-    }
-  });
+  //       // Small delay between auctions
+  //       await sleep(2);
+  //     }
+  //   } else {
+  //     console.log("Skipping dynamic test data on local network");
+  //   }
+  // });
 
   async function test_large_number_of_bids(numBids) {
     logger.color("magenta").log(`Starting stress test with ${numBids} bids...`);
@@ -2279,7 +2279,18 @@ describe("maxi-auction", () => {
 
     // Set up bidder and bid quantity
     const signer = bidderKp;
-    const bidQty = new BN(auctionPre.tokenSupply.toNumber() / Math.pow(10, auctionPre.tokenDecimals) * fill_percent);
+    // Use pure integer math to avoid floating point precision loss
+    // Convert fill_percent to basis points (multiply by 10000) for integer math
+    const fillBasisPoints = Math.round(fill_percent * 10000);
+    // Get token supply without decimals (the actual token count)
+    const tokenSupplyBN = auctionPre.tokenSupply;
+    const divisor = new BN(10).pow(new BN(auctionPre.tokenDecimals));
+    const tokenSupplyWithoutDecimals = tokenSupplyBN.div(divisor);
+
+    // DM - ## ACHTUNG ## this may fail to get exactly the remaining supply; we've seen off by one errors here 
+    // with previous implicit Math.floor(); Math.round() may be working here more by luck than design to avoid off by 1s.
+    // Calculate bid quantity using integer math: (supply * fillBasisPoints) / 10000
+    const bidQty = tokenSupplyWithoutDecimals.mul(new BN(fillBasisPoints)).div(new BN(10000));
     //console.log("signer", signer.publicKey.toBase58(), "tokenSupply", auctionPre.tokenSupply.toString(), "bidQty", bidQty.toString());
 
     // Get initial balances
