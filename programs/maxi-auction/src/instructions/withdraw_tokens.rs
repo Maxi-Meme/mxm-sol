@@ -68,9 +68,6 @@ impl<'info> WithdrawTokens<'info> {
         }
         require!(auction.is_finished, CustomError::AuctionNotFinished);
 
-        // only allow one admin withdraw
-        require!(!auction.is_tokens_withdrawn, CustomError::TokensAlreadyWithdrawn);
-
         // only proceed if auction is successful
         let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(auction, bids, Clock::get().unwrap().unix_timestamp, self.global_info.config.min_total_sol);
         require!(auction_status == AuctionStatus::Succeeded, CustomError::InvalidState);
@@ -88,6 +85,12 @@ impl<'info> WithdrawTokens<'info> {
 
         // overmint - add liquidity_overmint to withdrawable
         withdrawable = withdrawable.checked_add(auction.liquidity_overmint).ok_or(CustomError::Overflow)?;
+
+        // Check if tokens were already withdrawn 
+        if auction.is_tokens_withdrawn {
+            //msg!("Tokens already withdrawn. Amount that was previously withdrawn: {} tokens", withdrawable); // todo - ## this is bogus - would need to track this in a new struct/account
+            return Err(CustomError::TokensAlreadyWithdrawn.into());
+        }
             
         msg!("withdrawable {}", withdrawable);
         //msg!("liquidity_overmint {}", auction.liquidity_overmint);

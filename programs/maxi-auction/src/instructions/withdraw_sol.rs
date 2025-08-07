@@ -67,7 +67,6 @@ impl<'info> WithdrawSol<'info> {
             auction.is_finished = true;
         }
         require!(auction.is_finished, CustomError::AuctionNotFinished);
-        require!(!auction.is_sol_withdrawn, CustomError::SolAlreadyWithdrawn);
         
         require!(auction_status != AuctionStatus::FailedMinNotReached, CustomError::MinNotReached);
         require!(auction_status == AuctionStatus::Succeeded, CustomError::InvalidState);
@@ -76,7 +75,13 @@ impl<'info> WithdrawSol<'info> {
         msg!("updated auction_status: {:?}", auction.last_status);
 
         // method 1 - overmint: we withdraw all the sol...
-        let amount_to_transfer = get_net_sol_raised(auction, bids, clearing_price, 0, self.auction_sol_account.lamports())?; 
+        let amount_to_transfer = get_net_sol_raised(auction, bids, clearing_price, 0, self.auction_sol_account.lamports())?;
+
+        // Check if SOL was already withdrawn 
+        if auction.is_sol_withdrawn {
+            //msg!("SOL already withdrawn. Amount that was previously withdrawn: {} lamports", amount_to_transfer); // todo - ## this is bogus - would need to track this in a new struct/account
+            return Err(CustomError::SolAlreadyWithdrawn.into());
+        } 
 
         // method 2 - liq underfund - withdraw the fraction of net sol raised to yield pool starting price = the auction clearing price
         // retain the rest of the sol in the auction
