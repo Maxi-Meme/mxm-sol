@@ -1,3 +1,9 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// Admin withdraws unsold tokens from auction account
+// For successful auctions: withdraws overmint amount (3.69% extra for liquidity pool)
+// For failed auctions: withdraws entire token supply, requires auction to be finished first
+
 use crate::{
     account::{ Auction, GlobalInfo, Bids }, 
     constants::{ GLOBAL_INFO_SEED, AUCTION_SOL_SEED, BIDS_SEED },

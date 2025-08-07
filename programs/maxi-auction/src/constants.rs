@@ -1,3 +1,9 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// Program constants and seeds for deterministic PDA generation
+// Seeds combined with auction_id create unique addresses per auction, GlobalInfo uses singleton pattern
+// REFERRAL_MAPPINGS_SEED derives optional referral tracking account for fee sharing
+
 pub const AUCTION_DATA_SEED: &'static [u8] = b"auction_data_seed";
 pub const AUCTION_SOL_SEED: &'static [u8] = b"auction_sol_seed";
 pub const METADATA_SEED: &'static [u8] = b"metadata";

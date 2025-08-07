@@ -1,3 +1,9 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// Manages referral relationships for fee sharing
+// Admin creates/updates mappings linking referred accounts to referrer pubkeys
+// When referred account bids, portion of fees go to referrer based on ref_bid_fee_perc_share
+
 // [REF] - Admin-only instruction to set/update referral mappings
 use crate::{
     account::{GlobalInfo, ReferralMappings, ReferralMapping},

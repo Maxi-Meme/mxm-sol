@@ -1,3 +1,9 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// Custom error types for auction program operations
+// Each error maps to specific failure conditions - Unauthorized for admin checks, InvalidState for status mismatches
+// AuctionLiquidityMoved prevents bidding after SOL withdrawn, MinNotReached enforces minimum raise requirements
+
 use anchor_lang::*;
 
 // ---------------------------------------------------------------------------------------------

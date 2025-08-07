@@ -1,8 +1,11 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// Instruction module aggregator and re-exporter
+// Makes all instruction handlers available to lib.rs via single import
+// Order doesn't matter but conventionally: init, config, auction lifecycle, admin functions
+
 pub mod initialize;
 pub use initialize::*;
-
-pub mod set_config;
-pub use set_config::*;
 
 pub mod create_auction;
 pub use create_auction::*;

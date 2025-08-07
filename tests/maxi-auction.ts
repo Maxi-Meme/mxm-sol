@@ -3993,6 +3993,107 @@ describe("maxi-auction", () => {
     await test_view_current_config();
   });
 
+  // Admin key rotation test
+  it("admin - rotate admin key to new keypair", async () => {
+    logger.color("magenta").log("\n=== ADMIN KEY ROTATION TEST ===");
+    
+    // Get current config
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const currentConfig = globalInfoAccount.config;
+    logger.color("magenta").log("✓ Step 1: Fetched current system configuration");
+    
+    // Create new admin keypair
+    const newAdminKp = Keypair.generate();
+    await connection.requestAirdrop(newAdminKp.publicKey, 5 * LAMPORTS_PER_SOL);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    logger.color("magenta").log("✓ Step 2: Created and funded new admin keypair");
+    
+    logger.color("magenta").log(`  Current admin: ${adminKp.publicKey.toBase58()}`);
+    logger.color("magenta").log(`  New admin:     ${newAdminKp.publicKey.toBase58()}`);
+    
+    // Attempt rotation as non-admin (should fail)
+    logger.color("magenta").log("Step 3: Testing unauthorized access...");
+    const randomKp = Keypair.generate();
+    await connection.requestAirdrop(randomKp.publicKey, 1 * LAMPORTS_PER_SOL);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    try {
+      const tx = await program.methods
+        .initialize(currentConfig)
+        .accounts({
+          signer: randomKp.publicKey,
+        })
+        .signers([randomKp])
+        .transaction();
+      
+      await sendAndConfirmTransaction(connection, tx, [randomKp]);
+      assert.fail("Non-admin should not be able to rotate admin key");
+    } catch (error) {
+      assert.ok(error.message.includes("Unauthorized") || error.message.includes("custom program error: 0x1770"), 
+        "Expected Unauthorized error");
+      logger.color("magenta").log("✓ Step 3: Random user blocked from hijacking admin");
+    }
+    
+    // Rotate admin key - current admin must sign to authorize
+    logger.color("magenta").log("Step 4: Rotating admin key...");
+    const updatedConfig = {
+      ...currentConfig,
+      admin: newAdminKp.publicKey  // Set new admin in config
+    };
+    
+    const tx = await program.methods
+      .initialize(updatedConfig)
+      .accounts({
+        signer: adminKp.publicKey,  // Current admin signs
+      })
+      .signers([adminKp])
+      .transaction();
+    
+    tx.feePayer = adminKp.publicKey;
+    tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+    
+    // Execute rotation to set new admin
+    const sig = await sendAndConfirmTransaction(connection, tx, [adminKp]);
+    logger.color("magenta").log(`✓ Step 4: Admin rotated. Tx: ${sig.slice(0, 8)}...`);
+    
+    // Verify new admin is set
+    const updatedGlobalInfo = await program.account.globalInfo.fetch(globalInfo);
+    assert.equal(updatedGlobalInfo.deployer.toBase58(), newAdminKp.publicKey.toBase58(), 
+      "Admin/deployer key not updated correctly");
+    assert.equal(updatedGlobalInfo.config.admin.toBase58(), newAdminKp.publicKey.toBase58(), 
+      "Config admin key not updated correctly");
+    logger.color("magenta").log("✓ Step 5: Verified new admin in contract state");
+    
+    // Rotate back to original admin for other tests
+    logger.color("magenta").log("Step 6: Reverting to original admin...");
+    const revertConfig = {
+      ...currentConfig,
+      admin: adminKp.publicKey  // Restore original admin
+    };
+    
+    const revertTx = await program.methods
+      .initialize(revertConfig)
+      .accounts({
+        signer: newAdminKp.publicKey,  // New admin signs to revert
+      })
+      .signers([newAdminKp])
+      .transaction();
+    
+    revertTx.feePayer = newAdminKp.publicKey;
+    revertTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+    
+    await sendAndConfirmTransaction(connection, revertTx, [newAdminKp]);
+    logger.color("magenta").log("✓ Step 6: Admin reverted to original");
+    
+    // Final verification
+    const finalGlobalInfo = await program.account.globalInfo.fetch(globalInfo);
+    assert.equal(finalGlobalInfo.deployer.toBase58(), adminKp.publicKey.toBase58(), 
+      "Admin not reverted correctly");
+    logger.color("magenta").log("✓ Step 7: Final verification complete");
+    logger.color("magenta").log("=== TEST COMPLETE ===\n");
+  });
+
 }); // End of "maxi-auction" describe block
 
 async function getPoolDbAndRpcInfos(successfulResults: { auctionId: any; solBalanceAuctionData: any; solBalanceAuctionSol: any; solBalanceAuctionTokenAccount: any; rentExemptionAuctionData: any; rentExemptionAuctionSol: any; rentExemptionAuctionTokenAccount: any; tokenBalance: string; status: any; isFinalized: any; tokenMintPublicKey: any; }[]) {

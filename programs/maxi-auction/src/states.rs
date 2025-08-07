@@ -1,3 +1,9 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// Core data structures for auction configuration and bid tracking
+// Config holds system params with fee accounts that must sum to 10000 (100%), Bid struct tracks individual bids
+// AuctionStatus enum defines state machine: Pending->Live->Succeeded/Failed->Finalized
+
 use anchor_lang::prelude::*;
 use core::fmt::Debug;
 

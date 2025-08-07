@@ -1,3 +1,9 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved
+//
+// Creates new Dutch auction with SPL token and Metaplex metadata
+// Mints full token supply to auction PDA, sets freeze authority to prevent transfers until claim
+// Auction starts after delay_in_seconds, runs for duration_hours, emits AuctionCreated event
+
 use crate::{
     account::{Auction, GlobalInfo},
     constants::{AUCTION_DATA_SEED, AUCTION_SOL_SEED, GLOBAL_INFO_SEED, METADATA_SEED},

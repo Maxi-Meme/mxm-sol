@@ -1,3 +1,9 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// Cancels bids and refunds SOL before auction ends or fails
+// Only allows cancellation when auction is Live or Failed status, not after success
+// Marks bid as cancelled (bid_qty = 0) but keeps record for audit trail, emits BidCancelled event
+
 use crate::{
     account::{ Auction, GlobalInfo, Bids },
     constants::AUCTION_SOL_SEED, errors::CustomError, events::BidCancelled,

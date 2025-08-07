@@ -1,3 +1,9 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// Account structures for auction system PDAs
+// GlobalInfo: singleton system config with admin/fees, Auction: per-auction state with token mint
+// Bids: dynamically sized vector of all bids for an auction, ReferralMappings: optional referrer relationships
+
 use crate::states::{Bid, Config, AuctionStatus};
 use anchor_lang::prelude::*;
 

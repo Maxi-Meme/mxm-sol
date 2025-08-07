@@ -1054,65 +1054,6 @@
       ]
     },
     {
-      "name": "set_config",
-      "discriminator": [
-        108,
-        158,
-        154,
-        175,
-        212,
-        98,
-        52,
-        66
-      ],
-      "accounts": [
-        {
-          "name": "caller",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "global_info",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108,
-                  95,
-                  105,
-                  110,
-                  102,
-                  111,
-                  95,
-                  115,
-                  101,
-                  101,
-                  100
-                ]
-              }
-            ]
-          }
-        }
-      ],
-      "args": [
-        {
-          "name": "new_config",
-          "type": {
-            "defined": {
-              "name": "Config"
-            }
-          }
-        }
-      ]
-    },
-    {
       "name": "set_referral",
       "discriminator": [
         213,

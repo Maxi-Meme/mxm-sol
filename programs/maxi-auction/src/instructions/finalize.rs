@@ -1,3 +1,9 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// Final cleanup after all claims processed, prepares for Raydium pool creation
+// Only callable after auction ends and all bids claimed, transfers remaining SOL/tokens to admin
+// Sets is_finalized flag preventing further operations, auction data remains for historical queries
+
 use crate::{
     account::{Auction, GlobalInfo, Bids},
     constants::{AUCTION_SOL_SEED, GLOBAL_INFO_SEED, BIDS_SEED},

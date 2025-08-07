@@ -1,3 +1,9 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// One-time initialization of the auction system singleton
+// Creates GlobalInfo PDA with admin pubkey and system config, validates fee_accounts sum to exactly 10000
+// Must be called before any auctions can be created, deployer becomes permanent admin
+
 use crate::{account::GlobalInfo, constants::GLOBAL_INFO_SEED, states::Config, errors::CustomError};
 use anchor_lang::prelude::*;
 use core::mem::size_of;
@@ -24,6 +30,17 @@ impl<'info> Initialize<'info> {
     pub fn process(&mut self, config: Config) -> Result<()> {
         msg!("Calling initialize...");
 
+        // If already initialized, only existing admin can update
+        if self.global_info.deployer != Pubkey::default() {
+            require!(
+                self.signer.key() == self.global_info.deployer,
+                CustomError::Unauthorized
+            );
+            msg!("Updating config as admin");
+        } else {
+            msg!("First initialization - setting deployer");
+        }
+
         // Validate fee accounts percentages sum to exactly 10000 (100%)
         let mut total_percentage: u64 = 0;
         for fee_account in &config.fee_accounts {
@@ -37,11 +54,14 @@ impl<'info> Initialize<'info> {
             CustomError::InvalidFeeAccountPercentages
         );
 
-        self.global_info.deployer = self.signer.key();
+        // Update deployer to match the admin in config (allows admin rotation)
+        self.global_info.deployer = config.admin;
 
         msg!("Supplied config.min_total_sol: {:?}", config.min_total_sol);
         msg!("Fee accounts count: {}", config.fee_accounts.len());
         msg!("Fee accounts total percentage: {}", total_percentage);
+        msg!("Admin/deployer set to: {:?}", config.admin);
+        msg!("Deployer updated from signer {:?} to admin {:?}", self.signer.key(), config.admin);
         
         self.global_info.config = config;
 

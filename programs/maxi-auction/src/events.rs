@@ -1,3 +1,9 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// Events emitted for off-chain indexing and monitoring
+// AuctionCreated includes token_mint for tracking, NewBid contains full bid details including x_id
+// AuctionFilled signals 100% allocation reached, Claimed tracks individual token distributions
+
 use anchor_lang::prelude::*;
 
 #[event]

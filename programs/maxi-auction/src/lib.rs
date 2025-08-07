@@ -1,3 +1,9 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// Main entry point for Maxi auction program
+// Routes all instructions to their handlers, defines program ID that must match deployed keypair
+// Initialize must be called first to set up GlobalInfo PDA before any other instructions
+
 use anchor_lang::prelude::*;
 
 pub mod account;
@@ -24,10 +30,6 @@ pub mod maxi_auction {
         ctx: Context<'_, '_, '_, 'info, Initialize<'info>>,
         new_config: Config,
     ) -> Result<()> {
-        ctx.accounts.process(new_config)
-    }
-
-    pub fn set_config(ctx: Context<SetConfig>, new_config: Config) -> Result<()> {
         ctx.accounts.process(new_config)
     }
 

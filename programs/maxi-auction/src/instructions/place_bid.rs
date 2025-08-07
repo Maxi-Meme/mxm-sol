@@ -1,3 +1,9 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// Handles bid placement in Dutch auctions with descending price mechanics
+// Admin co-signs every bid to verify Twitter OAuth - x_id parameter comes from validated OAuth token
+// Calculates current price using linear decay, distributes fees to multiple recipients, emits AuctionFilled when last token sold
+
 use crate::{
     account::{Auction, GlobalInfo, Bids, ReferralMappings}, // [REF] - Added ReferralMappings
     constants::{GLOBAL_INFO_SEED, AUCTION_SOL_SEED, BIDS_SEED}, // [REF] - Added REFERRAL_MAPPINGS_SEED
@@ -29,6 +35,9 @@ pub struct PlaceBid<'info> {
     #[account(mut)]
     pub bidder: Signer<'info>,
 
+    // Admin signature validates x_id through Twitter OAuth verification
+    // Backend checks OAuth token with Twitter API before signing
+    // Ensures x_id matches authenticated Twitter account
     #[account(
         address = global_info.config.admin
     )]

@@ -1,3 +1,9 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// Admin withdraws net SOL raised from successful auctions
+// Calculates total minus unclaimed refunds and rent-exempt minimum, one-time withdrawal only
+// Uses get_net_sol_raised to handle overmint scenario where all SOL goes to liquidity pool
+
 use crate::{
     account::{ Auction, GlobalInfo, Bids }, 
     constants::{ GLOBAL_INFO_SEED, AUCTION_SOL_SEED, BIDS_SEED },

@@ -1,3 +1,9 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// Initializes dynamically-sized bid storage account for an auction
+// Creates Bids PDA with empty vector, automatically resized as bids are placed
+// Optional pre-initialization to avoid rent costs during first bid, uses BIDS_SEED + auction_id
+
 use crate::{
     account::{Auction, GlobalInfo, Bids},
     constants::{GLOBAL_INFO_SEED, BIDS_SEED},

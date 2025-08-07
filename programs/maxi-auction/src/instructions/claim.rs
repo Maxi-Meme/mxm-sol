@@ -1,3 +1,9 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// Claims tokens for successful auctions or refunds SOL for failed ones
+// Uses uniform clearing price - bidders who bid above clearing get partial SOL refund
+// Transfers exact token amount based on bid_qty, marks bid as claimed to prevent double-claiming
+
 use crate::{
     account::{Auction, GlobalInfo, Bids},
     constants::{AUCTION_SOL_SEED, GLOBAL_INFO_SEED, BIDS_SEED},

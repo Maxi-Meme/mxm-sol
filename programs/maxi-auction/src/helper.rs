@@ -1,3 +1,10 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// Core calculation engine for Dutch auction mechanics
+// get_current_price implements linear decay from start_price to 1 lamport over duration
+// get_status_and_clearing_price determines uniform clearing price - all bidders pay lowest accepted bid price
+// Uses checked_mul/checked_add throughout to prevent overflow, saturating_sub for safe underflow handling
+
 //use anchor_lang::prelude::*;
 use crate::account::Auction;
 use crate::states::AuctionStatus;

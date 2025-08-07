@@ -1,3 +1,9 @@
+// (c) MaxiMeme 2025 - moon soon / all rights reserved / by Harry & Little Rabbit
+//
+// SOL transfer utilities wrapping system_instruction::transfer
+// sol_transfer_user for simple transfers, sol_transfer_with_signer for PDA-owned accounts
+// Abstracts invoke vs invoke_signed complexity, handles all account info conversions
+
 use anchor_lang::{prelude::*, solana_program};
 use solana_program::{
     entrypoint::ProgramResult,
