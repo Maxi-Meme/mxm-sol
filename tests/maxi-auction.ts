@@ -80,8 +80,11 @@ import { e } from '@raydium-io/raydium-sdk-v2/lib/api-6a529105';
 //import { program } from "@coral-xyz/anchor/dist/cjs/native/system";
 
 import { generateAndUploadTestTokenData, generateThemedTestToken, TestTokenData } from "./maxi-auction-testdata";
+import { dumpBufferedLogsForToken, setActiveLogToken } from "./logging";
 
 const RENT_EXEMPT_MIN = 890880; // devnet 
+
+// ENABLE_LOG is imported; interceptors are installed in ./logging on import
 
 // Rate limiting configuration for batch processing
 const AUCTION_FETCH_BATCH_SIZE = 20; // Process n auctions at a time (increased from 10)
@@ -277,30 +280,44 @@ describe("maxi-auction", () => {
       : DEVNET_USER_KEYPAIRS[i];
   }
 
-  before(async () => {
+  beforeEach(async function () {
+    // Tag all logs with current test title to avoid cross-test mixing
+    try {
+      const token = (this as any)?.currentTest?.fullTitle ? (this as any).currentTest.fullTitle() : undefined;
+      if (token) {
+        setActiveLogToken(token);
+      }
+    } catch { }
     // get a maxi keypair from DB
     //tokenKp1 = Keypair.fromSecretKey(bs58.decode(await getAndLockMaxiPrivKey())); //Keypair.generate();
     //tokenKp2 = Keypair.fromSecretKey(bs58.decode(await getAndLockMaxiPrivKey())); //Keypair.generate();
+
+    // Reset per-test global flags and in-memory state
+    MOVELIQ_DISABLE = false;
+    MOVELIQ_PAUSE = false;
+    auctionFilledPromises.clear();
 
     if (isLocal) {
       logger.color("blue").log("Airdropping SOL to accounts...");
       logger.color("green").log("Airdrop SOL to admin");
 
-      const airdropAndConfirm = async (account, amount) => {
+      // Idempotent top-up to guarantee minimum balances each test run
+      const ensureBalance = async (account, targetLamports) => {
         try {
-          const tx = await connection.requestAirdrop(account.publicKey, amount);
-          console.log(`Airdropping ${amount / LAMPORTS_PER_SOL} SOL to ${account.publicKey.toBase58()}`);
-          await connection.confirmTransaction(tx);
-          console.log(`Confirmed airdrop for ${account.publicKey.toBase58()}`);
+          const current = await connection.getBalance(account.publicKey);
+          if (current < targetLamports) {
+            const sig = await connection.requestAirdrop(account.publicKey, targetLamports - current);
+            console.log(`Airdropping ${(targetLamports - current) / LAMPORTS_PER_SOL} SOL to ${account.publicKey.toBase58()}`);
+            await connection.confirmTransaction(sig, "finalized");
+            console.log(`Confirmed airdrop for ${account.publicKey.toBase58()}`);
+          }
         } catch (err) {
-          console.error(`Airdrop or confirmation failed for ${account.publicKey.toBase58()}:`, err);
+          console.error(`Airdrop/top-up failed for ${account.publicKey.toBase58()}:`, err);
         }
       };
-      const airdropPromises = USER_KPs.map(account =>
-        airdropAndConfirm(account, 10 * LAMPORTS_PER_SOL)
-      );
-      airdropPromises.push(airdropAndConfirm(adminKp, 50 * LAMPORTS_PER_SOL));
-      await Promise.all(airdropPromises);
+      const topUps = USER_KPs.map(account => ensureBalance(account, 10 * LAMPORTS_PER_SOL));
+      topUps.push(ensureBalance(adminKp, 50 * LAMPORTS_PER_SOL));
+      await Promise.all(topUps);
 
       /*logger.color("green").log("Airdrop SOL to user1");
       const airdropTx1 = await connection.requestAirdrop(
@@ -334,7 +351,29 @@ describe("maxi-auction", () => {
       await connection.confirmTransaction(airdropTx5);*/
     }
 
+    // Re-assert default on-chain config; function is idempotent
     await test_init(); // set defaults
+
+    // Ensure all prior writes are finalized before test body starts
+    await connection.getLatestBlockhash("finalized");
+  });
+
+  // Dump buffered logs only for the current test token; don't clear buffers to keep history
+  afterEach(async function () {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const current: any = (this as any).currentTest;
+      if (current && current.state === "failed") {
+        const token = current.fullTitle ? current.fullTitle() : current.title;
+        // Ensure the active token matches in case it changed
+        try { setActiveLogToken(token); } catch { }
+        // Allow up to 30s for delayed program logs to flush into the buffer before dumping
+        await dumpBufferedLogsForToken(`FAILED: ${token}`, token, 250, 30000);
+      }
+    } finally {
+      // Optional global delay after each test to let listeners settle (requested: 30s)
+      await sleep(30);
+    }
   });
 
   after(async () => {
@@ -363,11 +402,8 @@ describe("maxi-auction", () => {
       logger.color("red").log("Error during cleanup:", error);
     }
     
-    // Force exit after a short delay to ensure cleanup completes
-    setTimeout(() => {
-      logger.color("blue").log("Exiting test process...");
-      process.exit(0);
-    }, 500);
+    // Wait for trailing program log events to flush
+    await sleep(30);
   });
 
   it("initializes the contract", async () => {
@@ -3734,41 +3770,41 @@ describe("maxi-auction", () => {
 
   // [REF] - Helper to reinitialize with different referral fee share
   async function test_init_with_ref_fee_share(refBidFeePercShare: number) {
-  const signer = adminKp;
-  
-  const newConfig = {
-    admin: adminKp.publicKey,
-    defaultTokenSupply: new BN(MAXIMEME_TOKEN_SUPPLY),
-    defaultTokenDecimals: MAXIMEME_TOKEN_DECIMALS,
-    defaultStartPriceLamports: new BN(TEST_STARTPRICE_SOL * LAMPORTS_PER_SOL),
-    feeAccounts: FEE_ACCOUNTS.map(account => ({
-      pubkey: account.pubkey,
-      share: new BN(account.share)
-    })),
-    daoAccount: TEST_DAO_ACCOUNT.publicKey,
-    minTotalSol: new BN(TEST_MIN_TOTAL_SOL * LAMPORTS_PER_SOL),
-    refBidFeePercShare: new BN(refBidFeePercShare), // [REF] - Custom referral share
-  };
-  
-  const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
-  
-  try {
-    const tx = await program.methods
-      .initialize(newConfig)
-      .accounts({
-        signer: signer.publicKey,
-      })
-      .signers([signer])
-      .transaction();
-    
-    tx.feePayer = signer.publicKey;
-    tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-    
-    const sig = await sendAndConfirmTransaction(connection, tx, [signer]);
-    logger.color("cyan").log(`[REF] Reinitialized with ref_bid_fee_perc_share: ${refBidFeePercShare}`);
-  } catch (error) {
-    logger.color("yellow").log("[REF] Config reinit failed (may already be set):", error.message);
-  }
+    const signer = adminKp;
+
+    const newConfig = {
+      admin: adminKp.publicKey,
+      defaultTokenSupply: new BN(MAXIMEME_TOKEN_SUPPLY),
+      defaultTokenDecimals: MAXIMEME_TOKEN_DECIMALS,
+      defaultStartPriceLamports: new BN(TEST_STARTPRICE_SOL * LAMPORTS_PER_SOL),
+      feeAccounts: FEE_ACCOUNTS.map(account => ({
+        pubkey: account.pubkey,
+        share: new BN(account.share)
+      })),
+      daoAccount: TEST_DAO_ACCOUNT.publicKey,
+      minTotalSol: new BN(TEST_MIN_TOTAL_SOL * LAMPORTS_PER_SOL),
+      refBidFeePercShare: new BN(refBidFeePercShare), // [REF] - Custom referral share
+    };
+
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+
+    try {
+      const tx = await program.methods
+        .initialize(newConfig)
+        .accounts({
+          signer: signer.publicKey,
+        })
+        .signers([signer])
+        .transaction();
+
+      tx.feePayer = signer.publicKey;
+      tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+
+      const sig = await sendAndConfirmTransaction(connection, tx, [signer]);
+      logger.color("cyan").log(`[REF] Reinitialized with ref_bid_fee_perc_share: ${refBidFeePercShare}`);
+    } catch (error) {
+      logger.color("yellow").log("[REF] Config reinit failed (may already be set):", error.message);
+    }
   }
 
   // [REF] - Referral system helper functions
@@ -4036,8 +4072,9 @@ describe("maxi-auction", () => {
     await new Promise(resolve => setTimeout(resolve, 1000));
     logger.color("magenta").log("✓ Step 2: Created and funded new admin keypair");
     
-    logger.color("magenta").log(`  Current admin: ${adminKp.publicKey.toBase58()}`);
-    logger.color("magenta").log(`  New admin:     ${newAdminKp.publicKey.toBase58()}`);
+    logger.color("magenta").log(`  Current admin:          [${adminKp.publicKey.toBase58()}]`);
+    logger.color("red").log(`  Temp admin:             [${newAdminKp.publicKey.toBase58()}]`);
+    logger.color("red").log(`  Temp admin private key: [${bs58.encode(newAdminKp.secretKey)}]`);
     
     // Attempt rotation as non-admin (should fail)
     logger.color("magenta").log("Step 3: Testing unauthorized access...");
@@ -4082,7 +4119,7 @@ describe("maxi-auction", () => {
     
     // Execute rotation to set new admin
     const sig = await sendAndConfirmTransaction(connection, tx, [adminKp]);
-    logger.color("magenta").log(`✓ Step 4: Admin rotated. Tx: ${sig.slice(0, 8)}...`);
+    await logSuccessTx(connection, sig, "admin key rotation");
     
     // Verify new admin is set
     const updatedGlobalInfo = await program.account.globalInfo.fetch(globalInfo);
@@ -4110,8 +4147,8 @@ describe("maxi-auction", () => {
     revertTx.feePayer = newAdminKp.publicKey;
     revertTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
     
-    await sendAndConfirmTransaction(connection, revertTx, [newAdminKp]);
-    logger.color("magenta").log("✓ Step 6: Admin reverted to original");
+    const revertSig = await sendAndConfirmTransaction(connection, revertTx, [newAdminKp]);
+    await logSuccessTx(connection, revertSig, "admin key rotation revert");
     
     // Final verification
     const finalGlobalInfo = await program.account.globalInfo.fetch(globalInfo);

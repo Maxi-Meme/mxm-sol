@@ -67,17 +67,14 @@ impl<'info> SetReferral<'info> {
             self.referral_mappings.referrals = vec![];
         }
 
-        // [REF] - Check if mapping already exists and update it, or add new mapping
-        let mut found = false;
-        for mapping in self.referral_mappings.referrals.iter_mut() {
+        // [REF] - Check if mapping already exists; reject duplicates for referred_account
+        for mapping in self.referral_mappings.referrals.iter() {
             if mapping.referred_account == referred_account {
-                mapping.referrer_account = referrer_account;
-                found = true;
-                break;
+                return err!(CustomError::ReferralAlreadyExists);
             }
         }
 
-        if !found {
+        {
             // [REF] - Check if we need to resize the account for new mapping
             let mapping_size = size_of::<ReferralMapping>();
             let header_space = 8 + 4; // Discriminator (8) + Vec length (4)

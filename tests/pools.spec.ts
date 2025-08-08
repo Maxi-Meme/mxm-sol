@@ -6,6 +6,7 @@ import { Raydium, PoolUtils, TokenAmount, } from '@raydium-io/raydium-sdk-v2';
 import keypair from "../id.json";
 import "dotenv/config";
 import * as sql from "mssql";
+import "./logging";
 
 // Database configuration (from your test suite)
 const DB_CONFIG: sql.config = {

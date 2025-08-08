@@ -7,7 +7,7 @@ import {
 import { MaxiAuction } from "../target/types/maxi_auction";
 import keypair from "../id.json";
 import logger from "node-color-log";
-import { connection } from "./config";
+import "./logging";
 
 describe("maxi-auction version test", () => {
   // Configure the client to use the local cluster

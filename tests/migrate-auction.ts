@@ -34,6 +34,7 @@ import { Program } from "@coral-xyz/anchor";
 import { MaxiAuction } from "../target/types/maxi_auction";
 import "dotenv/config";
 import * as sql from "mssql";
+import "./logging";
 
 const GLOBAL_INFO_SEED = "global_info_seed";
 const AUCTION_SOL_SEED = "auction_sol_seed";

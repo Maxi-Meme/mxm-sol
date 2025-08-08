@@ -1,4 +1,5 @@
 import * as anchor from "@coral-xyz/anchor";
+import "./logging";
 import { Connection } from "@solana/web3.js";
 
 describe("simple-test", () => {

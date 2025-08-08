@@ -1644,6 +1644,11 @@
       "code": 6034,
       "name": "InvalidFeeAccountPercentages",
       "msg": "Fee account percentages must sum to exactly 10000 (100%)"
+    },
+    {
+      "code": 6035,
+      "name": "ReferralAlreadyExists",
+      "msg": "Referred account already has a referrer"
     }
   ],
   "types": [

@@ -116,4 +116,8 @@ pub enum CustomError {
     
     #[msg("Fee account percentages must sum to exactly 10000 (100%)")]
     InvalidFeeAccountPercentages,
+
+    // [REF] - Referral mapping specific validation
+    #[msg("Referred account already has a referrer")]
+    ReferralAlreadyExists,
 }
