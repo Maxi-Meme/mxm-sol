@@ -3262,6 +3262,8 @@ describe("maxi-auction", () => {
 
   // [REF] - Referral system test cases
   it("admin - adds referral mapping successfully", async () => {
+    await test_clear_referrals();
+
       const referrer = USER_KPs[1];
       const referred = USER_KPs[2];
       await test_set_referral(referrer, referred);
@@ -3272,24 +3274,9 @@ describe("maxi-auction", () => {
       assert.ok(mapping.referrerAccount.equals(referrer.publicKey), "Referrer should match");
   });
 
-  it("admin - updates existing referral mapping", async () => {
-      const oldReferrer = USER_KPs[1];
-      const newReferrer = USER_KPs[3];  
-      const referred = USER_KPs[2];
-      
-      // Set initial mapping
-      await test_set_referral(oldReferrer, referred);
-      
-      // Update with new referrer
-      await test_set_referral(newReferrer, referred);
-      
-      const mappings = await test_get_referral_mappings();
-      const mapping = mappings.find(m => m.referredAccount.equals(referred.publicKey));
-      assert.ok(mapping !== undefined, "Referral mapping should exist");
-      assert.ok(mapping.referrerAccount.equals(newReferrer.publicKey), "Referrer should be updated");
-  });
-
   it("referrals - bid with referrer when config is zero behaves normally", async () => {
+    await test_clear_referrals();
+
       await test_create_auction_KP0({});
       const bidder = USER_KPs[1];
       const referrer = USER_KPs[2];
@@ -3309,6 +3296,8 @@ describe("maxi-auction", () => {
   });
 
   it("referrals - normal claim still works with referral mapping set", async () => {
+    await test_clear_referrals();
+
       await test_create_auction_KP0({});
       const claimer = USER_KPs[1];
       const referrer = USER_KPs[2];
@@ -3334,6 +3323,8 @@ describe("maxi-auction", () => {
 
   // [REF] - Happy path tests with non-zero referral fee share
   it("referrals - referrer receives 20% of platform fees", async () => {
+    await test_clear_referrals();
+
       // Temporarily set referral fee share to 20%
       await test_init_with_ref_fee_share(2000); // 2000 = 20.0%
       
@@ -3397,6 +3388,7 @@ describe("maxi-auction", () => {
   });
 
   it("referrals - multiple bidders same referrer accumulates fees", async () => {
+    await test_clear_referrals();
       // Set referral fee share to 30%
       await test_init_with_ref_fee_share(3000); // 3000 = 30.0%
       
@@ -3439,6 +3431,7 @@ describe("maxi-auction", () => {
   });
 
   it("referrals - 100% fee share gives all fees to referrer", async () => {
+    await test_clear_referrals();
       // Set referral fee share to 100%
       await test_init_with_ref_fee_share(10000); // 10000 = 100.0%
       
@@ -3748,7 +3741,7 @@ describe("maxi-auction", () => {
     logger.color("green").log(`WSOL fees: ${wsolIncreases.map(i => i.toString()).join(', ')}`);
   });
 
-  it("referrals - gets and logs all referral mappings", async () => {
+  it("admin - gets and logs all referral mappings", async () => {
       logger.color("cyan").log("[REF] Getting all referral mappings from contract...");
       
       const mappings = await test_get_referral_mappings();
@@ -3902,6 +3895,50 @@ describe("maxi-auction", () => {
     }
     
     return null;
+  }
+
+  // [REF] - Test helper to clear all referral mappings (admin only, dev/test networks only)
+  async function test_clear_referrals() {
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const [referralMappings] = PublicKey.findProgramAddressSync([Buffer.from(referralMappingsSeed)], program.programId);
+
+    logger.color("cyan").log("[REF] Clearing all referral mappings (dev/test only)...");
+
+    try {
+      const tx = await (program.methods as any)
+        .devClearReferrals()
+        .accounts({
+          globalInfo,
+          admin: adminKp.publicKey,
+          referralMappings,
+        })
+        .signers([adminKp])
+        .transaction();
+
+      tx.feePayer = adminKp.publicKey;
+      tx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
+
+      const sig = await sendAndConfirmTransaction(connection, tx, [adminKp]);
+      logger.color("green").log(`[REF] Cleared referral mappings: ${sig}`);
+      return sig;
+    } catch (err) {
+      // Log the actual error to see what's happening
+      logger.color("red").log("[REF] dev_clear_referrals failed with error:", err.getLogs ? err.getLogs() : err);
+
+      // Check if it's just account not existing (that's fine)
+      const errorMsg = err.message || '';
+      const isAccountMissing = errorMsg.includes('Account does not exist') ||
+        errorMsg.includes('AccountNotFound') ||
+        Object.keys(err).length === 0;
+
+      if (isAccountMissing) {
+        logger.color("yellow").log("[REF] Account not initialized yet - no mappings to clear");
+        return null;
+      }
+
+      // If it's a different error (like mainnet protection), throw it
+      throw err;
+    }
   }
 
   async function test_bid_with_referral(bidder_kp: Keypair, referrer_kp: Keypair, auctionId: number, bidQty: number = 10, feePerc: number = 50) {

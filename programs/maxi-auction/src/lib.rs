@@ -95,4 +95,9 @@ pub mod maxi_auction {
     pub fn set_referral(ctx: Context<SetReferral>, referred_account: Pubkey, referrer_account: Pubkey) -> Result<()> {
         ctx.accounts.process(referred_account, referrer_account)
     }
+
+    // [REF] - Admin-only function to clear all referral mappings (dev/test only)
+    pub fn dev_clear_referrals(ctx: Context<DevClearReferrals>) -> Result<()> {
+        ctx.accounts.process()
+    }
 }
