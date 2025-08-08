@@ -1,12 +1,7 @@
-// (c) MaxiMeme 2025 - moon soon / all rights reserved
-//
-// Creates new Dutch auction with SPL token and Metaplex metadata
-// Mints full token supply to auction PDA, sets freeze authority to prevent transfers until claim
-// Auction starts after delay_in_seconds, runs for duration_hours, emits AuctionCreated event
-
 use crate::{
     account::{Auction, GlobalInfo},
     constants::{AUCTION_DATA_SEED, AUCTION_SOL_SEED, GLOBAL_INFO_SEED, METADATA_SEED},
+    errors::CustomError,
     events::AuctionCreated,
     states::AuctionStatus,
 };
@@ -17,7 +12,6 @@ use anchor_spl::{
     token::{self, Mint, Token, TokenAccount},
 };
 use core::mem::size_of;
-use crate::errors::CustomError;
 
 #[derive(Accounts)]
 pub struct CreateAuction<'info> {
@@ -104,8 +98,8 @@ impl<'info> CreateAuction<'info> {
         &mut self,
         auction_bump: u8,
         x_id: u64,
-        name: String,
-        symbol: String,
+        _name: String,
+        _symbol: String,
         uri: String,
         duration_hours: u64, // actually 1/100 of an hour ~= 36s
         dist_percent: u64,
@@ -117,7 +111,7 @@ impl<'info> CreateAuction<'info> {
         require!(dist_percent >= 100 && dist_percent <= 10000, CustomError::InvalidDistPercent); 
 
         let global_info = &mut self.global_info;
-        let creator = &mut self.creator;
+        let _creator = &mut self.creator;
         let token_mint = &mut self.token_mint;
         let auction_sol_account = &mut self.auction_sol_account;
         let auction_data_account = &mut self.auction_data_account;
@@ -149,7 +143,7 @@ impl<'info> CreateAuction<'info> {
                     metadata: self.token_metadata_account.to_account_info(),
                     mint: token_mint.to_account_info(),
                     mint_authority: auction_sol_account.to_account_info(),
-                    payer: creator.to_account_info(),
+                    payer: _creator.to_account_info(),
                     update_authority: auction_sol_account.to_account_info(),
                     system_program: self.system_program.to_account_info(),
                     rent: self.sysvar_rent.to_account_info(),
@@ -161,8 +155,8 @@ impl<'info> CreateAuction<'info> {
                 ]],
             ),
             DataV2 {
-                name,
-                symbol,
+                name: _name,
+                symbol: _symbol,
                 uri: uri.clone(),
                 seller_fee_basis_points: 0,
                 creators: None,
@@ -201,7 +195,7 @@ impl<'info> CreateAuction<'info> {
 
         auction_data_account.id = auction_id;
         auction_data_account.is_finished = false;
-        auction_data_account.creator = creator.key();
+        auction_data_account.creator = _creator.key();
         auction_data_account.x_id = x_id;
         auction_data_account.start_timestamp = start_timestamp;
         auction_data_account.end_timestamp = end_timestamp;
@@ -239,7 +233,7 @@ impl<'info> CreateAuction<'info> {
         
         emit!(AuctionCreated {
             auction_id,
-            creator: creator.key(),
+            creator: _creator.key(),
             x_id,
             token_mint: token_mint.key(),
             dist_percent: auction_data_account.dist_percent,
