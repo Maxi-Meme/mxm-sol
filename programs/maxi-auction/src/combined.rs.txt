@@ -1,0 +1,2650 @@
+// ---- Start of ./processor.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// SOL transfer utilities wrapping system_instruction::transfer
+// sol_transfer_user for simple transfers, sol_transfer_with_signer for PDA-owned accounts
+// Abstracts invoke vs invoke_signed complexity, handles all account info conversions
+
+use anchor_lang::{prelude::*, solana_program};
+use solana_program::{
+    entrypoint::ProgramResult,
+    program::{invoke, invoke_signed},
+};
+
+pub fn sol_transfer_with_signer<'info>(
+    source: AccountInfo<'info>,
+    destination: AccountInfo<'info>,
+    system_program: AccountInfo<'info>,
+    signers: &[&[&[u8]]; 1],
+    amount: u64,
+) -> ProgramResult {
+    let ix = solana_program::system_instruction::transfer(source.key, destination.key, amount);
+    invoke_signed(&ix, &[source, destination, system_program], signers)
+}
+
+pub fn sol_transfer_user<'info>(
+    source: AccountInfo<'info>,
+    destination: AccountInfo<'info>,
+    system_program: AccountInfo<'info>,
+    amount: u64,
+) -> ProgramResult {
+    let ix = solana_program::system_instruction::transfer(source.key, destination.key, amount);
+    invoke(&ix, &[source, destination, system_program])
+}
+// ---- End of ./processor.rs ----
+
+// ---- Start of ./errors.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Custom error types for auction program operations
+// Each error maps to specific failure conditions - Unauthorized for admin checks, InvalidState for status mismatches
+// AuctionLiquidityMoved prevents bidding after SOL withdrawn, MinNotReached enforces minimum raise requirements
+
+use anchor_lang::*;
+
+// ---------------------------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------------------------
+#[error_code]
+pub enum CustomError {
+    #[msg("Unauthorized")]
+    Unauthorized,
+
+    #[msg("Calculation error")]
+    CalculationError,
+
+    #[msg("Token supply must be an integer with a specified decimal point.")]
+    InvalidTokenSupplyAndDecimals,
+
+    #[msg("Invalid Auction ID.")]
+    InvalidAuctionId,
+
+    #[msg("Reentrancy guard triggered.")]
+    ReentrancyGuard,
+
+    #[msg("Overflow.")]
+    Overflow,
+
+    #[msg("Underflow.")]
+    Underflow,
+
+    #[msg("Not enough tokens left.")]
+    NotEnoughTokensLeft,
+
+    #[msg("Max number of bids reached.")]
+    MaxBidsReached,
+
+    #[msg("Invalid fee percentage.")]
+    InvalidFeePercentage,
+
+    #[msg("Auction is still live.")]
+    AuctionStillLive,
+
+    #[msg("Auction is ended.")]
+    AuctionEnded,
+
+    #[msg("Auction is not finished.")]
+    AuctionNotFinished,
+
+    #[msg("No bid found for caller.")]
+    NoBidFoundForCaller,
+
+    #[msg("Invalid clearing price.")]
+    InvalidClearingPrice,
+
+    #[msg("Invalid length of remaining accounts.")]
+    InvalidRemainingAccounts,
+
+    #[msg("Invalid user account.")]
+    InvalidUserAccount,
+
+    #[msg("Invalid user's token account.")]
+    InvalidUserTokenAccount,
+
+    #[msg("Bid already claimed.")]
+    BidAlreadyClaimed,
+
+    #[msg("Auction not started.")]
+    AuctionNotStarted,
+
+    #[msg("Invalid bid quantity.")]
+    InvalidBidQuantity,
+
+    #[msg("Invalid PDA.")]
+    InvalidPDA,
+
+    #[msg("Invalid distribution percent.")]
+    InvalidDistPercent,
+
+    #[msg("Auction liquidity already moved.")]
+    AuctionLiquidityMoved,
+
+    #[msg("Iternal Error.")]
+    InternalError,
+
+    #[msg("Invalid State.")]
+    InvalidState,
+
+    #[msg("SOL already withdrawn.")]
+    SolAlreadyWithdrawn,
+
+    #[msg("Tokens already withdrawn.")]
+    TokensAlreadyWithdrawn,
+    
+    #[msg("Min total sol not reached.")]
+    MinNotReached,
+
+    #[msg("Auction already finalized.")]
+    AuctionAlreadyFinalized,
+
+    #[msg("Insufficient funds.")]
+    InsufficientFunds,
+    
+    // [REF] - Referral system specific errors
+    #[msg("Invalid referral mapping - self-referral not allowed")]
+    InvalidReferralMapping,
+    
+    #[msg("Invalid fee account")]
+    InvalidFeeAccount,
+    
+    #[msg("Invalid account input")]
+    InvalidAccountInput,
+    
+    #[msg("Fee account percentages must sum to exactly 10000 (100%)")]
+    InvalidFeeAccountPercentages,
+
+    // [REF] - Referral mapping specific validation
+    #[msg("Referred account already has a referrer")]
+    ReferralAlreadyExists,
+}
+// ---- End of ./errors.rs ----
+
+// ---- Start of ./events.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Events emitted for off-chain indexing and monitoring
+// AuctionCreated includes token_mint for tracking, NewBid contains full bid details including x_id
+// AuctionFilled signals 100% allocation reached, Claimed tracks individual token distributions
+
+use anchor_lang::prelude::*;
+
+#[event]
+pub struct AuctionCreated {
+    pub auction_id: u64,
+    pub creator: Pubkey,
+    pub x_id: u64,
+    pub token_mint: Pubkey,
+    pub dist_percent: u64,
+}
+
+#[event]
+pub struct NewBid {
+    pub auction_id: u64,
+    pub bidder: Pubkey,
+    pub x_id: u64,
+    pub bid_sol: u64, // LAMPORTS
+    pub bid_qty: u64, // WHOLE TOKEN UNITS!!!
+    pub bid_fee: u64, // LAMPORTS
+}
+
+#[event]
+pub struct BidCancelled {
+    pub auction_id: u64,
+    pub bidder: Pubkey,
+}
+
+#[event]
+pub struct AuctionFilled {
+    pub auction_id: u64,
+}
+
+#[event]
+pub struct Claimed {
+    pub auction_id: u64,
+    pub bidder: Pubkey,
+    pub claim_qty: u64,
+}
+
+#[event]
+pub struct AuctionMigrated {
+    pub auction_id: u64,
+}
+// ---- End of ./events.rs ----
+
+// ---- Start of ./constants.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Program constants and seeds for deterministic PDA generation
+// Seeds combined with auction_id create unique addresses per auction, GlobalInfo uses singleton pattern
+// REFERRAL_MAPPINGS_SEED derives optional referral tracking account for fee sharing
+
+pub const AUCTION_DATA_SEED: &'static [u8] = b"auction_data_seed";
+pub const AUCTION_SOL_SEED: &'static [u8] = b"auction_sol_seed";
+pub const METADATA_SEED: &'static [u8] = b"metadata";
+pub const GLOBAL_INFO_SEED: &'static [u8] = b"global_info_seed";
+pub const BIDS_SEED: &'static [u8] = b"bids_seed"; // Added to derive the PDA for the Bids account
+// [REF] - Referral mappings seed for PDA generation
+pub const REFERRAL_MAPPINGS_SEED: &'static [u8] = b"referral_mappings";// ---- End of ./constants.rs ----
+
+// ---- Start of ./account.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Account structures for auction system PDAs
+// GlobalInfo: singleton system config with admin/fees, Auction: per-auction state with token mint
+// Bids: dynamically sized vector of all bids for an auction, ReferralMappings: optional referrer relationships
+
+use crate::states::{Bid, Config, AuctionStatus};
+use anchor_lang::prelude::*;
+
+// [REF] - Referral mapping data structure
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct ReferralMapping {
+    pub referred_account: Pubkey,    // refd_account - the user being referred
+    pub referrer_account: Pubkey,    // refby_account - the referrer who gets rewards
+}
+
+/// Global state for the auction system.
+#[account]
+pub struct GlobalInfo {
+    pub deployer: Pubkey,
+    pub auctions_num: u64,
+    pub config: Config,
+}
+
+/// Account to store bids for an auction.
+#[account]
+pub struct Bids {
+    pub auction_id: u64, // Links this account to a specific auction
+    pub bids: Vec<Bid>,  // Vector to store bids, allowing dynamic growth
+}
+
+#[account]
+#[derive(Default)]
+pub struct Auction {
+    pub id: u64,              // 8
+    pub is_finished: bool,    // 1
+    pub creator: Pubkey,      // 32
+    pub x_id: u64,            // 8
+    pub start_timestamp: i64, // 8
+    pub end_timestamp: i64,   // 8
+    pub duration_hours: u64,  // 8
+    pub token_mint: Pubkey,   // 32
+    pub token_supply: u64,    // 8
+    pub token_decimals: u8,   // 1
+    pub dist_percent: u64,    // 8: 10000 = 100%
+    pub bump: u8,             // 1
+    pub delay_in_seconds: u64,// 8
+    pub start_price: u64,     // 8
+    pub clearing_price: u64,  // 8
+    pub last_status: AuctionStatus, // 1
+    pub is_sol_withdrawn: bool, // 1
+    pub is_tokens_withdrawn: bool, // 1
+    pub is_finalized: bool,   // 1
+
+    // moveliq, post-auction:
+    pub net_sol_raised: u64,  // 8
+    pub liquidity_overmint: u64, // 8 - method 1 "overmint" field
+    
+    //pub liquidity_sol: u64,   // 8 - method 2 field (vs method 1, "overmint")
+    //pub buyback_price: u64,   // 8 - method 2 - todo
+    //pub buyback_period_days: u64, // 2 - method 2 - todo
+    //pub is_dao_claimed: bool, // 1 - method 2 - todo
+}
+
+// [REF] - Global referral mappings account structure
+#[account]
+pub struct ReferralMappings {
+    pub referrals: Vec<ReferralMapping>,  // Vector to store referral mappings, allowing dynamic growth
+}// ---- End of ./account.rs ----
+
+// ---- Start of ./instructions/clear_referrals.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Admin-only instruction to clear all referral mappings (dev/test networks only)
+// Resets the referral mappings vector to empty, useful for testing or maintenance
+// Blocked on mainnet to prevent accidental data loss
+
+use crate::{
+    account::{GlobalInfo, ReferralMappings},
+    constants::{GLOBAL_INFO_SEED, REFERRAL_MAPPINGS_SEED},
+    errors::CustomError,
+};
+use anchor_lang::prelude::*;
+
+#[derive(Accounts)]
+pub struct DevClearReferrals<'info> {
+    #[account(
+        mut,
+        seeds = [GLOBAL_INFO_SEED],
+        bump,
+    )]
+    pub global_info: Box<Account<'info, GlobalInfo>>,
+
+    #[account(
+        mut,
+        address = global_info.config.admin
+    )]
+    pub admin: Signer<'info>,
+
+    // [REF] - Global referral mappings account to clear
+    #[account(
+        mut,
+        seeds = [REFERRAL_MAPPINGS_SEED],
+        bump
+    )]
+    pub referral_mappings: Account<'info, ReferralMappings>,
+}
+
+impl<'info> DevClearReferrals<'info> {
+    // [REF] - Process the dev_clear_referrals instruction
+    pub fn process(&mut self) -> Result<()> {
+        // [REF] - Validate that admin is calling this function
+        require!(
+            self.admin.key() == self.global_info.config.admin,
+            CustomError::Unauthorized
+        );
+
+        // [REF] - Block on mainnet builds only
+        #[cfg(feature = "mainnet")]
+        {
+            msg!("[REF] dev_clear_referrals blocked on mainnet build");
+            return err!(CustomError::Unauthorized);
+        }
+
+        // [REF] - Clear all referral mappings
+        let mappings_count = self.referral_mappings.referrals.len();
+        self.referral_mappings.referrals.clear();
+        
+        msg!("[REF] dev_clear_referrals - Cleared {} referral mappings on non-mainnet", mappings_count);
+
+        Ok(())
+    }
+}
+// ---- End of ./instructions/clear_referrals.rs ----
+
+// ---- Start of ./instructions/set_referral.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Manages referral relationships for fee sharing
+// Admin creates/updates mappings linking referred accounts to referrer pubkeys
+// When referred account bids, portion of fees go to referrer based on ref_bid_fee_perc_share
+
+// [REF] - Admin-only instruction to set/update referral mappings
+use crate::{
+    account::{GlobalInfo, ReferralMappings, ReferralMapping},
+    constants::{GLOBAL_INFO_SEED, REFERRAL_MAPPINGS_SEED},
+    errors::CustomError,
+};
+use anchor_lang::prelude::*;
+use std::mem::size_of;
+
+#[derive(Accounts)]
+pub struct SetReferral<'info> {
+    #[account(
+        mut,
+        seeds = [GLOBAL_INFO_SEED],
+        bump,
+    )]
+    pub global_info: Box<Account<'info, GlobalInfo>>,
+
+    #[account(
+        mut,
+        address = global_info.config.admin
+    )]
+    pub admin: Signer<'info>,
+
+    // [REF] - Global referral mappings account, initialized if needed
+    #[account(
+        init_if_needed,
+        payer = admin,
+        space = 8 + 4 + (32 + 32) * 100, // Account discriminator + Vec length + initial capacity for 100 mappings
+        seeds = [REFERRAL_MAPPINGS_SEED],
+        bump
+    )]
+    pub referral_mappings: Account<'info, ReferralMappings>,
+
+    #[account(address = anchor_lang::system_program::ID)]
+    pub system_program: Program<'info, System>,
+
+    // Added to calculate rent costs for resizing
+    pub rent: Sysvar<'info, Rent>,
+}
+
+impl<'info> SetReferral<'info> {
+    // [REF] - Process the set_referral instruction
+    pub fn process(&mut self, referred_account: Pubkey, referrer_account: Pubkey) -> Result<()> {
+        let rent = Rent::get()?;
+
+        // [REF] - Validate that admin is calling this function
+        require!(
+            self.admin.key() == self.global_info.config.admin,
+            CustomError::Unauthorized
+        );
+
+        // [REF] - Prevent self-referral
+        require!(
+            referred_account != referrer_account,
+            CustomError::InvalidReferralMapping
+        );
+
+        // [REF] - Initialize referrals vector if empty
+        if self.referral_mappings.referrals.is_empty() {
+            self.referral_mappings.referrals = vec![];
+        }
+
+        // [REF] - once referred, always referred
+        for mapping in self.referral_mappings.referrals.iter() {
+            if mapping.referred_account == referred_account { 
+                return err!(CustomError::ReferralAlreadyExists);
+            }
+        }
+
+        {
+            // [REF] - Check if we need to resize the account for new mapping
+            let mapping_size = size_of::<ReferralMapping>();
+            let header_space = 8 + 4; // Discriminator (8) + Vec length (4)
+            let current_space = self.referral_mappings.to_account_info().data.borrow().len();
+            let current_mappings_len = self.referral_mappings.referrals.len();
+            let current_capacity = (current_space - header_space) / mapping_size;
+            let required_space = header_space + (current_mappings_len + 1) * mapping_size;
+
+            msg!("[REF] set_referral - current_capacity: {}", current_capacity);
+            msg!("[REF] set_referral - required_space: {}", required_space);
+            msg!("[REF] set_referral - current_mappings_len: {}", current_mappings_len);
+            msg!("[REF] set_referral - mapping_size: {}", mapping_size);
+            msg!("[REF] set_referral - current_space: {}", current_space);
+
+            if current_mappings_len >= current_capacity {
+                // [REF] - Calculate additional space needed (double capacity)
+                let new_capacity = if current_capacity == 0 { 10 } else { current_capacity * 2 };
+                let new_space = header_space + new_capacity * mapping_size;
+                let additional_space = new_space - current_space;
+                let additional_rent = rent.minimum_balance(additional_space);
+
+                msg!("[REF] set_referral - Resizing referral_mappings account by {} bytes", additional_space);
+
+                // [REF] - Transfer additional rent from admin to referral_mappings account
+                let cpi_context = CpiContext::new(
+                    self.system_program.to_account_info(),
+                    anchor_lang::system_program::Transfer {
+                        from: self.admin.to_account_info(),
+                        to: self.referral_mappings.to_account_info(),
+                    },
+                );
+                anchor_lang::system_program::transfer(cpi_context, additional_rent)?;
+
+                // [REF] - Resize the account
+                self.referral_mappings.to_account_info().realloc(new_space, false)?;
+            }
+
+            // [REF] - Add new referral mapping
+            self.referral_mappings.referrals.push(ReferralMapping {
+                referred_account,
+                referrer_account,
+            });
+        }
+
+        msg!("[REF] set_referral - Mapped referred_account: {} to referrer_account: {}", 
+             referred_account, referrer_account);
+
+        Ok(())
+    }
+}// ---- End of ./instructions/set_referral.rs ----
+
+// ---- Start of ./instructions/init_auction_bids.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Initializes dynamically-sized bid storage account for an auction
+// Creates Bids PDA with empty vector, automatically resized as bids are placed
+// Optional pre-initialization to avoid rent costs during first bid, uses BIDS_SEED + auction_id
+
+use crate::{
+    account::{Auction, GlobalInfo, Bids},
+    constants::{GLOBAL_INFO_SEED, BIDS_SEED},
+    errors::CustomError,
+};
+use anchor_lang::prelude::*;
+
+#[derive(Accounts)]
+pub struct InitAuctionBids<'info> {
+    #[account(
+        seeds = [GLOBAL_INFO_SEED.as_ref()],
+        bump,
+    )]
+    pub global_info: Box<Account<'info, GlobalInfo>>,
+
+    #[account(mut)]
+    pub creator: Signer<'info>,
+
+    #[account(
+        address = global_info.config.admin @ CustomError::Unauthorized
+    )]
+    pub admin: Signer<'info>,
+
+    #[account(
+        mut,
+        has_one = creator @ CustomError::Unauthorized
+    )]
+    pub auction_data_account: Box<Account<'info, Auction>>,
+
+    #[account(
+        init,
+        payer = creator,
+        space = 8 + 8 + 4, // Intial size - place_bid will dynamically resize if needed / Discriminator (8) + auction_id (8) + Vec length (4)
+        seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub bids_account: Account<'info, Bids>,
+
+    #[account(address = anchor_lang::system_program::ID)]
+    pub system_program: Program<'info, System>,
+
+    pub rent: Sysvar<'info, Rent>,
+}
+
+impl<'info> InitAuctionBids<'info> {
+    pub fn process(&mut self) -> Result<()> {
+        self.bids_account.auction_id = self.auction_data_account.id;
+        self.bids_account.bids = vec![];
+        Ok(())
+    }
+}// ---- End of ./instructions/init_auction_bids.rs ----
+
+// ---- Start of ./instructions/initialize.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// One-time initialization of the auction system singleton
+// Creates GlobalInfo PDA with admin pubkey and system config, validates fee_accounts sum to exactly 10000
+// Must be called before any auctions can be created, deployer becomes permanent admin
+
+use crate::{account::GlobalInfo, constants::GLOBAL_INFO_SEED, states::Config, errors::CustomError};
+use anchor_lang::prelude::*;
+use core::mem::size_of;
+
+#[derive(Accounts)]
+pub struct Initialize<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+
+    #[account(
+        init_if_needed, //init,
+        payer=signer,
+        seeds = [GLOBAL_INFO_SEED.as_ref()],
+        bump,
+        space= 8 + size_of::<GlobalInfo>() + 200 // Extra space for fee_accounts Vec with FeeAccount structs
+    )]
+    pub global_info: Account<'info, GlobalInfo>,
+
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
+}
+
+impl<'info> Initialize<'info> {
+    pub fn process(&mut self, config: Config) -> Result<()> {
+        msg!("Calling initialize...");
+
+        // If already initialized, only existing admin can update
+        if self.global_info.deployer != Pubkey::default() {
+            require!(
+                self.signer.key() == self.global_info.deployer,
+                CustomError::Unauthorized
+            );
+            msg!("Updating config as admin");
+        } else {
+            msg!("First initialization - setting deployer");
+        }
+
+        // Validate fee accounts percentages sum to exactly 10000 (100%)
+        let mut total_percentage: u64 = 0;
+        for fee_account in &config.fee_accounts {
+            total_percentage = total_percentage
+                .checked_add(fee_account.share)
+                .ok_or(CustomError::Overflow)?;
+        }
+        
+        require!(
+            total_percentage == 10000,
+            CustomError::InvalidFeeAccountPercentages
+        );
+
+        // Update deployer to match the admin in config (allows admin rotation)
+        self.global_info.deployer = config.admin;
+
+        msg!("Supplied config.min_total_sol: {:?}", config.min_total_sol);
+        msg!("Fee accounts count: {}", config.fee_accounts.len());
+        msg!("Fee accounts total percentage: {}", total_percentage);
+        msg!("Admin/deployer set to: {:?}", config.admin);
+        msg!("Deployer updated from signer {:?} to admin {:?}", self.signer.key(), config.admin);
+        
+        self.global_info.config = config;
+
+        Ok(())
+    }
+}
+// ---- End of ./instructions/initialize.rs ----
+
+// ---- Start of ./instructions/mod.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Instruction module aggregator and re-exporter
+// Makes all instruction handlers available to lib.rs via single import
+// Order doesn't matter but conventionally: init, config, auction lifecycle, admin functions
+
+pub mod initialize;
+pub use initialize::*;
+
+pub mod create_auction;
+pub use create_auction::*;
+
+pub mod place_bid;
+pub use place_bid::*;
+
+pub mod cancel_bid;
+pub use cancel_bid::*;
+
+pub mod claim;
+pub use claim::*;
+
+pub mod withdraw_sol;
+pub use withdraw_sol::*;
+
+pub mod withdraw_tokens;
+pub use withdraw_tokens::*;
+
+pub mod finalize;
+pub use finalize::*;
+
+pub mod init_auction_bids;
+pub use init_auction_bids::*;
+
+// [REF] - Referral system instructions
+pub mod set_referral;
+pub use set_referral::*;
+
+pub mod clear_referrals;
+pub use clear_referrals::*;
+
+//pub mod raydium_migrate;
+//pub use raydium_migrate::*;
+// ---- End of ./instructions/mod.rs ----
+
+// ---- Start of ./instructions/finalize.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Final cleanup after all claims processed, prepares for Raydium pool creation
+// Only callable after auction ends and all bids claimed, transfers remaining SOL/tokens to admin
+// Sets is_finalized flag preventing further operations, auction data remains for historical queries
+
+use crate::{
+    account::{Auction, GlobalInfo, Bids},
+    constants::{AUCTION_SOL_SEED, GLOBAL_INFO_SEED, BIDS_SEED},
+    errors::CustomError,
+    states::AuctionStatus,
+};
+use anchor_lang::prelude::*;
+use anchor_spl::token::{self, Token, TokenAccount};
+use anchor_lang::solana_program;
+use solana_program::program::invoke_signed;
+
+#[derive(Accounts)]
+pub struct Finalize<'info> {
+    #[account(
+        seeds = [GLOBAL_INFO_SEED.as_ref()],
+        bump,
+    )]
+    pub global_info: Box<Account<'info, GlobalInfo>>,
+
+    #[account(
+        mut,
+        address = global_info.config.admin @ CustomError::Unauthorized
+    )]
+    pub admin: Signer<'info>,
+
+    #[account(mut, close = admin)]
+    pub auction_data_account: Box<Account<'info, Auction>>,
+
+    // Added Bids account and closed it to reclaim rent
+    #[account(mut, close = admin, seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()], bump)]
+    pub bids_account: Account<'info, Bids>,
+
+    /// CHECK: admin knows what he's passing in
+    #[account(mut)]
+    pub auction_sol_account: AccountInfo<'info>,
+
+    #[account(mut)]
+    pub auction_token_account: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub admin_token_account: Account<'info, TokenAccount>,
+
+
+    #[account(address = token::ID)]
+    pub token_program: Program<'info, Token>,
+
+    #[account(address = anchor_lang::system_program::ID)]
+    pub system_program: Program<'info, System>,
+}
+
+impl<'info> Finalize<'info> {
+    pub fn process(&mut self) -> Result<()> {
+        let auction = &mut self.auction_data_account;
+        let auction_id = auction.id;
+        let bump = auction.bump;
+
+        let (expected_pda, _) = Pubkey::find_program_address(
+            &[AUCTION_SOL_SEED.as_ref(), auction_id.to_le_bytes().as_ref()],
+            &crate::ID,
+        );
+        require_keys_eq!(expected_pda, self.auction_sol_account.key(), CustomError::InvalidPDA);
+
+        let token_balance = self.auction_token_account.amount;
+        token::transfer(
+            CpiContext::new_with_signer(
+                self.token_program.to_account_info(),
+                token::Transfer {
+                    from: self.auction_token_account.to_account_info(),
+                    to: self.admin_token_account.to_account_info(),
+                    authority: self.auction_sol_account.to_account_info(),
+                },
+                &[&[
+                    AUCTION_SOL_SEED.as_ref(),
+                    auction_id.to_le_bytes().as_ref(),
+                    &[bump],
+                ]],
+            ),
+            token_balance,
+        )?;
+        token::close_account(
+            CpiContext::new_with_signer(
+                self.token_program.to_account_info(),
+                token::CloseAccount {
+                    account: self.auction_token_account.to_account_info(),
+                    destination: self.admin.to_account_info(),
+                    authority: self.auction_sol_account.to_account_info(),
+                },
+                &[&[
+                    AUCTION_SOL_SEED.as_ref(),
+                    auction_id.to_le_bytes().as_ref(),
+                    &[bump],
+                ]],
+            ),
+        )?;
+
+        let sol_balance = self.auction_sol_account.lamports();
+        if sol_balance > 0 {
+            let transfer_instruction = solana_program::system_instruction::transfer(
+                &self.auction_sol_account.key,
+                &self.admin.key,
+                sol_balance,
+            );
+            invoke_signed(
+                &transfer_instruction,
+                &[
+                    self.auction_sol_account.clone(),
+                    self.admin.to_account_info(),
+                    self.system_program.to_account_info(),
+                ],
+                &[&[
+                    AUCTION_SOL_SEED.as_ref(),
+                    auction_id.to_le_bytes().as_ref(),
+                    &[bump],
+                ]],
+            )?;
+        }
+
+        auction.last_status = AuctionStatus::Finalized;
+        auction.is_finished = true;
+        auction.is_tokens_withdrawn = true;
+        auction.is_sol_withdrawn = true;
+        auction.is_finalized = true;
+
+        Ok(())
+    }
+}// ---- End of ./instructions/finalize.rs ----
+
+// ---- Start of ./instructions/withdraw_tokens.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Admin withdraws unsold tokens from auction account
+// For successful auctions: withdraws overmint amount (3.69% extra for liquidity pool)
+// For failed auctions: withdraws entire token supply, requires auction to be finished first
+
+use crate::{
+    account::{ Auction, GlobalInfo, Bids }, 
+    constants::{ GLOBAL_INFO_SEED, AUCTION_SOL_SEED, BIDS_SEED },
+    errors::CustomError,
+    //states::Config,
+    states::AuctionStatus,
+    helper::get_status_and_clearing_price,
+};
+use anchor_spl::token::{self, Token, TokenAccount};
+//use anchor_lang::{system_program, prelude::*};
+use anchor_lang::prelude::*;
+
+#[derive(Accounts)]
+pub struct WithdrawTokens<'info> {
+    #[account(
+        seeds = [GLOBAL_INFO_SEED.as_ref()],
+        bump,
+    )]
+    pub global_info: Box<Account<'info, GlobalInfo>>,
+
+    #[account(
+        mut,
+        address = global_info.config.admin @ CustomError::Unauthorized
+    )]
+    pub admin: Signer<'info>,
+
+    #[account(mut)]
+    pub auction_data_account: Box<Account<'info, Auction>>,
+
+    /// CHECK: This account is manually verified
+    #[account(mut)]
+    pub auction_sol_account: AccountInfo<'info>,
+
+    #[account(mut)]
+    pub auction_token_account: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub admin_token_account: Account<'info, TokenAccount>,
+
+     #[account(
+        mut,
+        seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub bids_account: Account<'info, Bids>,
+
+    #[account(address = token::ID)]
+    pub token_program: Program<'info, Token>,
+}
+
+impl<'info> WithdrawTokens<'info> {
+    pub fn process(&mut self) -> Result<()> {
+        let auction = &mut self.auction_data_account;
+        let bids = &mut self.bids_account.bids;
+        let auction_id = auction.id;
+        let bump = auction.bump;
+
+        // Verify auction_sol_account is the correct PDA
+        let (expected_pda, _) = Pubkey::find_program_address(
+            &[AUCTION_SOL_SEED.as_ref(), auction_id.to_le_bytes().as_ref()],
+            &crate::ID,
+        );
+        require_keys_eq!(expected_pda, self.auction_sol_account.key(), CustomError::InvalidPDA);
+
+        // Update auction finished flag (consistent with Claim)
+        if Clock::get().unwrap().unix_timestamp >= auction.end_timestamp {
+            auction.is_finished = true;
+        }
+        require!(auction.is_finished, CustomError::AuctionNotFinished);
+
+        // only proceed if auction is successful
+        let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(auction, bids, Clock::get().unwrap().unix_timestamp, self.global_info.config.min_total_sol)?;
+        require!(auction_status == AuctionStatus::Succeeded, CustomError::InvalidState);
+        auction.last_status = auction_status;
+        auction.clearing_price = clearing_price_wrapped.ok_or(CustomError::InvalidClearingPrice)?;
+        msg!("updated auction_status: {:?}", auction.last_status);
+
+        // Calculate amount to transfer
+        let token_balance = self.auction_token_account.amount;
+        let mut withdrawable = token_balance
+            .checked_mul(10000 - auction.dist_percent)
+            .ok_or(CustomError::Overflow)?
+            .checked_div(10000)
+            .ok_or(CustomError::Overflow)?;
+
+        // overmint - add liquidity_overmint to withdrawable
+        withdrawable = withdrawable.checked_add(auction.liquidity_overmint).ok_or(CustomError::Overflow)?;
+
+        // Check if tokens were already withdrawn 
+        if auction.is_tokens_withdrawn {
+            //msg!("Tokens already withdrawn. Amount that was previously withdrawn: {} tokens", withdrawable); // todo - ## this is bogus - would need to track this in a new struct/account
+            return Err(CustomError::TokensAlreadyWithdrawn.into());
+        }
+            
+        msg!("withdrawable {}", withdrawable);
+        //msg!("liquidity_overmint {}", auction.liquidity_overmint);
+        token::transfer(
+            CpiContext::new_with_signer(
+                self.token_program.to_account_info(),
+                token::Transfer {
+                    from: self.auction_token_account.to_account_info(),
+                    to: self.admin_token_account.to_account_info(),
+                    authority: self.auction_sol_account.to_account_info(),
+                },
+                &[&[
+                    AUCTION_SOL_SEED.as_ref(),
+                    auction_id.to_le_bytes().as_ref(),
+                    &[bump],
+                ]],
+            ),
+            withdrawable,
+        )?;
+        msg!("Withdrawal successful. Transferred {} tokens to admin.", withdrawable);
+        
+        auction.is_tokens_withdrawn = true;
+        Ok(())
+    }
+}// ---- End of ./instructions/withdraw_tokens.rs ----
+
+// ---- Start of ./instructions/claim.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Claims tokens for successful auctions or refunds SOL for failed ones
+// Uses uniform clearing price - bidders who bid above clearing get partial SOL refund
+// Transfers exact token amount based on bid_qty, marks bid as claimed to prevent double-claiming
+
+use crate::{
+    account::{Auction, GlobalInfo, Bids},
+    constants::{AUCTION_SOL_SEED, GLOBAL_INFO_SEED, BIDS_SEED},
+    errors::CustomError,
+    events::Claimed,
+    helper::get_status_and_clearing_price,
+    states::AuctionStatus,
+    processor::sol_transfer_with_signer,
+};
+use anchor_lang::prelude::*;
+use anchor_spl::{
+    associated_token::{self, AssociatedToken},
+    token::{self, Mint, Token, TokenAccount, Transfer as SplTransfer},
+};
+
+#[derive(Accounts)]
+pub struct Claim<'info> {
+    #[account(
+        mut,
+        seeds = [GLOBAL_INFO_SEED.as_ref()],
+        bump,
+    )]
+    pub global_info: Box<Account<'info, GlobalInfo>>,
+
+    #[account(mut)]
+    pub caller: Signer<'info>,
+
+    pub token_mint: Account<'info, Mint>,
+
+    #[account(
+        init_if_needed,
+        payer = caller,
+        associated_token::mint = token_mint,
+        associated_token::authority = caller
+    )]
+    pub caller_token_account: Account<'info, TokenAccount>,
+
+    /// CHECK: no checks needed, just program's account
+    #[account(mut)]
+    pub auction_sol_account: AccountInfo<'info>,
+
+    /// CHECK: Storage - used as storage for the auction data
+    #[account(mut)]
+    pub auction_data_account: Box<Account<'info, Auction>>,
+
+    #[account(mut)]
+    pub auction_token_account: Account<'info, TokenAccount>,
+
+    // Added Bids account to access bids
+    #[account(
+        mut,
+        seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub bids_account: Account<'info, Bids>,
+
+    /// CHECK: Safe. The SPL token program.
+    pub token_program: Program<'info, Token>,
+
+    #[account(address = associated_token::ID)]
+    pub associated_token_program: Program<'info, AssociatedToken>,
+
+    #[account(address = anchor_lang::system_program::ID)]
+    pub system_program: Program<'info, System>,
+}
+
+impl<'info> Claim<'info> {
+    pub fn process(&mut self) -> Result<()> {
+        let auction = &mut self.auction_data_account;
+        let bids = &mut self.bids_account.bids; // Updated to use bids_account.bids
+        let auction_id = auction.id;
+        let token_decimals = auction.token_decimals;
+        let auction_bump = auction.bump;
+        let dist_percent = auction.dist_percent;
+        let min_total_sol = self.global_info.config.min_total_sol;
+        require!(!auction.is_finalized, CustomError::AuctionAlreadyFinalized);
+
+        // Log initial claim information
+        msg!("claim - Processing claim for auction ID: {}", auction_id);
+        msg!("claim - Caller: {}", self.caller.key());
+
+        // Get and log auction status and clearing price
+        let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(
+            auction, bids,
+            Clock::get()?.unix_timestamp,
+            min_total_sol,
+        )?;
+        let clearing_price = clearing_price_wrapped.unwrap_or(0); // 0 is valid for failed auctions
+        msg!("claim - Auction status: {:?}", auction_status);
+        msg!("claim - Clearing price: {}", clearing_price);
+
+        // Update and log auction finished status
+        if Clock::get()?.unix_timestamp >= auction.end_timestamp {
+            auction.is_finished = true;
+            msg!("claim - Auction marked as finished");
+        }
+
+        // Check if auction has finished
+        require!(auction.is_finished, CustomError::AuctionNotFinished);
+
+        // Accumulators for totals
+        let mut total_sol_to_refund: u64 = 0;
+        let mut total_tokens_to_claim: u64 = 0;
+        let mut processed_bids: u32 = 0;
+
+        // Process all unclaimed bids for the caller
+        for (index, bid) in bids.iter_mut().enumerate() {
+            if bid.bidder == self.caller.key() && !bid.is_claimed {
+                // Log bid details
+                msg!("claim - Processing bid index: {}", index);
+                msg!("claim - Bid qty: {}, sol: {}, fee: {}", bid.bid_qty, bid.bid_sol, bid.bid_fee);
+
+                if auction_status == AuctionStatus::Succeeded {
+                    if clearing_price == 0 {
+                        return err!(CustomError::InvalidClearingPrice);
+                    }
+
+                    // Auction succeeded: calc and log sol change
+                    let paid = bid
+                        .bid_qty
+                        .checked_mul(bid.bid_sol)
+                        .ok_or(CustomError::Overflow)?
+                        .checked_sub(bid.bid_fee)
+                        .ok_or(CustomError::Overflow)?;
+                    let exact = bid
+                        .bid_qty
+                        .checked_mul(clearing_price)
+                        .ok_or(CustomError::Overflow)?;
+                    let owed = paid.saturating_sub(exact);
+
+                        total_sol_to_refund = total_sol_to_refund
+                            .checked_add(owed)
+                            .ok_or(CustomError::Overflow)?;
+                        msg!("claim - Paid: {}, Exact: {}, Owed: {}", paid, exact, owed);
+
+                    // Auction succeeded: calc & log token distribution
+                    let claim_token_qty = bid.bid_qty
+                        .checked_mul(dist_percent)
+                        .ok_or(CustomError::Overflow)?
+                        .checked_div(10000)
+                        .ok_or(CustomError::Overflow)?
+                        .checked_mul(10u64.pow(token_decimals as u32))
+                        .ok_or(CustomError::Overflow)?;
+                        
+                        total_tokens_to_claim = total_tokens_to_claim
+                            .checked_add(claim_token_qty)
+                            .ok_or(CustomError::Overflow)?;
+                        msg!("claim - Claimable tokens for this bid: {}", claim_token_qty);
+                } else {
+                    // Auction failed: refund sol minus fee
+                    let paid = bid
+                        .bid_qty
+                        .checked_mul(bid.bid_sol)
+                        .ok_or(CustomError::Overflow)?
+                        .checked_sub(bid.bid_fee)
+                        .ok_or(CustomError::Overflow)?;
+                    
+                        total_sol_to_refund = total_sol_to_refund
+                            .checked_add(paid)
+                            .ok_or(CustomError::Overflow)?;
+                        msg!("claim - Refund for failed auction: {}", paid);
+                }
+
+                // Mark bid as claimed and log
+                bid.is_claimed = true;
+                processed_bids += 1;
+                msg!("claim - Bid marked as claimed");
+            }
+        }
+
+        // Log totals
+        msg!("claim - Total SOL to refund: {}", total_sol_to_refund);
+        msg!("claim - Total tokens to claim: {}", total_tokens_to_claim);
+        msg!("claim - Processed bids: {}", processed_bids);
+
+        // Check if any bids were processed
+        if processed_bids == 0 {
+            msg!("claim - No unclaimed bids found for caller");
+            return err!(CustomError::NoBidFoundForCaller);
+        }
+
+        // Transfer SOL refund if applicable
+        if total_sol_to_refund > 0 {
+            msg!("claim - Transferring SOL refund: {}", total_sol_to_refund);
+            sol_transfer_with_signer(
+                self.auction_sol_account.to_account_info(),
+                self.caller.to_account_info(),
+                self.system_program.to_account_info(),
+                &[&[
+                    AUCTION_SOL_SEED.as_ref(),
+                    auction_id.to_le_bytes().as_ref(),
+                    &[auction_bump],
+                ]],
+                total_sol_to_refund,
+            )?;
+        }
+
+        // Transfer tokens if auction succeeded
+        if auction_status == AuctionStatus::Succeeded && total_tokens_to_claim > 0 {
+            msg!("claim - Token balance: {}", self.auction_token_account.amount);
+            msg!("claim - Transferring tokens: {}", total_tokens_to_claim);
+            let cpi_accounts = SplTransfer {
+                from: self.auction_token_account.to_account_info(),
+                to: self.caller_token_account.to_account_info(),
+                authority: self.auction_sol_account.to_account_info(),
+            };
+            token::transfer(
+                CpiContext::new_with_signer(
+                    self.token_program.to_account_info(),
+                    cpi_accounts,
+                    &[&[
+                        AUCTION_SOL_SEED.as_ref(),
+                        auction_id.to_le_bytes().as_ref(),
+                        &[auction_bump],
+                    ]],
+                ),
+                total_tokens_to_claim,
+            )?;
+        }
+
+        // Emit event
+        emit!(Claimed {
+            auction_id,
+            bidder: self.caller.key(),
+            claim_qty: if auction_status == AuctionStatus::Succeeded {
+                total_tokens_to_claim
+            } else {
+                0
+            },
+        });
+
+        // Update and log auction state
+        auction.last_status = auction_status;
+        auction.clearing_price = clearing_price; // Already handled above
+        msg!("claim - Updated auction status: {:?}", auction.last_status);
+        msg!("claim - Updated clearing price: {}", auction.clearing_price);
+
+        Ok(())
+    }
+}// ---- End of ./instructions/claim.rs ----
+
+// ---- Start of ./instructions/create_auction.rs ----
+use crate::{
+    account::{Auction, GlobalInfo},
+    constants::{AUCTION_DATA_SEED, AUCTION_SOL_SEED, GLOBAL_INFO_SEED, METADATA_SEED},
+    errors::CustomError,
+    events::AuctionCreated,
+    states::AuctionStatus,
+};
+use anchor_lang::{prelude::*, system_program};
+use anchor_spl::{
+    associated_token::{self, AssociatedToken},
+    metadata::{self, mpl_token_metadata::types::DataV2, Metadata},
+    token::{self, Mint, Token, TokenAccount},
+};
+use core::mem::size_of;
+
+#[derive(Accounts)]
+pub struct CreateAuction<'info> {
+    #[account(
+        mut,
+        seeds = [GLOBAL_INFO_SEED.as_ref()],
+        bump,
+    )]
+    pub global_info: Box<Account<'info, GlobalInfo>>,
+
+    #[account(mut)]
+    pub creator: Signer<'info>,
+
+    #[account(
+        address = global_info.config.admin
+    )]
+    pub admin: Signer<'info>,
+
+    #[account(
+        init,
+        payer = creator,
+        mint::decimals = global_info.config.default_token_decimals,
+        mint::authority = auction_sol_account.key(),
+    )]
+    pub token_mint: Box<Account<'info, Mint>>,
+
+    /// CHECK: passed to token metadata program
+    #[account(
+        mut,
+        seeds = [
+            METADATA_SEED,
+            metadata::ID.as_ref(),
+            token_mint.key().as_ref(),
+        ],
+        bump,
+        seeds::program = metadata::ID
+    )]
+    token_metadata_account: UncheckedAccount<'info>,
+
+    /// CHECK: Signer for PDA
+    #[account(
+        mut,
+        seeds = [AUCTION_SOL_SEED.as_ref(), global_info.auctions_num.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub auction_sol_account: AccountInfo<'info>,
+
+    /// CHECK: Storage for auction data
+    #[account(
+        init,
+        payer = creator,
+        space = 8 + size_of::<Auction>(),
+        seeds = [AUCTION_DATA_SEED.as_ref(), global_info.auctions_num.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub auction_data_account: Box<Account<'info, Auction>>,
+
+    /// CHECK: Auction's token account
+    #[account(
+        init,
+        payer = creator,
+        associated_token::mint = token_mint,
+        associated_token::authority = auction_sol_account
+    )]
+    pub auction_token_account: Box<Account<'info, TokenAccount>>,
+
+    sysvar_rent: Sysvar<'info, Rent>,
+
+    #[account(address = system_program::ID)]
+    system_program: Program<'info, System>,
+
+    #[account(address = token::ID)]
+    token_program: Program<'info, Token>,
+
+    #[account(address = associated_token::ID)]
+    associated_token_program: Program<'info, AssociatedToken>,
+
+    #[account(address = metadata::ID)]
+    mpl_token_metadata_program: Program<'info, Metadata>,
+}
+
+impl<'info> CreateAuction<'info> {
+    pub fn process(
+        &mut self,
+        auction_bump: u8,
+        x_id: u64,
+        _name: String,
+        _symbol: String,
+        uri: String,
+        duration_hours: u64, // actually 1/100 of an hour ~= 36s
+        dist_percent: u64,
+        delay_in_seconds: u64,
+        _buyback_period_days: u64,
+    ) -> Result<()> {
+        msg!("Calling create_auction...");
+
+        require!(dist_percent >= 100 && dist_percent <= 10000, CustomError::InvalidDistPercent); 
+
+        let global_info = &mut self.global_info;
+        let _creator = &mut self.creator;
+        let token_mint = &mut self.token_mint;
+        let auction_sol_account = &mut self.auction_sol_account;
+        let auction_data_account = &mut self.auction_data_account;
+        let auction_token_account = &mut self.auction_token_account;
+        //let bids_account = &mut self.bids_account;
+        let auction_id = global_info.auctions_num;
+
+        token::mint_to(
+            CpiContext::new_with_signer(
+                self.token_program.to_account_info(),
+                token::MintTo {
+                    mint: token_mint.to_account_info(),
+                    to: auction_token_account.to_account_info(),
+                    authority: auction_sol_account.to_account_info(),
+                },
+                &[&[
+                    AUCTION_SOL_SEED.as_ref(),
+                    auction_id.to_le_bytes().as_ref(),
+                    &[auction_bump],
+                ]],
+            ),
+            global_info.config.default_token_supply,
+        )?;
+
+        metadata::create_metadata_accounts_v3(
+            CpiContext::new_with_signer(
+                self.mpl_token_metadata_program.to_account_info(),
+                metadata::CreateMetadataAccountsV3 {
+                    metadata: self.token_metadata_account.to_account_info(),
+                    mint: token_mint.to_account_info(),
+                    mint_authority: auction_sol_account.to_account_info(),
+                    payer: _creator.to_account_info(),
+                    update_authority: auction_sol_account.to_account_info(),
+                    system_program: self.system_program.to_account_info(),
+                    rent: self.sysvar_rent.to_account_info(),
+                },
+                &[&[
+                    AUCTION_SOL_SEED.as_ref(),
+                    auction_id.to_le_bytes().as_ref(),
+                    &[auction_bump],
+                ]],
+            ),
+            DataV2 {
+                name: _name,
+                symbol: _symbol,
+                uri: uri.clone(),
+                seller_fee_basis_points: 0,
+                creators: None,
+                collection: None,
+                uses: None,
+            },
+            false,
+            true,
+            None,
+        )?;
+
+        // method 1 - we're using liquidity movement (overmint) - we need to keep mint authority and revoke it on the last bid
+
+        // method 2 (underfund) - revoke token mint authority 
+        /*token::set_authority(
+            CpiContext::new_with_signer(
+                self.token_program.to_account_info(),
+                token::SetAuthority {
+                    current_authority: auction_sol_account.to_account_info(),
+                    account_or_mint: token_mint.to_account_info(),
+                },
+                &[&[
+                    AUCTION_SOL_SEED.as_ref(),
+                    auction_id.to_le_bytes().as_ref(),
+                    &[auction_bump],
+                ]],
+            ),
+            AuthorityType::MintTokens,
+            None,
+        )?;*/
+
+        let clock: Clock = Clock::get()?;
+        let current_timestamp = clock.unix_timestamp;
+        let start_timestamp = current_timestamp + (delay_in_seconds as i64);
+        let end_timestamp = start_timestamp + (duration_hours as i64 * 36);
+
+        auction_data_account.id = auction_id;
+        auction_data_account.is_finished = false;
+        auction_data_account.creator = _creator.key();
+        auction_data_account.x_id = x_id;
+        auction_data_account.start_timestamp = start_timestamp;
+        auction_data_account.end_timestamp = end_timestamp;
+        auction_data_account.duration_hours = duration_hours;
+        auction_data_account.token_mint = token_mint.key();
+        auction_data_account.token_supply = global_info.config.default_token_supply;
+        auction_data_account.token_decimals = global_info.config.default_token_decimals;
+        
+        auction_data_account.bump = auction_bump;
+        auction_data_account.delay_in_seconds = delay_in_seconds;
+        auction_data_account.start_price = global_info.config.default_start_price_lamports;
+        auction_data_account.last_status = if delay_in_seconds > 0 {
+            AuctionStatus::Pending
+        } else {
+            AuctionStatus::Live
+        };
+
+        // moveliq: method 1 - distribute in full, mint more tokens (overmint) to achieve target price
+        auction_data_account.dist_percent = 10000;
+
+        // moveliq: method 2 - reverse fit sol to move to yield target price, for a given fixed token lock % (1-dist_percent)
+        //auction_data_account.dist_percent = dist_percent; 
+
+        auction_data_account.is_sol_withdrawn = false;
+        auction_data_account.is_tokens_withdrawn = false;
+
+        // we would only need these if we used method 2 (underfund) for liquidity movement (to make use of the remaining sol in the contract, for buyback and/or DAO)
+        //auction_data_account.buyback_period_days = buyback_period_days;
+        //auction_data_account.is_dao_claimed = false;
+        //auction_data_account.buyback_price = 0;
+
+        global_info.auctions_num = auction_id + 1;
+
+        msg!("Auction ID: {} is created", auction_id);
+        
+        emit!(AuctionCreated {
+            auction_id,
+            creator: _creator.key(),
+            x_id,
+            token_mint: token_mint.key(),
+            dist_percent: auction_data_account.dist_percent,
+        });
+
+        Ok(())
+    }
+}// ---- End of ./instructions/create_auction.rs ----
+
+// ---- Start of ./instructions/set_config.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Updates global system configuration parameters
+// Admin-only instruction to change fees, token defaults, min SOL requirements
+// Validates fee_accounts sum to 10000, affects all future auctions not existing ones
+
+use crate::{
+    account::GlobalInfo, constants::GLOBAL_INFO_SEED, errors::CustomError, states::Config,
+};
+use anchor_lang::prelude::*;
+
+#[derive(Accounts)]
+pub struct SetConfig<'info> {
+    #[account(mut)]
+    pub caller: Signer<'info>,
+
+    #[account(
+      mut,
+      seeds = [GLOBAL_INFO_SEED.as_ref()],
+      bump,
+  )]
+    pub global_info: Account<'info, GlobalInfo>,
+}
+
+impl<'info> SetConfig<'info> {
+    pub fn process(&mut self, new_config: Config) -> Result<()> {
+        msg!("Calling set_config...");
+
+        require!(
+            self.caller.key() == self.global_info.deployer,
+            CustomError::Unauthorized
+        );
+
+        // Validate fee accounts sum to exactly 10000 (100%)
+        let mut total_percentage: u64 = 0;
+        for fee_account in &new_config.fee_accounts {
+            total_percentage = total_percentage
+                .checked_add(fee_account.share)
+                .ok_or(CustomError::Overflow)?;
+        }
+        
+        require!(
+            total_percentage == 10000,
+            CustomError::InvalidFeeAccountPercentages
+        );
+
+        msg!("Fee accounts total percentage: {}", total_percentage);
+        self.global_info.config = new_config;
+
+        Ok(())
+    }
+}
+// ---- End of ./instructions/set_config.rs ----
+
+// ---- Start of ./instructions/cancel_bid.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Cancels bids and refunds SOL before auction ends or fails
+// Only allows cancellation when auction is Live or Failed status, not after success
+// Marks bid as cancelled (bid_qty = 0) but keeps record for audit trail, emits BidCancelled event
+
+use crate::{
+    account::{ Auction, GlobalInfo, Bids },
+    constants::AUCTION_SOL_SEED, errors::CustomError, events::BidCancelled,
+    constants::{ GLOBAL_INFO_SEED, BIDS_SEED },
+    helper::get_status_and_clearing_price,
+    processor::sol_transfer_with_signer,
+};
+use anchor_lang::prelude::*;
+
+#[derive(Accounts)]
+pub struct CancelBid<'info> {
+    #[account(
+        mut,
+        seeds = [GLOBAL_INFO_SEED.as_ref()],
+        bump,
+    )]
+    pub global_info: Box<Account<'info, GlobalInfo>>,
+
+    #[account(mut)]
+    pub caller: Signer<'info>,
+
+    /// CHECK: No checks needed, just program's account
+    #[account(mut)]
+    pub auction_sol_account: AccountInfo<'info>,
+
+    /// CHECK: Storage - used as storage for the auction data
+    #[account(mut)]
+    pub auction_data_account: Box<Account<'info, Auction>>,
+
+    // Added Bids account to access bids
+    #[account(
+        mut,
+        seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub bids_account: Account<'info, Bids>,
+
+    #[account(address = anchor_lang::system_program::ID)]
+    pub system_program: Program<'info, System>,
+}
+
+impl<'info> CancelBid<'info> {
+    pub fn process(&mut self) -> Result<()> {
+        let auction = &mut self.auction_data_account;
+        let bids = &mut self.bids_account.bids; // Updated to use bids_account.bids
+        let caller = self.caller.key();
+        require!(!auction.is_finalized, CustomError::AuctionAlreadyFinalized);
+
+        // Update and log auction finished status
+        if Clock::get()?.unix_timestamp >= auction.end_timestamp {
+            auction.is_finished = true;
+            msg!("cancel_bid - Auction marked as finished");
+        }
+        
+        // Abort if the auction has finished
+        require!(!auction.is_finished, CustomError::AuctionEnded);
+
+        // Abort if liquidity has already been moved
+        require!(
+            !(bids.len() > 0 && self.auction_sol_account.lamports() == 0),
+            CustomError::AuctionLiquidityMoved
+        );
+
+        let mut total_refund: u64 = 0;
+        let mut bids_cancelled = 0;
+        let mut i = 0;
+
+        // Iterate through the bids and remove all bids from the caller
+        while i < bids.len() {
+            if bids[i].bidder == caller {
+                let bid = bids.remove(i);
+                // Calculate refund: (quantity * price) - fee
+                let product = bid.bid_qty
+                    .checked_mul(bid.bid_sol)
+                    .ok_or(CustomError::CalculationError)?;
+                let refund_amount = product
+                    .checked_sub(bid.bid_fee)
+                    .ok_or(CustomError::CalculationError)?;
+                total_refund = total_refund
+                    .checked_add(refund_amount)
+                    .ok_or(CustomError::CalculationError)?;
+                bids_cancelled += 1;
+                // Do not increment i since the next element shifts into the current position
+            } else {
+                i += 1;
+            }
+        }
+
+        // If no bids were found for the caller, return an error
+        if bids_cancelled == 0 {
+            return err!(CustomError::NoBidFoundForCaller);
+        }
+
+        // Transfer the total refund to the caller in one transaction
+        sol_transfer_with_signer(
+            self.auction_sol_account.clone().to_account_info(),
+            self.caller.to_account_info(),
+            self.system_program.to_account_info(),
+            &[&[
+                AUCTION_SOL_SEED.as_ref(),
+                auction.id.to_le_bytes().as_ref(),
+                &[auction.bump],
+            ]],
+            total_refund,
+        )?;
+
+        // Emit a single event indicating the caller's bids were cancelled
+        emit!(BidCancelled {
+            auction_id: auction.id,
+            bidder: caller,
+        });
+
+        // Update auction status and clearing price based on remaining bids
+        let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(
+            auction, bids,
+            Clock::get().unwrap().unix_timestamp,
+            self.global_info.config.min_total_sol,
+        )?;
+        auction.last_status = auction_status;
+        auction.clearing_price = clearing_price_wrapped.unwrap_or(0); // 0 is valid for cancelled state
+        msg!("cancel_bid - updated auction_status: {:?}", auction.last_status);
+
+        Ok(())
+    }
+}// ---- End of ./instructions/cancel_bid.rs ----
+
+// ---- Start of ./instructions/place_bid.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Handles bid placement in Dutch auctions with descending price mechanics
+// Admin co-signs every bid to verify Twitter OAuth - x_id parameter comes from validated OAuth token
+// Calculates current price using linear decay, distributes fees to multiple recipients, emits AuctionFilled when last token sold
+
+use crate::{
+    account::{Auction, GlobalInfo, Bids, ReferralMappings}, // [REF] - Added ReferralMappings
+    constants::{GLOBAL_INFO_SEED, AUCTION_SOL_SEED, BIDS_SEED}, // [REF] - Added REFERRAL_MAPPINGS_SEED
+    errors::CustomError,
+    states::AuctionStatus,
+    events::{AuctionFilled, NewBid},
+    helper::{get_current_price, get_remaining_tokens, get_net_sol_raised},
+    helper::get_status_and_clearing_price,
+    processor::sol_transfer_user,
+    states::Bid,
+};
+use anchor_spl::{
+    token::{self, spl_token::instruction::AuthorityType, Mint, Token, TokenAccount},
+};
+use anchor_lang::prelude::*;
+use anchor_lang::AccountDeserialize;
+use std::mem::size_of;
+
+#[derive(Accounts)]
+#[instruction(bid_quantity: u64, x_id: u64, fee_perc: u64)]
+pub struct PlaceBid<'info> {
+    #[account(
+        mut,
+        seeds = [GLOBAL_INFO_SEED.as_ref()],
+        bump,
+    )]
+    pub global_info: Box<Account<'info, GlobalInfo>>,
+
+    #[account(mut)]
+    pub bidder: Signer<'info>,
+
+    // Admin signature validates x_id through Twitter OAuth verification
+    // Backend checks OAuth token with Twitter API before signing
+    // Ensures x_id matches authenticated Twitter account
+    #[account(
+        address = global_info.config.admin
+    )]
+    pub admin: Signer<'info>,
+
+    /// CHECK: admin knows what he's passing in
+    #[account(mut)]
+    pub auction_sol_account: AccountInfo<'info>,
+
+    #[account(mut)]
+    pub auction_data_account: Box<Account<'info, Auction>>,
+
+    #[account(mut)] 
+    pub token_mint: Account<'info, Mint>,
+
+    #[account(mut)] 
+    pub auction_token_account: Account<'info, TokenAccount>,
+
+    // Bids account for dynamic bid storage
+    #[account(
+        mut,
+        seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub bids_account: Account<'info, Bids>,
+
+    #[account(address = anchor_lang::system_program::ID)]
+    system_program: Program<'info, System>,
+
+    #[account(address = token::ID)]
+    token_program: Program<'info, Token>,
+
+    // Added to calculate rent costs for resizing
+    pub rent: Sysvar<'info, Rent>,
+    
+    // [REF] - Referral mappings account (optional - checked in logic)
+    /// CHECK: Referral mappings - validated as a PDA in the instruction logic
+    pub referral_mappings: Option<AccountInfo<'info>>,
+    
+    // [REF] - Referrer account (optional - receives referral fees)
+    /// CHECK: Referrer account - validated against referral mappings
+    #[account(mut)]
+    pub referrer: Option<AccountInfo<'info>>,
+    
+    // Fee accounts passed as remaining accounts
+    // These will be validated in the process method
+}
+
+impl<'info> PlaceBid<'info> {
+    pub fn process(&mut self, bid_quantity: u64, x_id: u64, fee_perc: u64, remaining_accounts: &[AccountInfo<'info>]) -> Result<()> {
+        let rent = Rent::get()?;
+
+        let auction = &mut self.auction_data_account;
+        let default_start_price = self.global_info.config.default_start_price_lamports;
+        require!(!auction.is_finalized, CustomError::AuctionAlreadyFinalized);
+
+        // Validate bid and auction state 
+        require!(bid_quantity > 0, CustomError::InvalidBidQuantity);
+
+        let clock = Clock::get()?;
+
+        // auction period expired? update finished state if so
+        if clock.unix_timestamp >= auction.end_timestamp {
+            auction.is_finished = true;
+            msg!("place_bid - Auction marked as finished");
+        }
+        require!(clock.unix_timestamp >= auction.start_timestamp, CustomError::AuctionNotStarted); // in period
+        require!(clock.unix_timestamp <= auction.end_timestamp, CustomError::AuctionEnded); // in period
+        require!(!auction.is_finished, CustomError::AuctionEnded); // not marked as ended
+
+        // init bid account, if not yet initialized
+        if self.bids_account.bids.is_empty() {
+            self.bids_account.auction_id = auction.id;  
+            self.bids_account.bids = vec![];
+        }
+
+       // Perform immutable borrows to gather necessary data
+        let current_bids_len = self.bids_account.bids.len(); // Immutable borrow to get length
+        let current_space = self.bids_account.to_account_info().data.borrow().len(); // Immutable borrow for space
+        require!(
+            !(current_bids_len > 0 && self.auction_sol_account.lamports() == 0),
+            CustomError::AuctionLiquidityMoved
+        );
+
+        // Calculate current price and remaining tokens
+        let current_price = 
+            get_current_price(auction, clock.unix_timestamp, default_start_price)
+            .unwrap_or(default_start_price);
+        let remaining_tokens = get_remaining_tokens(auction, &self.bids_account.bids);
+        require!(bid_quantity <= remaining_tokens, CustomError::NotEnoughTokensLeft);
+
+        // Calculate total cost, and auction amount (ex. fee)
+        let total_cost = bid_quantity.checked_mul(current_price).ok_or(CustomError::Overflow)?;
+        require!(fee_perc < 10000, CustomError::InvalidFeePercentage);
+        let fee = ((total_cost as u128 * fee_perc as u128) / 10000) as u64; // let mut fee = 0; // testing zero fees
+        let auction_amount = total_cost - fee;
+
+        // Adjust total_cost if auction_amount is below min_rent
+        // let min_rent = rent.minimum_balance(0);
+        // if auction_amount < min_rent {
+        //     let mut low = total_cost; 
+        //     let mut high = u64::MAX;
+        //     while low < high { // All hail Grok
+        //         let mid = low + (high - low) / 2;
+        //         let f = ((mid as u128 * fee_perc as u128) / 10000) as u64;
+        //         let a = mid - f;
+        //         if a >= min_rent {
+        //             high = mid;
+        //         } else {
+        //             low = mid + 1;
+        //         }
+        //     }
+        //     total_cost = low;
+        //     msg!("place_bid - bumping total_cost to {} to cover min rent", total_cost);
+        //     current_price = (total_cost + bid_quantity - 1) / bid_quantity; // Calculate adjusted current_price (ceiling division)
+        //     total_cost = bid_quantity.checked_mul(current_price).ok_or(CustomError::Overflow)?; // Recalculate total_cost, fee, and auction_amount with adjusted current_price
+        //     fee = ((total_cost as u128 * fee_perc as u128) / 10000) as u64;
+        //     auction_amount = total_cost - fee;
+        // }
+
+        // NEW vv
+        // Added logic to dynamically resize bids_account
+        let bid_size = size_of::<Bid>();
+        let header_space = 8 + 8 + 4; // Discriminator (8) + auction_id (8) + Vec length (4)
+        let current_capacity = (current_space - header_space) / bid_size;
+        let required_space = header_space + (current_bids_len + 1) * bid_size;
+        let mut additional_rent = 0;
+        msg!("place_bid - current_capacity: {}", current_capacity);
+        msg!("place_bid - required_space: {}", required_space); 
+        msg!("place_bid - current_bids_len: {}", current_bids_len);
+        msg!("place_bid - bid_size: {}", bid_size);
+        msg!("place_bid - header_space: {}", header_space);
+        msg!("place_bid - current_space: {}", current_space);
+        if current_bids_len >= current_capacity {
+            let new_space = required_space;
+            let rent_for_new_space = rent.minimum_balance(new_space);
+            let current_rent = rent.minimum_balance(current_space);
+            additional_rent = rent_for_new_space - current_rent;
+            msg!("place_bid - additional_rent: {}", additional_rent);
+
+            // Transfer additional rent from bidder to bids_account before resizing
+            sol_transfer_user(
+                self.bidder.to_account_info(),
+                self.bids_account.to_account_info(),
+                self.system_program.to_account_info(),
+                additional_rent,
+            )?;
+            msg!("place_bid - transferred additional rent from bidder to bids_account");
+
+            // Now resize the account
+            AccountInfo::realloc(&self.bids_account.to_account_info(), new_space, false)?;
+            msg!("place_bid - resized bids_account to {} bytes", new_space);
+        }
+        let total_payment = total_cost.checked_add(additional_rent).ok_or(CustomError::Overflow)?;
+        require!(self.bidder.lamports() >= total_payment, CustomError::InsufficientFunds);
+        // NEW ^^
+
+        // Log the values for debugging
+        msg!("place_bid - bid_quantity: {}", bid_quantity);
+        msg!("place_bid - current_price: {}", current_price);
+        msg!("place_bid - remaining_tokens: {}", remaining_tokens);
+        msg!("place_bid - total_cost: {}", total_cost);
+        msg!("place_bid - auction_amount: {}", auction_amount);
+        msg!("place_bid - fee_perc: {}", fee_perc);
+        msg!("place_bid - fee: {}", fee);
+        //msg!("place_bid - min_rent: {}", min_rent);
+
+        // Transfer auction amount to auction_sol_account
+        sol_transfer_user(
+            self.bidder.to_account_info(),
+            self.auction_sol_account.to_account_info(),
+            self.system_program.to_account_info(),
+            auction_amount,
+        )?;
+
+        // [REF] - Handle fee transfer with potential referral split
+        let ref_bid_fee_perc_share = self.global_info.config.ref_bid_fee_perc_share;
+        
+        // [REF] - Check if referral system is enabled and bidder has a referrer
+        let mut referrer_fee = 0u64;
+        let mut platform_fee = fee;
+        
+        if ref_bid_fee_perc_share > 0 && self.referral_mappings.is_some() && self.referrer.is_some() {
+            // [REF] - Look up referrer for this bidder
+            let referral_mappings_info = self.referral_mappings.as_ref().unwrap();
+            let referrer_account_info = self.referrer.as_ref().unwrap();
+            
+            // [REF] - Try to deserialize the referral mappings account
+            if let Ok(referral_mappings) = ReferralMappings::try_deserialize(&mut &referral_mappings_info.data.borrow()[..]) {
+                // [REF] - Find the referrer for this bidder
+                let mut found_referrer = false;
+                for mapping in &referral_mappings.referrals {
+                    if mapping.referred_account == self.bidder.key() {
+                        // [REF] - Verify the referrer account matches the mapping
+                        if mapping.referrer_account == referrer_account_info.key() {
+                            found_referrer = true;
+                            
+                            // [REF] - Calculate referrer's share (ref_bid_fee_perc_share is 0-10000 for 0.00%-100.00%)
+                            referrer_fee = ((fee as u128 * ref_bid_fee_perc_share as u128) / 10000) as u64;
+                            platform_fee = fee.saturating_sub(referrer_fee);
+                            
+                            msg!("[REF] place_bid - Referral found: bidder {} -> referrer {}", 
+                                 self.bidder.key(), referrer_account_info.key());
+                            msg!("[REF] place_bid - Fee split: total={}, referrer={}, platform={}", 
+                                 fee, referrer_fee, platform_fee);
+                        }
+                        break;
+                    }
+                }
+                
+                if !found_referrer {
+                    msg!("[REF] place_bid - Warning: Referrer account provided but doesn't match mapping");
+                }
+            } else {
+                msg!("[REF] place_bid - Referral mappings account exists but is not initialized");
+            }
+        }
+        
+        // [REF] - Transfer platform's share of the fee based on configured percentages
+        if platform_fee > 0 {
+            let fee_accounts = &self.global_info.config.fee_accounts;
+            let num_fee_accounts = fee_accounts.len();
+            
+            if num_fee_accounts > 0 {
+                // Get fee accounts from remaining_accounts
+                let ctx_remaining = remaining_accounts;
+                
+                // Validate we have enough remaining accounts for fee accounts
+                require!(
+                    ctx_remaining.len() >= num_fee_accounts,
+                    CustomError::InvalidAccountInput
+                );
+                
+                let mut total_transferred: u64 = 0;
+                
+                // Transfer fees to each account based on percentage
+                for (i, fee_account_config) in fee_accounts.iter().enumerate() {
+                    let fee_account_info = &ctx_remaining[i];
+                    
+                    // Verify the account matches the expected fee account
+                    require!(
+                        fee_account_info.key() == fee_account_config.pubkey,
+                        CustomError::InvalidFeeAccount
+                    );
+                    
+                    // Calculate amount for this account based on percentage
+                    // For last account, give any remainder to ensure total equals platform_fee
+                    let amount = if i == num_fee_accounts - 1 {
+                        // Last account gets remainder to handle rounding
+                        platform_fee.saturating_sub(total_transferred)
+                    } else {
+                        // Calculate based on percentage (share is 0-10000 for 0-100%)
+                        ((platform_fee as u128 * fee_account_config.share as u128) / 10000) as u64
+                    };
+                    
+                    if amount > 0 {
+                        sol_transfer_user(
+                            self.bidder.to_account_info(),
+                            fee_account_info.to_account_info(),
+                            self.system_program.to_account_info(),
+                            amount,
+                        )?;
+                        total_transferred = total_transferred.saturating_add(amount);
+                        msg!("Transferred {} lamports to fee account {} ({}%)", 
+                             amount, fee_account_config.pubkey, fee_account_config.share / 100);
+                    }
+                }
+            }
+        }
+        
+        // [REF] - Transfer referrer's share if applicable
+        if referrer_fee > 0 && self.referrer.is_some() {
+            let referrer_account_info = self.referrer.as_ref().unwrap();
+            sol_transfer_user(
+                self.bidder.to_account_info(),
+                referrer_account_info.to_account_info(),
+                self.system_program.to_account_info(),
+                referrer_fee,
+            )?;
+            msg!("[REF] place_bid - Transferred {} lamports to referrer {}", 
+                 referrer_fee, referrer_account_info.key());
+        }
+
+        // Record the bid with adjusted current_price and fee
+        let bids = &mut self.bids_account.bids; // mutuable borrow
+        bids.push(Bid {
+            bidder: self.bidder.key(),
+            x_id,
+            bid_timestamp: clock.unix_timestamp,
+            bid_qty: bid_quantity,
+            bid_sol: current_price,
+            is_claimed: false,
+            bid_fee: fee,
+        });
+
+        // Emit bid event
+        emit!(NewBid {
+            auction_id: auction.id,
+            bidder: self.bidder.key(),
+            x_id,
+            bid_qty: bid_quantity,
+            bid_sol: current_price,
+            bid_fee: fee,
+        });
+
+        // Check if auction is fully allocated
+        if remaining_tokens - bid_quantity == 0 {
+            auction.is_finished = true;
+            emit!(AuctionFilled {
+                auction_id: auction.id,
+            });
+
+            //
+            // Auction succeeds if:
+            //   1. All tokens are sold;
+            //   2. and by implication, clearing price > 0
+            //
+            let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(
+                auction, bids,
+                clock.unix_timestamp,
+                self.global_info.config.min_total_sol,
+            )?;
+            if auction_status == AuctionStatus::Succeeded {
+                let clearing_price = clearing_price_wrapped.ok_or(CustomError::InvalidClearingPrice)?;
+
+                //
+                // Method (3) -- todo??
+                //   Combine 1 & 2
+                //      Mint a (*fixed* this time) amount of tokens at auction end, and use that (instead of 1-dist_percent)
+                //      to calculate what fraction of net SOL raised needs to go into the pool to yield the clearing price.
+                //
+                //  Then we can set dist_percent to 100%, for a cleaner user experience (1 token bid = 1 token received)
+                //
+                //...
+
+                //
+                // Method (2) calculate what fraction of the net SOL raised has to be put in the liquidity pool, to achieve the given clearing price.
+                //
+                //  S = P * T
+                //    where S is amount of SOL to put in the pool, and P is the settlement price, 
+                //     and T is the amount of liquidity tokens already locked.
+                //    e.g. for T = 3, P = 0.000861112: S = 0.002583336
+                //
+                /*auction.net_sol_raised = get_net_sol_raised(auction, bids, clearing_price, 0, self.auction_sol_account.lamports())?;
+                let token_balance = self.auction_token_account.amount; // smallest token units
+                let dist_percent = auction.dist_percent; // 0 to 10000
+                let token_decimals = auction.token_decimals as u32;
+
+                // Calculate T (locked tokens) as in WithdrawTokens
+                let locked_tokens = token_balance
+                    .checked_mul(10000 - dist_percent)
+                    .ok_or(CustomError::Overflow)?
+                    .checked_div(10000)
+                    .ok_or(CustomError::Overflow)?;
+
+
+                // Calculate S = (P * T) / 10^token_decimals
+                let s_lamports = (clearing_price as u128)
+                    .checked_mul(locked_tokens as u128)
+                    .ok_or(CustomError::Overflow)?
+                    .checked_div(10u128.pow(token_decimals))
+                    .ok_or(CustomError::Overflow)?
+                    as u64;
+
+                // ### this MUST MATCH the fixed amount in migrate-auction.ts!
+                let FIXED_SOL_RAYDIUM_COSTS = 25000; // test low devenet value - ~250000000 for mainnet value ~0.25 sol
+                //let FIXED_SOL_RAYDIUM_COSTS = 0; // testing zero fees
+                auction.liquidity_sol = s_lamports + FIXED_SOL_RAYDIUM_COSTS; // method 3 field
+                
+                msg!("place_bid final - P (lamports per whole token [clearing_price]): {}", clearing_price);
+                msg!("place_bid final - T (smallest token units [locked_tokens]): {}", locked_tokens);
+                msg!("place_bid final - S (lamports [base sol for liquidity - s_lamports]): {}", s_lamports);
+                msg!("place_bid final - (vs get_net_sol_raised): {}", auction.net_sol_raised);
+                msg!("place_bid final - FIXED_SOL_RAYDIUM_COSTS: {}", FIXED_SOL_RAYDIUM_COSTS);
+                msg!("place_bid final - liquidity_sol [base sol for liquidity + fixed raydium costs]: {}", auction.liquidity_sol);
+
+                // calculate buyback price for bidders - we buy back from unused raised sol (sol raised but not used for liquidity)
+                let unlocked_tokens = token_balance.checked_sub(locked_tokens).ok_or(CustomError::Underflow)?;
+                msg!("place_bid final - unlocked_tokens: {}", unlocked_tokens);
+                if unlocked_tokens > 0 {
+                    let diff = auction.net_sol_raised
+                        .checked_sub(auction.liquidity_sol)
+                        .ok_or(CustomError::Underflow)?;
+                    if diff > 0 {
+                        let buyback_price = (diff as u128)
+                            .checked_mul(10u128.pow(auction.token_decimals as u32))
+                            .ok_or(CustomError::Overflow)?
+                            .checked_div(unlocked_tokens as u128)
+                            .ok_or(CustomError::Overflow)?
+                            as u64;
+                        auction.buyback_price = buyback_price;
+                        msg!("place_bid final - adjusted buyback_price (lamports per whole token): {}", buyback_price);
+                    } else {
+                        auction.buyback_price = 0;
+                        msg!("place_bid final - no SOL left for buyback, buyback_price set to 0");
+                    }
+                } else {
+                    auction.buyback_price = 0;
+                    msg!("place_bid final - no unlocked tokens, buyback_price set to 0");
+                }*/
+                //
+                // Method (2) todo: buyback() instruction - take in auctionId; only for bidders in that auction; 
+                //       they can only buyback after the auction is finsihed in sucess state, and after is_sol_withdrawn && is_tokens_withdrawn
+                //       they can't buyback if more than auction.buyback_period_days has elapsed since the auction ended
+                //       they can only buyback at the buyback_price
+                //
+                //       to buyback they must send tokens to us; tokens must be from the auctionId they are specifying in the params
+                //       we will send them in return sol at auction.buyback_price lamports per whole token 
+                //       they can buyback up to the amount of tokens they bid
+                //
+                //       we then send the tokens received to the DAO wallet
+                //
+                //
+                // Method (2) todo: daoClaim() instruction; should be signed by the daoWallet (see global config)
+                //       it should take in an auctionId;
+                //       it should fail if is NOT: (finsihed in sucess state && is_sol_withdrawn && is_tokens_withdrawn && buyback period has elapsed)
+                //
+                //       instruction should withdraw all sol and tokens from the auction and send to the DaoWallet, and set a new is_dao_claimed flag on the auction.
+                //
+
+                //
+                // Method (1) "overmint" -- mint more tokens, so all SOL raised can be put into the liquidity pool to achieve the given clearing price. 
+                //
+                //  T = S / P
+                //    where S is the net SOL raised, and P is the settlement price. 
+                //    e.g. for S = 0.084317208, P = 0.000861112: T = 97.91
+                //
+                let s_lamports = get_net_sol_raised(auction, bids, clearing_price, 0, self.auction_sol_account.lamports())?; // S
+                auction.net_sol_raised = s_lamports;
+
+                // Calculate T_units: T = S / P, adjusted for decimals
+                let token_decimals = auction.token_decimals as u32;
+                let t_units = ((s_lamports as u128) // T
+                    .checked_mul(10u128.pow(token_decimals))
+                    .ok_or(CustomError::Overflow)?  // Check multiplication overflow
+                    / (clearing_price as u128))     // Perform division directly
+                    as u64;                         // Cast to u64
+              
+                msg!("place_bid final - P - clearing_price: {}", clearing_price);
+                msg!("place_bid final - S - s_lamports: {}", s_lamports);
+                msg!("place_bid final - token_decimals: {}", token_decimals);
+                msg!("place_bid final - T - t_units: {}", t_units);
+
+                // +0.5% (old) - we do this off chain now
+                // let adjusted_t_units = (t_units as u128)
+                //     .checked_mul(1005)
+                //     .and_then(|x| x.checked_div(1000))
+                //     .ok_or(CustomError::Overflow)? as u64;
+                let adjusted_t_units = t_units;
+
+                // Mint T_units to auction_token_account
+                auction.liquidity_overmint = adjusted_t_units;
+                token::mint_to(
+                    CpiContext::new_with_signer(
+                        self.token_program.to_account_info(),
+                        token::MintTo {
+                            mint: self.token_mint.to_account_info(),
+                            to: self.auction_token_account.to_account_info(),
+                            authority: self.auction_sol_account.to_account_info(),
+                        },
+                        &[&[
+                            AUCTION_SOL_SEED.as_ref(),
+                            auction.id.to_le_bytes().as_ref(),
+                            &[auction.bump],
+                        ]],
+                    ),
+                    adjusted_t_units,
+                )?;
+                msg!("Overminted {} token units for liquidity", auction.liquidity_overmint);
+                msg!("Total {} token units", auction.liquidity_overmint + auction.token_supply);
+
+                // revoke mint authority
+                token::set_authority(
+                    CpiContext::new_with_signer(
+                        self.token_program.to_account_info(),
+                        token::SetAuthority {
+                            current_authority: self.auction_sol_account.to_account_info(),
+                            account_or_mint: self.token_mint.to_account_info(),
+                        },
+                        &[&[
+                            AUCTION_SOL_SEED.as_ref(),
+                            auction.id.to_le_bytes().as_ref(),
+                            &[auction.bump],
+                        ]],
+                    ),
+                    AuthorityType::MintTokens,
+                    None,
+                )?;
+            }
+        }
+
+        // Update status & clearing price
+        let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(
+            auction, bids,
+            clock.unix_timestamp,
+            self.global_info.config.min_total_sol
+        )?;
+        auction.last_status = auction_status;
+        auction.clearing_price = clearing_price_wrapped.unwrap_or(0); // 0 is valid for live/pending auctions
+        msg!("place_bid - updated auction_status: {:?}", auction.last_status);
+
+        Ok(())
+    }
+}
+// ---- End of ./instructions/place_bid.rs ----
+
+// ---- Start of ./instructions/withdraw_sol.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Admin withdraws net SOL raised from successful auctions
+// Calculates total minus unclaimed refunds and rent-exempt minimum, one-time withdrawal only
+// Uses get_net_sol_raised to handle overmint scenario where all SOL goes to liquidity pool
+
+use crate::{
+    account::{ Auction, GlobalInfo, Bids }, 
+    constants::{ GLOBAL_INFO_SEED, AUCTION_SOL_SEED, BIDS_SEED },
+    errors::CustomError,
+    states::AuctionStatus,
+    helper::{get_status_and_clearing_price, get_net_sol_raised},
+};
+use anchor_lang::{prelude::*, solana_program, system_program};
+use solana_program::{
+    program::{invoke_signed},
+};
+
+#[derive(Accounts)]
+pub struct WithdrawSol<'info> {
+    #[account(
+        seeds = [GLOBAL_INFO_SEED.as_ref()],
+        bump,
+    )]
+    pub global_info: Box<Account<'info, GlobalInfo>>,
+
+    #[account(
+        mut,
+        address = global_info.config.admin @ CustomError::Unauthorized
+    )]
+    pub admin: Signer<'info>,
+
+    #[account(mut)]
+    pub auction_data_account: Box<Account<'info, Auction>>,
+
+    /// CHECK: This account is manually verified
+    #[account(mut)]
+    pub auction_sol_account: AccountInfo<'info>,
+     
+    #[account(
+        mut,
+        seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub bids_account: Account<'info, Bids>,
+
+    #[account(address = system_program::ID)]
+    pub system_program: Program<'info, System>,
+}
+
+impl<'info> WithdrawSol<'info> {
+    pub fn process(&mut self) -> Result<()> {
+        let auction = &mut self.auction_data_account;
+        let bids = &mut self.bids_account.bids;
+        let auction_id = auction.id;
+        let bump = auction.bump;
+
+        // Verify auction_sol_account PDA
+        let (expected_pda, _) = Pubkey::find_program_address(
+            &[AUCTION_SOL_SEED.as_ref(), auction_id.to_le_bytes().as_ref()],
+            &crate::ID,
+        );
+        require_keys_eq!(expected_pda, self.auction_sol_account.key(), CustomError::InvalidPDA);
+
+        // Auction status and checks
+        let (auction_status, clearing_price_wrapped) = get_status_and_clearing_price(
+            auction, bids,
+            Clock::get()?.unix_timestamp,
+            self.global_info.config.min_total_sol,
+        )?;
+        let clearing_price = clearing_price_wrapped.ok_or(CustomError::InvalidClearingPrice)?;
+        if Clock::get()?.unix_timestamp >= auction.end_timestamp {
+            auction.is_finished = true;
+        }
+        require!(auction.is_finished, CustomError::AuctionNotFinished);
+        
+        require!(auction_status != AuctionStatus::FailedMinNotReached, CustomError::MinNotReached);
+        require!(auction_status == AuctionStatus::Succeeded, CustomError::InvalidState);
+        auction.last_status = auction_status;
+        auction.clearing_price = clearing_price;
+        msg!("updated auction_status: {:?}", auction.last_status);
+
+        // method 1 - overmint: we withdraw all the sol...
+        let amount_to_transfer = get_net_sol_raised(auction, bids, clearing_price, 0, self.auction_sol_account.lamports())?;
+
+        // Check if SOL was already withdrawn 
+        if auction.is_sol_withdrawn {
+            //msg!("SOL already withdrawn. Amount that was previously withdrawn: {} lamports", amount_to_transfer); // todo - ## this is bogus - would need to track this in a new struct/account
+            return Err(CustomError::SolAlreadyWithdrawn.into());
+        } 
+
+        // method 2 - liq underfund - withdraw the fraction of net sol raised to yield pool starting price = the auction clearing price
+        // retain the rest of the sol in the auction
+        //require!(auction.liquidity_sol > 0, CustomError::InvalidState);
+        //let amount_to_transfer = auction.liquidity_sol; // method 2
+        
+        // Perform transfer if amount is positive
+        if amount_to_transfer > 0 {
+            let transfer_instruction = solana_program::system_instruction::transfer(
+                &self.auction_sol_account.key,
+                &self.admin.key,
+                amount_to_transfer,
+            );
+            invoke_signed(
+                &transfer_instruction,
+                &[
+                    self.auction_sol_account.clone(),
+                    self.admin.to_account_info(),
+                    self.system_program.to_account_info(),
+                ],
+                &[&[
+                    AUCTION_SOL_SEED.as_ref(),
+                    auction_id.to_le_bytes().as_ref(),
+                    &[bump],
+                ]],
+            )?;
+            msg!("Withdrawal successful. Transferred {} lamports to admin.", amount_to_transfer);
+        } else {
+            msg!("No SOL available to withdraw.");
+        }
+
+        auction.is_sol_withdrawn = true;
+        Ok(())
+    }
+}
+
+// ---- End of ./instructions/withdraw_sol.rs ----
+
+// ---- Start of ./helper.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Core calculation engine for Dutch auction mechanics
+// get_current_price implements linear decay from start_price to 1 lamport over duration
+// get_status_and_clearing_price determines uniform clearing price - all bidders pay lowest accepted bid price
+// Uses checked_mul/checked_add throughout to prevent overflow, saturating_sub for safe underflow handling
+
+//use anchor_lang::prelude::*;
+use crate::account::Auction;
+use crate::states::AuctionStatus;
+use anchor_lang::{prelude::*};
+use crate::errors::CustomError;
+use crate::states::Bid;
+
+pub fn get_net_sol_raised(
+    _auction: &Auction,
+    bids: &[Bid],
+    clearing_price: u64,
+    rent_exempt_minimum: u64,
+    balance: u64,
+) -> Result<u64> { // Fixed: Only one generic argument
+    
+    // Calculate total refunds owed for unclaimed bids
+    let total_unclaimed_refunds = bids.iter()
+        .filter(|bid| !bid.is_claimed) // Only unclaimed bids
+        .try_fold(0u64, |acc, bid| {
+            let paid = bid.bid_qty
+                .checked_mul(bid.bid_sol)              // total_cost = qty * sol
+                .and_then(|total_cost| total_cost.checked_sub(bid.bid_fee)) // paid = total_cost - fee
+                .ok_or(CustomError::Overflow)?;    // No type conversion needed
+            let exact = bid.bid_qty
+                .checked_mul(clearing_price)
+                .ok_or(CustomError::Overflow)?;    // No type conversion needed
+            let refund = paid.saturating_sub(exact); // Refund if paid > exact
+            acc.checked_add(refund)
+                .ok_or(CustomError::Overflow)      // No type conversion needed
+        })?;
+
+    // Calculate net SOL raised (withdrawable amount)
+    let net_sol_raised = balance
+        .checked_sub(total_unclaimed_refunds)
+        .and_then(|net| net.checked_sub(rent_exempt_minimum))
+        .ok_or(CustomError::Underflow)?;           // Fixed: No into() needed
+
+    // Log the requested values
+    msg!("balance: {}", balance);
+    msg!("total_unclaimed_refunds: {}", total_unclaimed_refunds);
+    msg!("rent_exempt_minimum: {}", rent_exempt_minimum);
+    msg!("net_sol_raised: {}", net_sol_raised);
+
+    Ok(net_sol_raised)
+}
+
+pub(crate) fn get_remaining_tokens(auction: &Auction, bids: &[Bid]) -> u64 { // integer token units (not lamports
+    let token_qty = auction
+        .token_supply // token lamports
+      .saturating_div(10u64.pow(auction.token_decimals as u32));
+
+    let allocated: u64 = bids.iter().map(|b| b.bid_qty).sum();
+    token_qty.saturating_sub(allocated)
+}
+
+pub(crate) fn get_current_price(
+    auction: &Auction,
+    current_time: i64,
+    default_start_price_lamports: u64,
+) -> Option<u64> {
+    // linear decay from start_price_sol at start_timestamp to 1 lamport at end_timestamp
+    if current_time <= auction.start_timestamp {
+        return Some(default_start_price_lamports);
+    }
+    if current_time >= auction.end_timestamp {
+        return Some(1); // Minimum price of 1 lamport
+    }
+
+    let start_time = auction.start_timestamp;
+    let start_price = default_start_price_lamports;
+
+    let total_duration = (auction.end_timestamp - start_time) as u64;
+    if total_duration == 0 {
+        // degenerate case
+        return Some(1);
+    }
+
+    let elapsed = (current_time - start_time) as u64;
+
+    // linear interpolation:
+    // price(t) = start_price - ( (start_price - end_price) * (elapsed / total_duration) )
+    let price_diff = start_price.saturating_sub(1);
+    let decay_amount = (price_diff as u128 * elapsed as u128) / (total_duration as u128);
+    Some(start_price.saturating_sub(decay_amount as u64))
+}
+
+pub(crate) fn get_status_and_clearing_price(
+    auction: &Auction,
+    bids: &[Bid],
+    current_time: i64,
+    min_total_sol: u64,
+) -> Result<(AuctionStatus, Option<u64>)> {
+    // Calculate total allocated (bid) tokens and sol
+    let allocated_qty_opt: Option<u64> = bids.iter().try_fold(0u64, |acc, b| acc.checked_add(b.bid_qty));
+    let total_sol_after_fees_opt: Option<u64> = bids.iter().try_fold(0u64, |acc, b| {
+        b.bid_qty
+            .checked_mul(b.bid_sol)
+            .and_then(|product| product.checked_sub(b.bid_fee))
+            .and_then(|net| acc.checked_add(net))
+    });
+    
+    // Return error if calculations overflow instead of silently defaulting to 0
+    let allocated_qty = allocated_qty_opt.ok_or(CustomError::Overflow)?;
+    let total_sol_after_fees = total_sol_after_fees_opt.ok_or(CustomError::Overflow)?;
+
+    // Calculate total unclaimed refunds
+    let mut total_change = 0u64;
+    let clearing_price_tmp; // our best guess at the clearing price
+    if bids.is_empty() {
+        clearing_price_tmp = 0; // no bids yet, no clearing price
+    } else {
+        clearing_price_tmp = bids.last().unwrap().bid_sol; // use the last bid as the price
+    }
+    for bid in bids.iter() {
+        //if !bid.is_claimed {
+            let paid = bid.bid_qty * bid.bid_sol - bid.bid_fee;
+            let exact = if clearing_price_tmp == 0 {
+                bid.bid_qty * bid.bid_sol
+            } else {
+                bid.bid_qty * clearing_price_tmp
+            };
+            let owed = paid.saturating_sub(exact);
+            total_change += owed;
+        //}
+    }
+
+    // Calculate net_sol_raised before rent exemption
+    let net_sol_raised_before_rent = total_sol_after_fees.saturating_sub(total_change);
+
+    // Derive rent exemption for a 0-byte account
+    let rent = Rent::get().unwrap(); // Fetch current rent rules
+    let rent_exempt_minimum = rent.minimum_balance(0); // 0 bytes for auction_sol_account
+
+    // Subtract rent exemption to get final net_sol_raised
+    let net_sol_raised = net_sol_raised_before_rent.saturating_sub(rent_exempt_minimum); // empty would be nicer...
+
+    // Determine the auction status
+    let supply_qty = auction.token_supply.saturating_div(10u64.pow(auction.token_decimals as u32));
+
+    msg!("get_status_and_clearing_price -           allocated_qty: {}", allocated_qty);
+    msg!("get_status_and_clearing_price -              supply_qty: {}", supply_qty);
+    msg!("get_status_and_clearing_price -    total_sol_after_fees: {}", total_sol_after_fees);
+    msg!("get_status_and_clearing_price -      clearing_price_tmp: {}", clearing_price_tmp);
+    msg!("get_status_and_clearing_price -            total_change: {}", total_change);
+    msg!("get_status_and_clearing_price -     rent_exempt_minimum: {}", rent_exempt_minimum);
+    msg!("get_status_and_clearing_price -          net_sol_raised: {}", net_sol_raised); // this must be >
+    msg!("get_status_and_clearing_price -           MIN_TOTAL_SOL: {}", min_total_sol);  // than this
+
+    // Assign status
+    let status = if allocated_qty >= supply_qty && net_sol_raised >= min_total_sol {
+        AuctionStatus::Succeeded
+    } else if allocated_qty >= supply_qty && net_sol_raised < min_total_sol {
+        AuctionStatus::FailedMinNotReached
+    } else if current_time < auction.start_timestamp {
+        AuctionStatus::Pending
+    } else if current_time < auction.end_timestamp {
+        AuctionStatus::Live
+    } else {
+        AuctionStatus::FailedNotFullyAllocated
+    };
+
+    // Assign the clearing price based on the status
+    let clearing_price = match status {
+        AuctionStatus::Pending => None,
+        AuctionStatus::Live => {
+            if bids.is_empty() {
+                None
+            } else {
+                let last_bid = bids.last().unwrap();
+                Some(last_bid.bid_sol)
+            }
+        }
+        AuctionStatus::Succeeded => get_clearing_price(auction, bids),
+        AuctionStatus::FailedMinNotReached => None,
+        AuctionStatus::FailedNotFullyAllocated => None,
+        AuctionStatus::Finalized => None,
+    };
+
+    Ok((status, clearing_price))
+}
+
+fn get_clearing_price(auction: &Auction, bids: &[Bid]) -> Option<u64> {
+    let mut cumulative_qty = 0u64;
+    for bid in bids {
+        cumulative_qty += bid.bid_qty.saturating_mul(10u64.pow(auction.token_decimals as u32));
+        if cumulative_qty == auction.token_supply { // Happy path: bids are exact match for token supply
+            return Some(bid.bid_sol);
+        }
+        if cumulative_qty > auction.token_supply {
+            return None; // Shouldn't happen if bids are managed correctly, indicates error
+        }
+    }
+    return None;
+}
+// ---- End of ./helper.rs ----
+
+// ---- Start of ./lib.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Main entry point for Maxi auction program
+// Routes all instructions to their handlers, defines program ID that must match deployed keypair
+// Initialize must be called first to set up GlobalInfo PDA before any other instructions
+
+use anchor_lang::prelude::*;
+
+pub mod account;
+pub mod constants;
+pub mod errors;
+pub mod events;
+pub mod helper;
+pub mod instructions;
+pub mod processor;
+pub mod states;
+
+use instructions::*;
+use states::Config;
+use errors::CustomError;
+
+declare_id!("3UGQHeMjgnGn5wCnekaVZNEEp5j1oVt1dj5q7dTiw8ZF");
+
+#[program]
+pub mod maxi_auction {
+
+    use super::*;
+
+    pub fn initialize<'info>(
+        ctx: Context<'_, '_, '_, 'info, Initialize<'info>>,
+        new_config: Config,
+    ) -> Result<()> {
+        ctx.accounts.process(new_config)
+    }
+
+    pub fn create_auction(
+        ctx: Context<CreateAuction>,
+        x_id: u64,
+        name: String,
+        symbol: String,
+        uri: String,
+        duration_hours: u64,
+        dist_percent: u64,
+        delay_in_seconds: u64,
+        buyback_period_days: u64,
+    ) -> Result<()> {
+        ctx.accounts.process(
+            ctx.bumps.auction_sol_account,
+            x_id,
+            name,
+            symbol,
+            uri,
+            duration_hours,
+            dist_percent,
+            delay_in_seconds,   
+            buyback_period_days,
+        )
+    }
+
+    pub fn place_bid<'info>(ctx: Context<'_, '_, '_, 'info, PlaceBid<'info>>, bid_qty: u64, x_id: u64, fee_perc: u64) -> Result<()> {
+        let num_fee_accounts = ctx.accounts.global_info.config.fee_accounts.len();
+        let remaining = ctx.remaining_accounts;
+        require!(
+            remaining.len() >= num_fee_accounts,
+            CustomError::InvalidAccountInput
+        );
+        ctx.accounts.process(bid_qty, x_id, fee_perc, remaining)
+    }
+
+    pub fn cancel_bid(ctx: Context<CancelBid>) -> Result<()> {
+        ctx.accounts.process()
+    }
+
+    pub fn claim<'info>(ctx: Context<'_, '_, '_, 'info, Claim<'info>>) -> Result<()> {
+        ctx.accounts.process()
+    }
+
+    pub fn withdraw_sol(ctx: Context<WithdrawSol>) -> Result<()> {
+        ctx.accounts.process()
+    }
+
+    pub fn withdraw_tokens(ctx: Context<WithdrawTokens>) -> Result<()> {
+        ctx.accounts.process()
+    }
+
+    pub fn finalize(ctx: Context<Finalize>) -> Result<()> {
+        ctx.accounts.process()
+    }
+
+    pub fn init_auction_bids(ctx: Context<InitAuctionBids>) -> Result<()> {
+        ctx.accounts.process()
+    }
+
+    // [REF] - Admin-only function to set referral mappings
+    pub fn set_referral(ctx: Context<SetReferral>, referred_account: Pubkey, referrer_account: Pubkey) -> Result<()> {
+        ctx.accounts.process(referred_account, referrer_account)
+    }
+
+    // [REF] - Admin-only function to clear all referral mappings (dev/test only)
+    pub fn dev_clear_referrals(ctx: Context<DevClearReferrals>) -> Result<()> {
+        ctx.accounts.process()
+    }
+}
+// ---- End of ./lib.rs ----
+
+// ---- Start of ./states.rs ----
+// (c) MaxiMeme 2025 / all rights reserved / dev'd by Little Rabbit & Harry
+//
+// Core data structures for auction configuration and bid tracking
+// Config holds system params with fee accounts that must sum to 10000 (100%), Bid struct tracks individual bids
+// AuctionStatus enum defines state machine: Pending->Live->Succeeded/Failed->Finalized
+
+use anchor_lang::prelude::*;
+use core::fmt::Debug;
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub struct FeeAccount {
+    pub pubkey: Pubkey,
+    pub share: u64,  // 0-10000 (0.00% to 100.00%) - this account's share of platform fees
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub struct Config {
+    pub admin: Pubkey,
+    pub default_token_supply: u64,
+    pub default_token_decimals: u8,
+    pub default_start_price_lamports: u64,
+    pub fee_accounts: Vec<FeeAccount>,  // Array of fee accounts with their percentage shares
+    pub dao_account: Pubkey,
+    pub min_total_sol: u64,
+    // [REF] - Referral system configuration field
+    pub ref_bid_fee_perc_share: u64,     // 0-10000 (0.00% to 100.00%) - referrer's share of bid fees
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Default, Debug)]
+pub struct Bid {
+    // 73
+    pub bidder: Pubkey,     // 32
+    pub x_id: u64,          // 8
+    pub bid_timestamp: i64, // 8
+    pub bid_qty: u64,       // 8
+    pub bid_sol: u64,       // 8
+    pub is_claimed: bool,   // 1
+    pub bid_fee: u64,       // 8
+}
+
+#[derive(PartialEq, Eq, Debug, Default, AnchorSerialize, AnchorDeserialize, Clone )]
+pub enum AuctionStatus {
+    #[default]
+    Pending,
+    Live,
+    Succeeded,
+    FailedMinNotReached,
+    FailedNotFullyAllocated,
+    Finalized,
+}// ---- End of ./states.rs ----
+
