@@ -1807,8 +1807,7 @@ impl<'info> PlaceBid<'info> {
         //     auction_amount = total_cost - fee;
         // }
 
-        // NEW vv
-        // Added logic to dynamically resize bids_account
+        // dynamically resize bids_account
         let bid_size = size_of::<Bid>();
         let header_space = 8 + 8 + 4; // Discriminator (8) + auction_id (8) + Vec length (4)
         let current_capacity = (current_space - header_space) / bid_size;
@@ -1820,7 +1819,7 @@ impl<'info> PlaceBid<'info> {
         msg!("place_bid - bid_size: {}", bid_size);
         msg!("place_bid - header_space: {}", header_space);
         msg!("place_bid - current_space: {}", current_space);
-        if current_bids_len >= current_capacity {
+        if current_bids_len >= current_capacity { // we protect against unbounded spammy vec growth with a min_bid_size in config
             let new_space = required_space;
             let rent_for_new_space = rent.minimum_balance(new_space);
             let current_rent = rent.minimum_balance(current_space);
@@ -1842,7 +1841,6 @@ impl<'info> PlaceBid<'info> {
         }
         let total_payment = total_cost.checked_add(additional_rent).ok_or(CustomError::Overflow)?;
         require!(self.bidder.lamports() >= total_payment, CustomError::InsufficientFunds);
-        // NEW ^^
 
         // Log the values for debugging
         msg!("place_bid - bid_quantity: {}", bid_quantity);
