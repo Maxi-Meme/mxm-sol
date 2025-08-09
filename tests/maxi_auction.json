@@ -2074,10 +2074,6 @@
         "kind": "struct",
         "fields": [
           {
-            "name": "deployer",
-            "type": "pubkey"
-          },
-          {
             "name": "auctions_num",
             "type": "u64"
           },

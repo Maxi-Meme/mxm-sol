@@ -3484,7 +3484,7 @@ describe("maxi-auction", () => {
 
   it("fees - bid fees across multiple fee accounts", async () => {
 
-
+    await test_clear_referrals();
     await test_create_auction_KP0({});
     const bidder = USER_KPs[1];
 
@@ -4165,8 +4165,7 @@ describe("maxi-auction", () => {
     
     // Verify new admin is set
     const updatedGlobalInfo = await program.account.globalInfo.fetch(globalInfo);
-    assert.equal(updatedGlobalInfo.deployer.toBase58(), newAdminKp.publicKey.toBase58(), 
-      "Admin/deployer key not updated correctly");
+    // Deployer field removed - admin is now solely managed via config.admin
     assert.equal(updatedGlobalInfo.config.admin.toBase58(), newAdminKp.publicKey.toBase58(), 
       "Config admin key not updated correctly");
     logger.color("magenta").log("✓ Step 5: Verified new admin in contract state");
@@ -4194,7 +4193,8 @@ describe("maxi-auction", () => {
     
     // Final verification
     const finalGlobalInfo = await program.account.globalInfo.fetch(globalInfo);
-    assert.equal(finalGlobalInfo.deployer.toBase58(), adminKp.publicKey.toBase58(), 
+    // Deployer field removed - verify admin via config.admin
+    assert.equal(finalGlobalInfo.config.admin.toBase58(), adminKp.publicKey.toBase58(), 
       "Admin not reverted correctly");
     logger.color("magenta").log("✓ Step 7: Final verification complete");
     logger.color("magenta").log("=== TEST COMPLETE ===\n");

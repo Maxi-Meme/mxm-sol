@@ -17,7 +17,6 @@ pub struct ReferralMapping {
 /// Global state for the auction system.
 #[account]
 pub struct GlobalInfo {
-    pub deployer: Pubkey,
     pub auctions_num: u64,
     pub config: Config,
 }
