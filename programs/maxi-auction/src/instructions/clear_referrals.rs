@@ -44,11 +44,10 @@ impl<'info> DevClearReferrals<'info> {
             CustomError::Unauthorized
         );
 
-        // [REF] - Block on live networks; only allow on local validators (low slot numbers)
-        let clock = Clock::get()?;
-        msg!("[REF] dev_clear_referrals - current slot: {}", clock.slot);
-        if clock.slot > 100_000 {
-            msg!("[REF] dev_clear_referrals blocked on live network (slot: {})", clock.slot);
+        // [REF] - Block on mainnet builds only
+        #[cfg(feature = "mainnet")]
+        {
+            msg!("[REF] dev_clear_referrals blocked on mainnet build");
             return err!(CustomError::Unauthorized);
         }
 

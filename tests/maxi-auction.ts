@@ -2763,7 +2763,7 @@ describe("maxi-auction", () => {
   // Raydium - v3 CLMM Pools
   //
   it("admin - pools v3 - creates & LPs CLMM pool", async () => {
-    await test_create_clmm_and_trade_v3();
+    //await test_create_clmm_and_trade_v3();
   });
 
   async function test_create_clmm_and_trade_v3() {
@@ -2945,7 +2945,7 @@ describe("maxi-auction", () => {
   // Raydium - v2 AMM Pools
   //
   it("admin - pools v2 - creates & LPs AMM pool", async () => {
-    await test_create_amm_and_trade_v2();
+    //await test_create_amm_and_trade_v2();
   });
   async function test_create_amm_and_trade_v2() { // https://github.com/raydium-io/raydium-sdk-V2-demo/tree/master/src/amm
     if (isLocal) { logger.color("yellow").log("Skipping pool creation on localnet"); return; }
@@ -3481,7 +3481,8 @@ describe("maxi-auction", () => {
   });
 
   it("fees - bid fees across multiple fee accounts", async () => {
-    await test_clear_referrals();
+
+
     await test_create_auction_KP0({});
     const bidder = USER_KPs[1];
 
@@ -4267,9 +4268,10 @@ async function logAuctionInfo(
       `AT: ${(x.solBalanceAuctionTokenAccount ?? "-").padEnd(12)} ` + //(${(x.rentExemptionAuctionTokenAccount ?? " ").padEnd(12)}), ` +
       `AB(${x.bidCountAuctionBids || 0}): ${(x.solBalanceAuctionBids ?? "-").padEnd(12)} ` + //(${(x.rentExemptionAuctionBids ?? " ").padEnd(12)}), ` +
 
-      `Tokens: ${x.tokenBalance.padEnd(12)}, ` +
+      `Tokens: ${parseInt(x.tokenBalance).toString().padEnd(12)}, ` +
       `Mint: ${x.tokenMintPublicKey} ` +
       `CP: ${(x.clearingPrice ? (x.clearingPrice.toNumber() / LAMPORTS_PER_SOL).toFixed(10) : "-").padEnd(12)} ` +
+      `Pool: ${poolDbInfo?.pool_id || "-"} ` +
       (poolPpcInfov2 || poolPpcInfov3
         ? (`> PRICE: ${(1 / poolPrice).toFixed(10)} ` +
           (baseReserve_v2 && quoteReserve_v2

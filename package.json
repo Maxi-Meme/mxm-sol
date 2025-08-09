@@ -3,12 +3,12 @@
   "scripts": {
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
-    "anchor:build": "RUSTUP_TOOLCHAIN='nightly-2024-11-19' anchor build",
-    "anchor:deploy": "anchor keys sync && npm run anchor:build && anchor deploy",
-    "anchor:test": "anchor test --skip-build --skip-deploy",
-    "test:single": "anchor test --skip-build --skip-deploy --skip-local-validator -- npx ts-mocha -p ./tsconfig.json -t 1000000",
-    "anchor:test-deploy": "npm run anchor:deploy && npm run anchor:test",
-    "display_id_privkey": "node display_id_privkey.js"
+    "display_id_privkey": "node display_id_privkey.js",
+    "bdep:dev": "export ANCHOR_PROVIDER_URL=https://kassandra-lv8wse-fast-devnet.helius-rpc.com RUSTUP_TOOLCHAIN=nightly-2024-11-19 ANCHOR_WALLET=./id.json && solana config set --url devnet && anchor build -- -- -Znext-lockfile-bump --features devnet && anchor deploy --provider.cluster https://kassandra-lv8wse-fast-devnet.helius-rpc.com --provider.wallet ./id.json",
+    "bdep:local": "export ANCHOR_PROVIDER_URL=http://0.0.0.0:8899 RUSTUP_TOOLCHAIN=nightly-2024-11-19 ANCHOR_WALLET=./id.json && solana config set --url http://127.0.0.1:8899/ && anchor build -- -- -Znext-lockfile-bump  --features localnet && anchor deploy --provider.cluster localnet --provider.wallet ./id.json",
+    "lv": "./mpl.sh",
+    "tests:dev": "export ANCHOR_PROVIDER_URL=https://kassandra-lv8wse-fast-devnet.helius-rpc.com RUSTUP_TOOLCHAIN=nightly-2024-11-19 ANCHOR_WALLET=./id.json && solana config set --url devnet && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --reporter spec",
+    "tests:local": "export ANCHOR_PROVIDER_URL=http://0.0.0.0:8899 RUSTUP_TOOLCHAIN=nightly-2024-11-19 ANCHOR_WALLET=./id.json && solana config set --url http://127.0.0.1:8899/ && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --reporter spec"
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.30.1",
