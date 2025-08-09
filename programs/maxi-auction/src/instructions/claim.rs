@@ -41,7 +41,7 @@ pub struct Claim<'info> {
     )]
     pub caller_token_account: Account<'info, TokenAccount>,
 
-    /// CHECK: no checks needed, just program's account
+    /// CHECK: auction_sol_account - validated as PDA in instruction logic
     #[account(mut)]
     pub auction_sol_account: AccountInfo<'info>,
 
@@ -53,11 +53,7 @@ pub struct Claim<'info> {
     pub auction_token_account: Account<'info, TokenAccount>,
 
     // Added Bids account to access bids
-    #[account(
-        mut,
-        seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()],
-        bump
-    )]
+    #[account(mut, seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()], bump)]
     pub bids_account: Account<'info, Bids>,
 
     /// CHECK: Safe. The SPL token program.
@@ -79,7 +75,12 @@ impl<'info> Claim<'info> {
         let auction_bump = auction.bump;
         let dist_percent = auction.dist_percent;
         let min_total_sol = self.global_info.config.min_total_sol;
+
         require!(!auction.is_finalized, CustomError::AuctionAlreadyFinalized);
+
+        // ensure the auction sol account is the expected PDA
+        let (expected_pda, _) = Pubkey::find_program_address(&[AUCTION_SOL_SEED.as_ref(), auction_id.to_le_bytes().as_ref()], &crate::ID,);
+        require_keys_eq!(expected_pda, self.auction_sol_account.key(), CustomError::InvalidPDA);
 
         // Log initial claim information
         msg!("claim - Processing claim for auction ID: {}", auction_id);

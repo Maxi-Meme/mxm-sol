@@ -83,7 +83,7 @@ pub enum CustomError {
     #[msg("Auction liquidity already moved.")]
     AuctionLiquidityMoved,
 
-    #[msg("Iternal Error.")]
+    #[msg("Internal Error.")]
     InternalError,
 
     #[msg("Invalid State.")]
@@ -120,4 +120,7 @@ pub enum CustomError {
     // [REF] - Referral mapping specific validation
     #[msg("Referred account already has a referrer")]
     ReferralAlreadyExists,
+    
+    #[msg("Bid size is below minimum required")]
+    BidSizeBelowMinimum,
 }

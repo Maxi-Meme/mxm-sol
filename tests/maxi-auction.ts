@@ -48,6 +48,7 @@ import {
   TEST_MIN_TOTAL_SOL,
   // [REF] - Import referral percentage constant
   TEST_REF_BID_FEE_PERC_SHARE,
+  TEST_MIN_BID_SIZE,
   // Fee accounts configuration
   FEE_ACCOUNTS,
   //TEST_FEE_ACCOUNT,
@@ -1994,6 +1995,7 @@ describe("maxi-auction", () => {
       daoAccount: TEST_DAO_ACCOUNT.publicKey, // unused actually
       minTotalSol: new BN((mintotal_sol || TEST_MIN_TOTAL_SOL) * LAMPORTS_PER_SOL),
       refBidFeePercShare: new BN(TEST_REF_BID_FEE_PERC_SHARE), // [REF] - Referral system configuration - initialized to zero for backward compatibility
+      minBidSize: new BN(TEST_MIN_BID_SIZE), // Minimum bid size in lamports
     };
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
 
@@ -3779,6 +3781,7 @@ describe("maxi-auction", () => {
       daoAccount: TEST_DAO_ACCOUNT.publicKey,
       minTotalSol: new BN(TEST_MIN_TOTAL_SOL * LAMPORTS_PER_SOL),
       refBidFeePercShare: new BN(refBidFeePercShare), // [REF] - Custom referral share
+      minBidSize: new BN(TEST_MIN_BID_SIZE), // Minimum bid size in lamports
     };
 
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
@@ -4195,6 +4198,87 @@ describe("maxi-auction", () => {
       "Admin not reverted correctly");
     logger.color("magenta").log("✓ Step 7: Final verification complete");
     logger.color("magenta").log("=== TEST COMPLETE ===\n");
+  });
+
+  it("base - fails when bid size is below minimum", async () => { // anti DoS wwith unbound vec growth in contract
+    // Set very high min_bid_size for this test
+    const highMinBidSize = 1000000000; // = 1.0 SOL
+
+    // Backup current config to restore later
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const currentGlobalInfo = await program.account.globalInfo.fetch(globalInfo);
+    const backupConfig = currentGlobalInfo.config;
+
+    try {
+      // Set high min_bid_size  
+      const newConfig = {
+        admin: adminKp.publicKey,
+        defaultTokenSupply: new BN(MAXIMEME_TOKEN_SUPPLY),
+        defaultTokenDecimals: MAXIMEME_TOKEN_DECIMALS,
+        defaultStartPriceLamports: new BN(TEST_STARTPRICE_SOL * LAMPORTS_PER_SOL),
+        feeAccounts: FEE_ACCOUNTS.map(account => ({
+          pubkey: account.pubkey,
+          share: new BN(account.share)
+        })),
+        daoAccount: TEST_DAO_ACCOUNT.publicKey,
+        minTotalSol: new BN(TEST_MIN_TOTAL_SOL * LAMPORTS_PER_SOL),
+        refBidFeePercShare: new BN(TEST_REF_BID_FEE_PERC_SHARE),
+        minBidSize: new BN(highMinBidSize), // Set very high minimum
+      };
+
+      await program.methods
+        .initialize(newConfig)
+        .accounts({
+          signer: adminKp.publicKey,
+          globalInfo: globalInfo,
+          systemProgram: anchor.web3.SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([adminKp])
+        .rpc();
+
+      logger.color("green").log(`✓ Set min_bid_size to ${highMinBidSize} lamports`);
+
+      // Create an auction
+      await test_create_auction_KP0({ duration_hours_div100: 1 });
+
+      // Try to place a small bid that should fail
+      try {
+        const bidResult = await test_bid_auction({
+          fill_percent: 0.001, // 0.1%
+          bidderKp: USER_KPs[0],
+          // This will create a bid with total cost much less than highMinBidSize
+        });
+
+        // If we reach here, the test failed because the bid should have been rejected
+        assert.fail("Expected bid to fail due to minimum bid size validation");
+
+      } catch (error) {
+        // Check if the error message indicates the bid was rejected for the right reason
+        const errorMsg = error.toString();
+        if (errorMsg.includes("BidSizeBelowMinimum") || errorMsg.includes("6001")) {
+          logger.color("green").log(`✓ Bid correctly rejected for being below minimum: ${errorMsg}`);
+        } else {
+          logger.color("red").log(`✗ Bid failed for unexpected reason: ${errorMsg}`);
+          throw error;
+        }
+      }
+
+    } finally {
+      // Restore original config
+      await program.methods
+        .initialize(backupConfig)
+        .accounts({
+          signer: adminKp.publicKey,
+          globalInfo: globalInfo,
+          systemProgram: anchor.web3.SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([adminKp])
+        .rpc();
+
+      logger.color("green").log("✓ Restored original config");
+    }
   });
 
 }); // End of "maxi-auction" describe block

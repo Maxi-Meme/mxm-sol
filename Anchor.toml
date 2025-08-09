@@ -5,7 +5,7 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-maxi_auction = "3UGQHeMjgnGn5wCnekaVZNEEp5j1oVt1dj5q7dTiw8ZF"
+maxi_auction = "91goNr81mVpKwS44xi71E6dSVcr4o2vcF6WnYD1bEJ8U"
 
 [programs.localnet]
 maxi_auction = "9gfCVyYBrYEA5oFqXNMRxZNGKsEPCFkRsHFkMDYd2CHF"
@@ -24,4 +24,3 @@ test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
 startup_wait = 5000
 shutdown_wait = 2000
 upgradeable = false
-

@@ -5,8 +5,8 @@
 // Calculates current price using linear decay, distributes fees to multiple recipients, emits AuctionFilled when last token sold
 
 use crate::{
-    account::{Auction, GlobalInfo, Bids, ReferralMappings}, // [REF] - Added ReferralMappings
-    constants::{GLOBAL_INFO_SEED, AUCTION_SOL_SEED, BIDS_SEED}, // [REF] - Added REFERRAL_MAPPINGS_SEED
+    account::{Auction, GlobalInfo, Bids, ReferralMappings}, 
+    constants::{GLOBAL_INFO_SEED, AUCTION_SOL_SEED, BIDS_SEED, AUCTION_DATA_SEED, REFERRAL_MAPPINGS_SEED},
     errors::CustomError,
     states::AuctionStatus,
     events::{AuctionFilled, NewBid},
@@ -43,10 +43,11 @@ pub struct PlaceBid<'info> {
     )]
     pub admin: Signer<'info>,
 
-    /// CHECK: admin knows what he's passing in
+    /// CHECK: auction_sol_account - validated as PDA in instruction logic
     #[account(mut)]
     pub auction_sol_account: AccountInfo<'info>,
 
+    /// CHECK: auction_data_account - validated as PDA in instruction logic
     #[account(mut)]
     pub auction_data_account: Box<Account<'info, Auction>>,
 
@@ -57,11 +58,7 @@ pub struct PlaceBid<'info> {
     pub auction_token_account: Account<'info, TokenAccount>,
 
     // Bids account for dynamic bid storage
-    #[account(
-        mut,
-        seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()],
-        bump
-    )]
+    #[account(mut, seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()], bump)]
     pub bids_account: Account<'info, Bids>,
 
     #[account(address = anchor_lang::system_program::ID)]
@@ -88,8 +85,20 @@ pub struct PlaceBid<'info> {
 
 impl<'info> PlaceBid<'info> {
     pub fn process(&mut self, bid_quantity: u64, x_id: u64, fee_perc: u64, remaining_accounts: &[AccountInfo<'info>]) -> Result<()> {
-        let rent = Rent::get()?;
 
+        // Verify correct PDAs
+        let (expected_pda, _) = Pubkey::find_program_address(&[AUCTION_SOL_SEED.as_ref(), self.bids_account.auction_id.to_le_bytes().as_ref()], &crate::ID,);
+        require_keys_eq!(expected_pda, self.auction_sol_account.key(), CustomError::InvalidPDA);
+
+        let (expected_pda, _) = Pubkey::find_program_address(&[AUCTION_DATA_SEED.as_ref(), self.bids_account.auction_id.to_le_bytes().as_ref()], &crate::ID,);
+        require_keys_eq!(expected_pda, self.auction_data_account.key(), CustomError::InvalidPDA);
+
+        if let Some(ref mappings_ai) = self.referral_mappings {
+            let (expected_pda, _) = Pubkey::find_program_address(&[REFERRAL_MAPPINGS_SEED.as_ref()], &crate::ID,);
+            require_keys_eq!(expected_pda, mappings_ai.key(), CustomError::InvalidPDA);
+        }        
+
+        let rent = Rent::get()?;
         let auction = &mut self.auction_data_account;
         let default_start_price = self.global_info.config.default_start_price_lamports;
         require!(!auction.is_finalized, CustomError::AuctionAlreadyFinalized);
@@ -132,6 +141,9 @@ impl<'info> PlaceBid<'info> {
         // Calculate total cost, and auction amount (ex. fee)
         let total_cost = bid_quantity.checked_mul(current_price).ok_or(CustomError::Overflow)?;
         require!(fee_perc < 10000, CustomError::InvalidFeePercentage);
+        
+        // Validate minimum bid size
+        require!(total_cost >= self.global_info.config.min_bid_size, CustomError::BidSizeBelowMinimum);
         let fee = ((total_cost as u128 * fee_perc as u128) / 10000) as u64; // let mut fee = 0; // testing zero fees
         let auction_amount = total_cost - fee;
 
@@ -362,6 +374,7 @@ impl<'info> PlaceBid<'info> {
             )?;
             if auction_status == AuctionStatus::Succeeded {
                 let clearing_price = clearing_price_wrapped.ok_or(CustomError::InvalidClearingPrice)?;
+                require!(clearing_price > 0, CustomError::InvalidClearingPrice);
 
                 //
                 // Method (3) -- todo??

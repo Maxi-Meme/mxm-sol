@@ -24,6 +24,7 @@ pub struct Config {
     pub min_total_sol: u64,
     // [REF] - Referral system configuration field
     pub ref_bid_fee_perc_share: u64,     // 0-10000 (0.00% to 100.00%) - referrer's share of bid fees
+    pub min_bid_size: u64,               // Minimum bid size in lamports - prevent small spam bids
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Default, Debug)]

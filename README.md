@@ -96,28 +96,6 @@ cp target/sbf-solana-solana/release/maxi_auction.so target/deploy/
 anchor deploy --provider.cluster localnet
 ```
 
-8. **Update program ID** (if needed):
-Update the program ID in:
-- `Anchor.toml` (both devnet and localnet sections)
-- `programs/maxi-auction/src/lib.rs` (in declare_id! macro)
-
-   **Automatic program ID update**:
-   ```bash
-   # Update Anchor to the latest version if needed
-   npm install -g @coral-xyz/anchor-cli@latest
-   
-   # Obtain the program ID after deployment
-   PROGRAM_ID=$(solana address -k target/deploy/maxi_auction-keypair.json)
-   echo "Program ID: $PROGRAM_ID"
-   
-   # Update lib.rs with the new program ID
-   sed -i "s/declare_id!(\"[^\"]*\")/declare_id!(\"$PROGRAM_ID\")/" programs/maxi-auction/src/lib.rs
-   
-   # Update Anchor.toml with the new program ID
-   sed -i "s/maxi_auction = \"[^\"]*\"/maxi_auction = \"$PROGRAM_ID\"/" Anchor.toml
-   
-   ```
-
 ##
 ## Program ID Management
 ##
@@ -129,7 +107,7 @@ Update the program ID in:
 ### Create New Program ID 
   If data structures have changed, create a new program ID:
   ```bash
-  solana-keygen new -o target/deploy/maxi_auction-keypair.json --force # current: 3UGQHeMjgnGn5wCnekaVZNEEp5j1oVt1dj5q7dTiw8ZF
+  solana-keygen new -o target/deploy/maxi_auction-keypair.json --force # current: 91goNr81mVpKwS44xi71E6dSVcr4o2vcF6WnYD1bEJ8U // 3UGQHeMjgnGn5wCnekaVZNEEp5j1oVt1dj5q7dTiw8ZF
   anchor keys sync  # syncs anchor.toml & lib.rs with the new ID
   anchor build -- -- -Znext-lockfile-bump
   ```
@@ -219,19 +197,18 @@ You might encounter rate limiting. Use a VPN if this happens.
 
 ### Build & Deploy
 
-LOCALNET - npm run lv && npm run bdep:local
+LOCALNET - npm run lv && npm run bd:local
 ```bash
 ./mpl.sh
 export ANCHOR_PROVIDER_URL=http://0.0.0.0:8899 RUSTUP_TOOLCHAIN=nightly-2024-11-19 ANCHOR_WALLET=./id.json && solana config set --url http://127.0.0.1:8899/
 anchor build -- -- -Znext-lockfile-bump  --features localnet && anchor deploy --provider.cluster localnet --provider.wallet ./id.json
 ```
 
-DEVNET - npm run bdep:dev
+DEVNET - npm run bd:dev
 ```bash
 export ANCHOR_PROVIDER_URL=https://kassandra-lv8wse-fast-devnet.helius-rpc.com RUSTUP_TOOLCHAIN=nightly-2024-11-19 ANCHOR_WALLET=./id.json && solana config set --url devnet
 anchor build -- -- -Znext-lockfile-bump  --features devnet && anchor deploy --provider.cluster https://kassandra-lv8wse-fast-devnet.helius-rpc.com --provider.wallet ./id.json 
-  # measure deploy cost, ~3.2 SOL
-  BALANCE_BEFORE=$(solana balance ./id.json --url https://kassandra-lv8wse-fast-devnet.helius-rpc.com | grep -o '[0-9.]*') && echo "Balance before: $BALANCE_BEFORE SOL" && anchor deploy --provider.cluster https://kassandra-lv8wse-fast-devnet.helius-rpc.com --provider.wallet ./id.json && BALANCE_AFTER=$(solana balance ./id.json --url https://kassandra-lv8wse-fast-devnet.helius-rpc.com | grep -o '[0-9.]*') && echo "Balance after: $BALANCE_AFTER SOL" && COST=$(echo "$BALANCE_BEFORE - $BALANCE_AFTER" | bc) && echo "Deployment cost: $COST SOL"
+  # measured deploy cost devnet: ~3.2 SOL
 ```
 
 ### Exec Tests
@@ -258,6 +235,7 @@ clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep
 clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "base - places a bid"
 clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "base - places a bid with 0.5% fee"
 clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "base - places a late bid"
+clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "base - fails when bid size is below minimum" # anti DoS
 clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "cancels - only during auction period"
 clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "cancels - bids from different users"
 clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "cancels - bids from same user"

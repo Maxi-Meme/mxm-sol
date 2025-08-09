@@ -34,11 +34,7 @@ pub struct CancelBid<'info> {
     pub auction_data_account: Box<Account<'info, Auction>>,
 
     // Added Bids account to access bids
-    #[account(
-        mut,
-        seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()],
-        bump
-    )]
+    #[account(mut, seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()], bump)]
     pub bids_account: Account<'info, Bids>,
 
     #[account(address = anchor_lang::system_program::ID)]

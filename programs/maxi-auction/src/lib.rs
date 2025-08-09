@@ -19,7 +19,7 @@ use instructions::*;
 use states::Config;
 use errors::CustomError;
 
-declare_id!("3UGQHeMjgnGn5wCnekaVZNEEp5j1oVt1dj5q7dTiw8ZF");
+declare_id!("91goNr81mVpKwS44xi71E6dSVcr4o2vcF6WnYD1bEJ8U");
 
 #[program]
 pub mod maxi_auction {

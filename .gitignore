@@ -7,7 +7,7 @@ id.json
 **/*.rs.bk
 node_modules
 test-ledger
-programs/maxi-auction/src/combined.rs.txt
+#programs/maxi-auction/src/combined.rs.txt
 
 # Ignore everything in the /target directory
 target/*

@@ -33,15 +33,11 @@ pub struct WithdrawSol<'info> {
     #[account(mut)]
     pub auction_data_account: Box<Account<'info, Auction>>,
 
-    /// CHECK: This account is manually verified
+    /// CHECK: auction_sol_account - validated as PDA in instruction logic
     #[account(mut)]
     pub auction_sol_account: AccountInfo<'info>,
      
-    #[account(
-        mut,
-        seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()],
-        bump
-    )]
+    #[account(mut, seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()], bump)]
     pub bids_account: Account<'info, Bids>,
 
     #[account(address = system_program::ID)]

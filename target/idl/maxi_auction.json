@@ -1,5 +1,5 @@
 {
-  "address": "3UGQHeMjgnGn5wCnekaVZNEEp5j1oVt1dj5q7dTiw8ZF",
+  "address": "91goNr81mVpKwS44xi71E6dSVcr4o2vcF6WnYD1bEJ8U",
   "metadata": {
     "name": "maxi_auction",
     "version": "0.2.0",
@@ -1673,7 +1673,7 @@
     {
       "code": 6024,
       "name": "InternalError",
-      "msg": "Iternal Error."
+      "msg": "Internal Error."
     },
     {
       "code": 6025,
@@ -1729,6 +1729,11 @@
       "code": 6035,
       "name": "ReferralAlreadyExists",
       "msg": "Referred account already has a referrer"
+    },
+    {
+      "code": 6036,
+      "name": "BidSizeBelowMinimum",
+      "msg": "Bid size is below minimum required"
     }
   ],
   "types": [
@@ -2044,6 +2049,10 @@
           },
           {
             "name": "ref_bid_fee_perc_share",
+            "type": "u64"
+          },
+          {
+            "name": "min_bid_size",
             "type": "u64"
           }
         ]

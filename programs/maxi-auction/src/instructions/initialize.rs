@@ -18,7 +18,7 @@ pub struct Initialize<'info> {
         payer=signer,
         seeds = [GLOBAL_INFO_SEED.as_ref()],
         bump,
-        space= 8 + size_of::<GlobalInfo>() + 200 // Extra space for fee_accounts Vec with FeeAccount structs
+        space= 8 + size_of::<GlobalInfo>() + 210 // Extra space for fee_accounts Vec with FeeAccount structs + min_bid_size field
     )]
     pub global_info: Account<'info, GlobalInfo>,
 

@@ -61,4 +61,7 @@ export const TEST_MIN_TOTAL_SOL = 0.0008;
 
 // [REF] - Referral system configuration - SET TO ZERO for backward compatibility testing
 export const TEST_REF_BID_FEE_PERC_SHARE = 690;      // 6.9%
-//export const TEST_REF_BID_FEE_PERC_SHARE = 0;      // 0% - no referral fee sharing initially 
+//export const TEST_REF_BID_FEE_PERC_SHARE = 0;      // 0% - no referral fee sharing initially
+
+// Minimum bid size configuration
+export const TEST_MIN_BID_SIZE = 1000;               // 1000 lamports default minimum bid size 

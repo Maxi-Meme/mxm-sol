@@ -11,6 +11,7 @@ use crate::states::AuctionStatus;
 use anchor_lang::{prelude::*};
 use crate::errors::CustomError;
 use crate::states::Bid;
+use std::cmp::max;
 
 pub fn get_net_sol_raised(
     _auction: &Auction,
@@ -88,7 +89,7 @@ pub(crate) fn get_current_price(
     // price(t) = start_price - ( (start_price - end_price) * (elapsed / total_duration) )
     let price_diff = start_price.saturating_sub(1);
     let decay_amount = (price_diff as u128 * elapsed as u128) / (total_duration as u128);
-    Some(start_price.saturating_sub(decay_amount as u64))
+    Some(max(1, start_price.saturating_sub(decay_amount as u64))) // Minimum price of 1 lamport
 }
 
 pub(crate) fn get_status_and_clearing_price(

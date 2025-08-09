@@ -6,7 +6,7 @@
 
 use crate::{
     account::{ Auction, GlobalInfo, Bids }, 
-    constants::{ GLOBAL_INFO_SEED, AUCTION_SOL_SEED, BIDS_SEED },
+    constants::{ GLOBAL_INFO_SEED, AUCTION_SOL_SEED, BIDS_SEED, AUCTION_DATA_SEED },
     errors::CustomError,
     //states::Config,
     states::AuctionStatus,
@@ -30,10 +30,11 @@ pub struct WithdrawTokens<'info> {
     )]
     pub admin: Signer<'info>,
 
+    /// CHECK: auction_data_account - validated as PDA in instruction logic
     #[account(mut)]
     pub auction_data_account: Box<Account<'info, Auction>>,
 
-    /// CHECK: This account is manually verified
+    /// CHECK: auction_sol_account - validated as PDA in instruction logic
     #[account(mut)]
     pub auction_sol_account: AccountInfo<'info>,
 
@@ -43,11 +44,7 @@ pub struct WithdrawTokens<'info> {
     #[account(mut)]
     pub admin_token_account: Account<'info, TokenAccount>,
 
-     #[account(
-        mut,
-        seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()],
-        bump
-    )]
+     #[account(mut, seeds = [BIDS_SEED.as_ref(), auction_data_account.id.to_le_bytes().as_ref()], bump)]
     pub bids_account: Account<'info, Bids>,
 
     #[account(address = token::ID)]
@@ -56,17 +53,18 @@ pub struct WithdrawTokens<'info> {
 
 impl<'info> WithdrawTokens<'info> {
     pub fn process(&mut self) -> Result<()> {
+        let auction_id = self.auction_data_account.id;
+        let bump = self.auction_data_account.bump;
+
+        // Verify correct PDAs
+        let (expected_pda, _) = Pubkey::find_program_address(&[AUCTION_SOL_SEED.as_ref(), auction_id.to_le_bytes().as_ref()], &crate::ID,);
+        require_keys_eq!(expected_pda, self.auction_sol_account.key(), CustomError::InvalidPDA);
+
+        let (expected_pda, _) = Pubkey::find_program_address(&[AUCTION_DATA_SEED.as_ref(), auction_id.to_le_bytes().as_ref()], &crate::ID,);
+        require_keys_eq!(expected_pda, self.auction_data_account.key(), CustomError::InvalidPDA);
+
         let auction = &mut self.auction_data_account;
         let bids = &mut self.bids_account.bids;
-        let auction_id = auction.id;
-        let bump = auction.bump;
-
-        // Verify auction_sol_account is the correct PDA
-        let (expected_pda, _) = Pubkey::find_program_address(
-            &[AUCTION_SOL_SEED.as_ref(), auction_id.to_le_bytes().as_ref()],
-            &crate::ID,
-        );
-        require_keys_eq!(expected_pda, self.auction_sol_account.key(), CustomError::InvalidPDA);
 
         // Update auction finished flag (consistent with Claim)
         if Clock::get().unwrap().unix_timestamp >= auction.end_timestamp {
