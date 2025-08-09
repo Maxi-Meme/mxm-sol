@@ -2420,8 +2420,78 @@ pub(crate) fn get_status_and_clearing_price(
     current_time: i64,
     min_total_sol: u64,
 ) -> Result<(AuctionStatus, Option<u64>)> {
+// Sum allocated qty and total SOL after fees with checked math
+    let allocated_qty = bids.iter().try_fold(0u64, |acc, b| acc.checked_add(b.bid_qty))
+        .ok_or(CustomError::Overflow)?;
+    let total_sol_after_fees = bids.iter().try_fold(0u64, |acc, b| {
+        b.bid_qty
+            .checked_mul(b.bid_sol)
+            .and_then(|product| product.checked_sub(b.bid_fee))
+            .and_then(|net| acc.checked_add(net))
+            .ok_or(CustomError::Overflow)
+    })?;
+
+    // H2: settlement “change” (overpayment refund) with checked math
+    let clearing_price_tmp = if bids.is_empty() { 0 } else { bids.last().unwrap().bid_sol };
+    let mut total_change: u64 = 0;
+    for bid in bids.iter() {
+        let paid = bid
+            .bid_qty
+            .checked_mul(bid.bid_sol)
+            .and_then(|v| v.checked_sub(bid.bid_fee))
+            .ok_or(CustomError::Overflow)?;
+        let price_for_exact = if clearing_price_tmp == 0 { bid.bid_sol } else { clearing_price_tmp };
+        let exact = bid
+            .bid_qty
+            .checked_mul(price_for_exact)
+            .ok_or(CustomError::Overflow)?;
+        let owed = paid.saturating_sub(exact);
+        total_change = total_change.checked_add(owed).ok_or(CustomError::Overflow)?;
+    }
+
+    // Net SOL raised (before rent)
+    let net_sol_raised_before_rent = total_sol_after_fees.saturating_sub(total_change);
+
+    // Rent (0-byte account baseline)
+    let rent = Rent::get()?; // avoid unwrap DoS
+    let rent_exempt_minimum = rent.minimum_balance(0);
+
+    // Final net SOL raised
+    let net_sol_raised = net_sol_raised_before_rent.saturating_sub(rent_exempt_minimum);
+
+    let supply_qty = auction
+        .token_supply
+        .saturating_div(10u64.pow(auction.token_decimals as u32));
+
+    // Status
+    let status = if allocated_qty >= supply_qty && net_sol_raised >= min_total_sol {
+        AuctionStatus::Succeeded
+    } else if allocated_qty >= supply_qty && net_sol_raised < min_total_sol {
+        AuctionStatus::FailedMinNotReached
+    } else if current_time < auction.start_timestamp {
+        AuctionStatus::Pending
+    } else if current_time < auction.end_timestamp {
+        AuctionStatus::Live
+    } else {
+        AuctionStatus::FailedNotFullyAllocated
+    };
+
+    // Clearing price
+    let clearing_price = match status {
+        AuctionStatus::Pending => None,
+        AuctionStatus::Live => {
+            if bids.is_empty() { None } else { Some(bids.last().unwrap().bid_sol) }
+        }
+        AuctionStatus::Succeeded => get_clearing_price(auction, bids),
+        AuctionStatus::FailedMinNotReached |
+        AuctionStatus::FailedNotFullyAllocated |
+        AuctionStatus::Finalized => None,
+    };
+
+    Ok((status, clearing_price))
+        
     // Calculate total allocated (bid) tokens and sol
-    let allocated_qty_opt: Option<u64> = bids.iter().try_fold(0u64, |acc, b| acc.checked_add(b.bid_qty));
+    /*let allocated_qty_opt: Option<u64> = bids.iter().try_fold(0u64, |acc, b| acc.checked_add(b.bid_qty));
     let total_sol_after_fees_opt: Option<u64> = bids.iter().try_fold(0u64, |acc, b| {
         b.bid_qty
             .checked_mul(b.bid_sol)
@@ -2506,7 +2576,7 @@ pub(crate) fn get_status_and_clearing_price(
         AuctionStatus::Finalized => None,
     };
 
-    Ok((status, clearing_price))
+    Ok((status, clearing_price))*/
 }
 
 fn get_clearing_price(auction: &Auction, bids: &[Bid]) -> Option<u64> {
