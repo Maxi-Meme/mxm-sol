@@ -3481,6 +3481,7 @@ describe("maxi-auction", () => {
   });
 
   it("fees - bid fees across multiple fee accounts", async () => {
+    await test_clear_referrals();
     await test_create_auction_KP0({});
     const bidder = USER_KPs[1];
 
