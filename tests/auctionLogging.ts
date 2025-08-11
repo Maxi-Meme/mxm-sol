@@ -150,7 +150,8 @@ async function fetchPoolPositionsInfo(
 
         // Get all owner positions using Raydium SDK
         const allPositions = await raydium.clmm.getOwnerPositionInfo({
-            programId: IS_DEVNET ? DEVNET_PROGRAM_ID.CLMM : "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK"
+            programId: IS_DEVNET ? "DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH" // DEVNET_PROGRAM_ID.CLMM
+                : "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK"
         });
 
         // Filter positions for this specific pool
@@ -185,38 +186,38 @@ async function fetchPoolPositionsInfo(
             let isLocked = false;
             if (position.nftMint) {
                 try {
-                    // Derive ATA for NFT mint under admin (regular owner)
-                    const adminAta = await getAssociatedTokenAddress(position.nftMint, adminKp.publicKey);
+                    console.log(`🔍 [checkNFTOwnership] Checking ownership for position ${index + 1} NFT: ${position.nftMint.toString()}`);
 
-                    // Check if admin owns the NFT (amount=1)
+                    // Derive ATA for NFT mint under admin (should be the owner if unlocked)
+                    const adminAta = await getAssociatedTokenAddress(position.nftMint, adminKp.publicKey);
+                    console.log(`🔍 [checkNFTOwnership] Admin ATA: ${adminAta.toString()}`);
+
+                    // Check if admin owns the NFT (amount=1 means they own it, unlocked)
                     let adminAccount;
+                    let adminAmount = BigInt(0);
                     try {
                         adminAccount = await getAccount(raydium.connection, adminAta);
+                        adminAmount = adminAccount.amount;
+                        console.log(`🔍 [checkNFTOwnership] Admin account found with amount: ${adminAmount.toString()}`);
                     } catch (error) {
-                        if (error.name !== 'TokenAccountNotFoundError') throw error;
+                        if (error.name === 'TokenAccountNotFoundError') {
+                            console.log(`🔍 [checkNFTOwnership] Admin ATA not found (amount: 0)`);
+                        } else {
+                            throw error;
+                        }
                     }
-                    const adminAmount = adminAccount ? adminAccount.amount : BigInt(0);
 
-                    if (adminAmount !== BigInt(1)) {
-                        // Check for lock vault ownership
-                        const programId = IS_DEVNET ? new PublicKey("devi51mZmdwUJGU9hjN27vEz64Gps7uUefqxg27EAtH") : new PublicKey("CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK");
-                        const [lockPda] = PublicKey.findProgramAddressSync([Buffer.from("position_lock"), position.nftMint.toBuffer()], programId);
-                        const lockAta = await getAssociatedTokenAddress(position.nftMint, lockPda);
-
-                        let lockAccount;
-                        try {
-                            lockAccount = await getAccount(raydium.connection, lockAta);
-                        } catch (error) {
-                            if (error.name !== 'TokenAccountNotFoundError') throw error;
-                        }
-                        const lockAmount = lockAccount ? lockAccount.amount : BigInt(0);
-
-                        if (lockAmount === BigInt(1)) {
-                            isLocked = true;
-                        }
+                    if (adminAmount === BigInt(1)) {
+                        console.log(`✅ [checkNFTOwnership] Position ${index + 1} is UNLOCKED - admin owns the NFT`);
+                        isLocked = false;
+                    } else {
+                        console.log(`🔒 [checkNFTOwnership] Position ${index + 1} is LOCKED - admin does not own the NFT (someone else has it)`);
+                        isLocked = true;
                     }
                 } catch (error) {
-                    // console.log(`Error checking lock status for position ${index + 1}:`, error);
+                    console.log(`❌ [checkNFTOwnership] Error checking ownership for position ${index + 1}:`, error);
+                    // If we can't determine ownership, assume it's locked for safety
+                    isLocked = true;
                 }
             }
 

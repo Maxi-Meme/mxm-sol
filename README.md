@@ -44,6 +44,25 @@ The contract supports the following key operations:
 - `place_bid` - Place a bid in an auction
 - `claim` - Claim auction rewards
 
+## Liquidity Management Operations
+
+The system includes comprehensive CLMM (Concentrated Liquidity Market Maker) pool management:
+
+### Position Withdrawal
+- **Test**: `admin - pools - remove liquidity ###`
+- **Purpose**: Withdraws all liquidity from CLMM v3 positions, returning tokens to admin wallet
+- **Network Support**: Automatically detects and handles both mainnet and devnet configurations
+
+### Position Locking (Burn & Earn)
+- **Test**: `admin - pools - lock position liquidity (burn and earn) ###`
+- **Purpose**: Implements "burn and earn" functionality by locking liquidity positions permanently while maintaining fee earning capability
+- **Features**:
+  - Harvests all pending rewards before locking
+  - Logs detailed position information for monitoring
+  - Network-aware CLMM program ID selection
+  - Comprehensive error handling and logging
+- **Network Support**: Uses appropriate CLMM program IDs for mainnet (`CAMMCzo5YL8w4VFF8KVHrK22GGUQpMDdHFWmNp2wxCM`) and devnet
+
 ## Local Development Setup
 
 1. **Download required MPL programs**:
@@ -291,7 +310,10 @@ clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep
 clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "admin - list auctions & pools"
 
     # admin - cleanups - ## run in this order to recover!! ##
-    clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "admin - pools - remove liquidity ###" # WITHDRAW LIOUIDITY
+    clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "admin - pools - lock liquidity" # "burn & earn"
+    ### todo: raydium.clmm.harvestAllRewards()... ###
+    
+    clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "admin - pools - remove liquidity ###" # WITHDRAW LIQUIDITY
     clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "admin - finalize finished auctions ###" ### HARD NUKE ALL ACCOUNTS 
 
 # test metadata

@@ -647,7 +647,8 @@ async function createAndFundPool_v3_CLMM(
   }
   console.log(`createAndFundPool_v3_CLMM -> balances ok.`);
 
-  const clmmProgramId = isMainnet ? CLMM_PROGRAM_ID : DEVNET_PROGRAM_ID.CLMM;
+  const clmmProgramId = isMainnet ? CLMM_PROGRAM_ID
+    : "DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH" /*DEVNET_PROGRAM_ID.CLMM*/;
   const chainId = isMainnet ? 101 : 103;
 
   var logoURI = '';

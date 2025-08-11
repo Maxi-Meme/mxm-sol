@@ -21,6 +21,7 @@ import {
   mintTo,
   getMint,
   TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
   createAssociatedTokenAccountInstruction,
   TokenAccountNotFoundError,
 } from "@solana/spl-token";
@@ -986,6 +987,282 @@ describe("maxi-auction", () => {
       }
     }
   });
+
+  it("admin - pools - lock liquidity", async () => {
+    // Get all auctions
+    const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
+    const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
+    const totalAuctions = Number(globalInfoAccount.auctionsNum);
+
+    // ##############
+    const auctionIds = [22]; //Array.from({ length: totalAuctions }, (_, i) => i);
+    // ##############
+
+    // Initialize Raydium SDK
+    console.log(` [lockPosition] Initializing Raydium SDK for network: ${getCurrentNetwork()}`);
+    const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: true, blockhashCommitment: 'confirmed' });
+
+    // Batch processing to avoid rate limits
+    const results = [];
+
+    console.log(` [lockPosition] Processing ${totalAuctions} auctions in batches of ${AUCTION_FETCH_BATCH_SIZE}...`);
+
+    for (let i = 0; i < auctionIds.length; i += AUCTION_FETCH_BATCH_SIZE) {
+      const batch = auctionIds.slice(i, i + AUCTION_FETCH_BATCH_SIZE);
+      console.log(` [lockPosition] Processing batch ${Math.floor(i / AUCTION_FETCH_BATCH_SIZE) + 1} of ${Math.ceil(auctionIds.length / AUCTION_FETCH_BATCH_SIZE)} (auctions ${i} to ${Math.min(i + AUCTION_FETCH_BATCH_SIZE - 1, auctionIds.length - 1)})`);
+
+      const batchPromises = batch.map(auctionId =>
+        getAuctionDetails(auctionId, connection, program, auctionDataSeed, auctionSolSeed, auctionBidsSeed)
+      );
+
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
+
+      // Add delay between batches to avoid rate limiting
+      if (i + AUCTION_FETCH_BATCH_SIZE < auctionIds.length) {
+        console.log(` [lockPosition] Waiting ${AUCTION_FETCH_BATCH_DELAY}ms before next batch to avoid rate limits...`);
+        await new Promise(resolve => setTimeout(resolve, AUCTION_FETCH_BATCH_DELAY));
+      }
+    }
+
+    const auctions = results.filter(result => result !== null);
+    console.log(` [lockPosition] Successfully fetched ${auctions.length} auctions`);
+
+    // Collect poolDbInfos and pool IDs from DB
+    const { poolDbInfos, poolPpcInfosMapv3 } = await getPoolDbAndRpcInfos(auctions);
+
+    // Determine CLMM program ID based on network
+    const clmmProgramId = IS_MAINNET
+      ? new PublicKey("CAMMCzo5YL8w4VFF8KVHrK22GGUQpMDdHFWmNp2wxCM") // Mainnet CLMM program ID
+      : "DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH" // DEVNET_PROGRAM_ID.CLMM; == "OUTDATED"
+    console.log('OUTDATED?! ==> DEVNET_PROGRAM_ID.CLMM', DEVNET_PROGRAM_ID.CLMM); // == devi51mZmdwUJGU9hjN27vEz64Gps7uUefqxg27EAtH -- an "old" devnet CLMM program ID ??!!!
+
+    // Determine locker program ID based on network
+    const lockerProgramId = IS_MAINNET
+      ? new PublicKey("LockrWmn6K5twhz3y9w1dQERbmgSaRkfnTeTKbpofwE")
+      : new PublicKey("DRay25Usp3YJAi7beckgpGUC7mGJ2cR1AVPxhYfwVCUX");
+
+    // Determine auth program ID based on network  
+    const authProgramId = IS_MAINNET
+      ? new PublicKey("kN1kEznaF5Xbd8LYuqtEFcxzWSBk5Fv6ygX6SqEGJVy")
+      : new PublicKey("8qmHNvu2Kr2C7U8mJL4Vz1vTDxMhVuXKREwU7TNoaVEo");
+
+    console.log(` [lockPosition] Using CLMM Program ID for ${getCurrentNetwork()}: ${clmmProgramId.toBase58()}`);
+    console.log(` [lockPosition] Using Locker Program ID for ${getCurrentNetwork()}: ${lockerProgramId.toBase58()}`);
+    console.log(` [lockPosition] Using Auth Program ID for ${getCurrentNetwork()}: ${authProgramId.toBase58()}`);
+
+    // Process each auction sequentially
+    for (const [index, x] of auctions.entries()) {
+      const poolDb = poolDbInfos[index];
+      const poolPpcInfo_v3 = poolDb?.pool_id ? poolPpcInfosMapv3.get(poolDb.pool_id) : undefined;
+
+      if (poolPpcInfo_v3) {
+        try {
+          const poolId = poolDb.pool_id;
+          console.log(`\n [lockPosition] === Processing CLMM v3 pool for auction ID: ${x.auctionId} ===`);
+
+          // Get admin's positions for this pool
+          const adminPositions = await raydium.clmm.getOwnerPositionInfo({
+            programId: clmmProgramId
+          });
+
+          const poolPositions = adminPositions.filter(pos =>
+            pos.poolId.toBase58() === poolId
+          );
+
+          console.log(` [lockPosition] Found ${poolPositions.length} position(s) for admin in pool ${poolId}`);
+
+          // Log detailed auction info with position data
+          await logAuctionInfo(poolDbInfos, index, poolPpcInfosMapv3, x, raydium, adminKp);
+
+          if (poolPositions.length > 0) {
+            // Get pool info for calculations
+            const poolInfo = (await raydium.clmm.getPoolInfoFromRpc(poolId)).poolInfo;
+
+            // Get admin's SOL balance before locking
+            const adminSolBefore = await connection.getBalance(adminKp.publicKey);
+            console.log(` [lockPosition] Admin SOL balance before locking: ${(adminSolBefore / LAMPORTS_PER_SOL).toFixed(6)}`);
+
+            // Process each position for locking
+            for (const [posIndex, position] of poolPositions.entries()) {
+              console.log(`\n [lockPosition] === Locking Position ${posIndex + 1} (Burn & Earn) ===`);
+              console.log(` [lockPosition] Position ID: ${position.nftMint.toBase58()}`);
+              console.log(` [lockPosition] Liquidity: ${position.liquidity.toString()}`);
+              console.log(` [lockPosition] Tick Range: [${position.tickLower}, ${position.tickUpper}]`);
+
+              // Check NFT and position account information to diagnose the issue
+              try {
+                const nftAccount = await raydium.connection.getAccountInfo(position.nftMint);
+                console.log(` [lockPosition] NFT Account Owner: ${nftAccount?.owner.toBase58()}`);
+                console.log(` [lockPosition] NFT Account Data Length: ${nftAccount?.data.length}`);
+
+                // Check if this is Token2022 vs standard Token program
+                const isToken2022 = nftAccount?.owner.equals(TOKEN_2022_PROGRAM_ID);
+                const isStandardToken = nftAccount?.owner.equals(TOKEN_PROGRAM_ID);
+
+                console.log(` [lockPosition] Is Token2022: ${isToken2022}`);
+                console.log(` [lockPosition] Is Standard Token: ${isStandardToken}`);
+
+                // Check the position account itself to see which program created it
+                console.log(` [lockPosition] Position Data: poolId=${position.poolId.toBase58()}`);
+                console.log(` [lockPosition] Position Data: nftMint=${position.nftMint.toBase58()}`);
+                console.log(` [lockPosition] Expected CLMM Program: ${clmmProgramId.toBase58()}`);
+
+                // Note: positionId is not directly available in the position object,
+                // but we can see the pool program from poolInfo.programId
+
+                // Check the pool account as well
+                const poolAccount = await raydium.connection.getAccountInfo(position.poolId);
+                console.log(` [lockPosition] Pool Account Owner: ${poolAccount?.owner.toBase58()}`);
+
+                if (poolAccount && !poolAccount.owner.equals(clmmProgramId)) {
+                  console.error(` [lockPosition] ⚠️  MISMATCH: Pool owned by ${poolAccount.owner.toBase58()}, but we're using ${clmmProgramId.toBase58()}`);
+                }
+
+              } catch (accountError) {
+                console.error(` [lockPosition] Error checking NFT account:`, accountError);
+              }
+
+              // Check if position has liquidity to lock
+              if (position.liquidity.gt(new BN(0))) {
+                console.log(` [lockPosition] Position has liquidity, proceeding to lock (burn & earn)...`);
+
+                try {
+                  // 1. Harvest any pending rewards/fees
+                  // const harvest = await raydium.clmm.harvestAllRewards({
+                  //   ownerPosition: position,
+                  //   programId: clmmProgramId,
+                  //   refresh: true,
+                  // });
+                  // await harvest.execute();
+                  // console.log(` [lockPosition] Harvested pending rewards before locking`);
+
+                  //console.dir(poolInfo, { depth: null });
+                  console.log(` [lockPosition] Using Pool Program ID: ${poolInfo.programId}`);
+                  console.log(` [lockPosition] Using Locker Program ID: ${lockerProgramId.toBase58()}`);
+                  console.log(` [lockPosition] Using Auth Program ID: ${authProgramId.toBase58()}`);
+
+                  // 2. Lock the position
+                  const lock = await raydium.clmm.lockPosition({
+                    ownerPosition: position,
+                    programId: lockerProgramId,      // Lock authority program
+                    authProgramId: authProgramId,    // Auth program
+                    poolProgramId: new PublicKey(poolInfo.programId),    // Actual pool program ID
+                  });
+
+                  try {
+                    const lockResult = await lock.execute();
+                    const txId = lockResult.txId;
+                    console.log(` [lockPosition] Transaction sent - TxID: ${txId}`);
+                    console.log(` [lockPosition] Confirming transaction...`);
+
+                    // Wait for transaction confirmation and check for errors
+                    const confirmation = await raydium.connection.confirmTransaction(txId, 'confirmed');
+
+                    if (confirmation.value.err) {
+                      console.error(` [lockPosition] ❌ Transaction FAILED on-chain - TxID: ${txId}`);
+                      console.error(` [lockPosition] Transaction error:`, confirmation.value.err);
+
+                      // Get transaction details for more info
+                      try {
+                        const txDetails = await raydium.connection.getTransaction(txId, {
+                          commitment: 'confirmed',
+                          maxSupportedTransactionVersion: 0
+                        });
+
+                        if (txDetails?.meta?.err) {
+                          console.error(` [lockPosition] Detailed error:`, txDetails.meta.err);
+                        }
+
+                        if (txDetails?.meta?.logMessages) {
+                          console.error(` [lockPosition] Transaction logs:`, txDetails.meta.logMessages);
+                        }
+                      } catch (detailError) {
+                        console.error(` [lockPosition] Could not fetch transaction details:`, detailError);
+                      }
+
+                      throw new Error(`Transaction failed on-chain: ${JSON.stringify(confirmation.value.err)}`);
+                    }
+
+                    console.log(` [lockPosition] ✅ Position locked successfully (burn & earn) - TxID: ${txId}`);
+
+                  } catch (lockError: any) {
+                    console.error(` [lockPosition] ❌ Transaction FAILED for position ${position.nftMint.toBase58()}`);
+                    console.error(` [lockPosition] Error details:`, lockError);
+
+                    if (lockError?.signature) {
+                      console.error(` [lockPosition] Failed transaction signature: ${lockError.signature}`);
+                    }
+
+                    if (lockError?.message) {
+                      console.error(` [lockPosition] Error message: ${lockError.message}`);
+                    }
+
+                    if (lockError?.logs) {
+                      console.error(` [lockPosition] Transaction logs:`, lockError.logs);
+                    }
+
+                    // Re-throw to be caught by outer error handler
+                    throw lockError;
+                  }
+
+                  // Log position details that were locked
+                  console.log(` [lockPosition] POSITION LOCK DETAILS:`);
+                  console.log(`   Position NFT: ${position.nftMint.toBase58()}`);
+                  console.log(`   Pool ID: ${poolId}`);
+                  console.log(`   Liquidity Amount: ${position.liquidity.toString()}`);
+                  console.log(`   Tick Range: [${position.tickLower}, ${position.tickUpper}]`);
+                  console.log(`   Current Price Impact: Locked liquidity provides continuous trading fees`);
+                  console.log(`   Network: ${getCurrentNetwork()}`);
+                  console.log(`   CLMM Program: ${clmmProgramId.toBase58()}`);
+
+                  // Calculate and display position value information
+                  console.log(` [lockPosition] POSITION VALUE INFO:`);
+                  console.log(`   Token A Mint: ${poolInfo.poolInfo.mintA.address}`);
+                  console.log(`   Token B Mint: ${poolInfo.poolInfo.mintB.address}`);
+                  console.log(`   Position is ${position.liquidity.gt(new BN(0)) ? 'ACTIVE' : 'EMPTY'}`);
+                  console.log(`   Burn & Earn Status: LOCKED`);
+
+                  console.log(` [lockPosition] Position lock completed successfully`);
+
+                } catch (lockError) {
+                  console.error(` [lockPosition] Error during position locking for position ${position.nftMint.toBase58()}:`, lockError);
+                  if (lockError instanceof Error) {
+                    console.error(` [lockPosition] Error message: ${lockError.message}`);
+                    console.error(` [lockPosition] Error stack: ${lockError.stack}`);
+                  }
+                }
+              } else {
+                console.log(` [lockPosition] Position has no liquidity to lock`);
+              }
+            }
+
+            // Get admin's SOL balance after operations
+            const adminSolAfter = await connection.getBalance(adminKp.publicKey);
+            const solSpent = adminSolBefore - adminSolAfter;
+
+            console.log(`\n [lockPosition] FINAL BALANCE SUMMARY:`);
+            console.log(` [lockPosition] Admin SOL balance after operations: ${(adminSolAfter / LAMPORTS_PER_SOL).toFixed(6)}`);
+            console.log(` [lockPosition] SOL spent (transaction fees): ${(solSpent / LAMPORTS_PER_SOL).toFixed(6)}`);
+
+          } else {
+            console.log(` [lockPosition] No positions found for admin in CLMM v3 pool ${poolId}`);
+          }
+
+        } catch (err) {
+          console.error(` [lockPosition] Error processing CLMM v3 position locking for auction ID: ${x.auctionId}:`, err);
+          if (err instanceof Error) {
+            console.error(` [lockPosition] Error message: ${err.message}`);
+            console.error(` [lockPosition] Error stack: ${err.stack}`);
+          }
+        }
+      } else {
+        console.log(` [lockPosition] No CLMM v3 pool info found for auction ID: ${x.auctionId}`);
+      }
+    }
+    console.log(` [lockPosition] Position locking (burn & earn) process completed for ${auctions.length} auctions`);
+  });
+
 
   it("claims - full supply not bid", async () => {
     await test_create_auction_KP0({ /*auction_distribution_percent: 0.95,*/ duration_hours_div100: 1 }); // 5% lock, 1 hour/100 duration (~36s)
@@ -2724,7 +3001,7 @@ describe("maxi-auction", () => {
       extensions: {}
     };
     const { execute: execCreatePool, extInfo: poolExtInfo } = await raydium.clmm.createPool({
-      programId: DEVNET_PROGRAM_ID.CLMM,
+      programId: new PublicKey("DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH"), // DEVNET_PROGRAM_ID.CLMM,
       mint1: tokenInfo,
       mint2: wsolInfo,
       ammConfig,
@@ -2791,7 +3068,7 @@ describe("maxi-auction", () => {
 
     // **Validate Position Range**
     await sleep(6);
-    const adminPositions = await raydium.clmm.getOwnerPositionInfo({ programId: DEVNET_PROGRAM_ID.CLMM });
+    const adminPositions = await raydium.clmm.getOwnerPositionInfo({ programId: new PublicKey("DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH") /*DEVNET_PROGRAM_ID.CLMM*/ });
     //logObject("adminPositions", adminPositions);
     const position = adminPositions.find(pos => pos.poolId.toBase58() === poolId.toBase58());
     if (!position) throw new Error('Position not found');
