@@ -150,8 +150,8 @@ async function fetchPoolPositionsInfo(
 
         // Get all owner positions using Raydium SDK
         const allPositions = await raydium.clmm.getOwnerPositionInfo({
-            programId: IS_DEVNET ? "DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH" // DEVNET_PROGRAM_ID.CLMM
-                : "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK"
+            programId: IS_DEVNET ? DEVNET_PROGRAM_ID.CLMM
+                : new PublicKey("CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK")
         });
 
         // Filter positions for this specific pool

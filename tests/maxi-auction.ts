@@ -134,15 +134,14 @@ var CONTRACT_CONFIG: any;
 
 // moveliq callback 
 const auctionFilledPromises = new Map();
-var MOVELIQ_PAUSE = false;
+
+var MOVELIQ_DISABLE = true; // prevent moveliq from triggering at all, ever - set this when testing deployed API...
+var MOVELIQ_PAUSE = false; // (keep this as-is; used by tests to deliberately pause moveliq)
 
 // admin & test keypairs
 var program: Program<MaxiAuction>;
 var adminKp: Keypair;
 var USER_KPs: Keypair[];
-
-// prevent moveliq from triggering - useful when testing deployed API 
-var MOVELIQ_DISABLE = false;
 
 /*export async function setupProgramWithDeployedId(
   programId: PublicKey,
@@ -307,8 +306,8 @@ describe("maxi-auction", () => {
     //tokenKp2 = Keypair.fromSecretKey(bs58.decode(await getAndLockMaxiPrivKey())); //Keypair.generate();
 
     // Reset per-test global flags and in-memory state
-    MOVELIQ_DISABLE = false;
-    MOVELIQ_PAUSE = false;
+    //MOVELIQ_DISABLE = false;
+    //MOVELIQ_PAUSE = false;
     auctionFilledPromises.clear();
 
     if (isLocal) {
@@ -664,8 +663,10 @@ describe("maxi-auction", () => {
     MOVELIQ_DISABLE = true; // STOP MAIN LIQMOVE HANDLER: it conflicts with this
 
     await test_admin_withdraws({ n_bids: 2, withdraw_tokens: true, withdraw_sol: true, fill_auction: true }); // fill auction to set conditions for withdraws
-    //await test_admin_withdraws({ n_bids: 2, withdraw_tokens: false, withdraw_sol: true, fill_auction: true }); 
+    //await test_admin_withdraws({ n_bids: 2, withdraw_tokens: false, withdraw_sol: true, fill_auction: true });
     //await test_admin_withdraws({ n_bids: 2, withdraw_tokens: true, withdraw_sol: false, fill_auction: true });
+
+    MOVELIQ_DISABLE = false;
   });
 
   it("admin - list auctions & pools", async () => {
@@ -1034,8 +1035,11 @@ describe("maxi-auction", () => {
     // Determine CLMM program ID based on network
     const clmmProgramId = IS_MAINNET
       ? new PublicKey("CAMMCzo5YL8w4VFF8KVHrK22GGUQpMDdHFWmNp2wxCM") // Mainnet CLMM program ID
-      : "DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH" // DEVNET_PROGRAM_ID.CLMM; == "OUTDATED"
-    console.log('OUTDATED?! ==> DEVNET_PROGRAM_ID.CLMM', DEVNET_PROGRAM_ID.CLMM); // == devi51mZmdwUJGU9hjN27vEz64Gps7uUefqxg27EAtH -- an "old" devnet CLMM program ID ??!!!
+      : DEVNET_PROGRAM_ID.CLMM // "DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH" ???
+
+    // *************
+    console.log('??? ==> DEVNET_PROGRAM_ID.CLMM', DEVNET_PROGRAM_ID.CLMM); // "@raydium-io/raydium-sdk-v2": "^0.1.128-alpha", == devi51mZmdwUJGU9hjN27vEz64Gps7uUefqxg27EAtH -- an "old" devnet CLMM program ID ??!!!
+    // *************
 
     // Determine locker program ID based on network
     const lockerProgramId = IS_MAINNET
@@ -3001,7 +3005,7 @@ describe("maxi-auction", () => {
       extensions: {}
     };
     const { execute: execCreatePool, extInfo: poolExtInfo } = await raydium.clmm.createPool({
-      programId: new PublicKey("DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH"), // DEVNET_PROGRAM_ID.CLMM,
+      programId: DEVNET_PROGRAM_ID.CLMM, // new PublicKey("DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH"),
       mint1: tokenInfo,
       mint2: wsolInfo,
       ammConfig,
@@ -3068,7 +3072,7 @@ describe("maxi-auction", () => {
 
     // **Validate Position Range**
     await sleep(6);
-    const adminPositions = await raydium.clmm.getOwnerPositionInfo({ programId: new PublicKey("DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH") /*DEVNET_PROGRAM_ID.CLMM*/ });
+    const adminPositions = await raydium.clmm.getOwnerPositionInfo({ programId: DEVNET_PROGRAM_ID.CLMM });
     //logObject("adminPositions", adminPositions);
     const position = adminPositions.find(pos => pos.poolId.toBase58() === poolId.toBase58());
     if (!position) throw new Error('Position not found');
