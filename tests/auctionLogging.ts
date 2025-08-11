@@ -186,11 +186,11 @@ async function fetchPoolPositionsInfo(
             let isLocked = false;
             if (position.nftMint) {
                 try {
-                    console.log(`🔍 [checkNFTOwnership] Checking ownership for position ${index + 1} NFT: ${position.nftMint.toString()}`);
+                    //console.log(`🔍 [checkNFTOwnership] Checking ownership for position ${index + 1} NFT: ${position.nftMint.toString()}`);
 
                     // Derive ATA for NFT mint under admin (should be the owner if unlocked)
                     const adminAta = await getAssociatedTokenAddress(position.nftMint, adminKp.publicKey);
-                    console.log(`🔍 [checkNFTOwnership] Admin ATA: ${adminAta.toString()}`);
+                    //console.log(`🔍 [checkNFTOwnership] Admin ATA: ${adminAta.toString()}`);
 
                     // Check if admin owns the NFT (amount=1 means they own it, unlocked)
                     let adminAccount;
@@ -198,24 +198,24 @@ async function fetchPoolPositionsInfo(
                     try {
                         adminAccount = await getAccount(raydium.connection, adminAta);
                         adminAmount = adminAccount.amount;
-                        console.log(`🔍 [checkNFTOwnership] Admin account found with amount: ${adminAmount.toString()}`);
+                        //console.log(`🔍 [checkNFTOwnership] Admin account found with amount: ${adminAmount.toString()}`);
                     } catch (error) {
                         if (error.name === 'TokenAccountNotFoundError') {
-                            console.log(`🔍 [checkNFTOwnership] Admin ATA not found (amount: 0)`);
+                            //console.log(`🔍 [checkNFTOwnership] Admin ATA not found (amount: 0)`);
                         } else {
                             throw error;
                         }
                     }
 
                     if (adminAmount === BigInt(1)) {
-                        console.log(`✅ [checkNFTOwnership] Position ${index + 1} is UNLOCKED - admin owns the NFT`);
+                        //console.log(`✅ [checkNFTOwnership] Position ${index + 1} is UNLOCKED - admin owns the NFT`);
                         isLocked = false;
                     } else {
-                        console.log(`🔒 [checkNFTOwnership] Position ${index + 1} is LOCKED - admin does not own the NFT (someone else has it)`);
+                        //console.log(`🔒 [checkNFTOwnership] Position ${index + 1} is LOCKED - admin does not own the NFT (someone else has it)`);
                         isLocked = true;
                     }
                 } catch (error) {
-                    console.log(`❌ [checkNFTOwnership] Error checking ownership for position ${index + 1}:`, error);
+                    //console.log(`❌ [checkNFTOwnership] Error checking ownership for position ${index + 1}:`, error);
                     // If we can't determine ownership, assume it's locked for safety
                     isLocked = true;
                 }
@@ -463,7 +463,7 @@ export async function logAuctionInfo(
         if (raydium && adminKp) {
             const positionInfo = await fetchPoolPositionsInfo(poolId, raydium, adminKp);
             if (positionInfo.positionCount > 0) {
-                lockStatus = positionInfo.hasLockedPositions ? " LOCKED" : " unlocked";
+                lockStatus = positionInfo.positionCount == 0 ? "(no position)" : positionInfo.lockedPositionCount > 0 ? " LOCKED" : " unlocked";
             }
         } else {
             console.log("Raydium instance or adminKp not provided - skipping position info");
