@@ -135,7 +135,7 @@ var CONTRACT_CONFIG: any;
 // moveliq callback 
 const auctionFilledPromises = new Map();
 
-var MOVELIQ_DISABLE = true; // prevent moveliq from triggering at all, ever - set this when testing deployed API...
+var MOVELIQ_DISABLE = false; // prevent moveliq from triggering at all, ever - set this when testing deployed API...
 var MOVELIQ_PAUSE = false; // (keep this as-is; used by tests to deliberately pause moveliq)
 
 // admin & test keypairs
@@ -855,7 +855,7 @@ describe("maxi-auction", () => {
 
           // Get admin's positions for this pool
           const adminPositions = await raydium.clmm.getOwnerPositionInfo({
-            programId: DEVNET_PROGRAM_ID.CLMM
+            programId: DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID
           });
 
           const poolPositions = adminPositions.filter(pos =>
@@ -1035,10 +1035,11 @@ describe("maxi-auction", () => {
     // Determine CLMM program ID based on network
     const clmmProgramId = IS_MAINNET
       ? new PublicKey("CAMMCzo5YL8w4VFF8KVHrK22GGUQpMDdHFWmNp2wxCM") // Mainnet CLMM program ID
-      : DEVNET_PROGRAM_ID.CLMM // "DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH" ???
+      : DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID // "DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH" ???
 
     // *************
-    console.log('??? ==> DEVNET_PROGRAM_ID.CLMM', DEVNET_PROGRAM_ID.CLMM); // "@raydium-io/raydium-sdk-v2": "^0.1.128-alpha", == devi51mZmdwUJGU9hjN27vEz64Gps7uUefqxg27EAtH -- an "old" devnet CLMM program ID ??!!!
+    //console.log('??? ==> DEVNET_PROGRAM_ID.CLMM', DEVNET_PROGRAM_ID.CLMM); // "@raydium-io/raydium-sdk-v2": "^0.1.128-alpha", == devi51mZmdwUJGU9hjN27vEz64Gps7uUefqxg27EAtH -- an "old" devnet CLMM program ID ??!!!
+    console.log('??? ==> DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID', DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID); // "@raydium-io/raydium-sdk-v2": "^0.2.8-alpha", == DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH
     // *************
 
     // Determine locker program ID based on network
@@ -3005,7 +3006,7 @@ describe("maxi-auction", () => {
       extensions: {}
     };
     const { execute: execCreatePool, extInfo: poolExtInfo } = await raydium.clmm.createPool({
-      programId: DEVNET_PROGRAM_ID.CLMM, // new PublicKey("DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH"),
+      programId: DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID, // new PublicKey("DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH"),
       mint1: tokenInfo,
       mint2: wsolInfo,
       ammConfig,
@@ -3072,7 +3073,7 @@ describe("maxi-auction", () => {
 
     // **Validate Position Range**
     await sleep(6);
-    const adminPositions = await raydium.clmm.getOwnerPositionInfo({ programId: DEVNET_PROGRAM_ID.CLMM });
+    const adminPositions = await raydium.clmm.getOwnerPositionInfo({ programId: DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID });
     //logObject("adminPositions", adminPositions);
     const position = adminPositions.find(pos => pos.poolId.toBase58() === poolId.toBase58());
     if (!position) throw new Error('Position not found');
@@ -4332,8 +4333,10 @@ const markMaxiKeyUsed = async (publicKey: string) => {
 const VALID_PROGRAM_ID = new Set([
   AMM_V4.toBase58(),
   AMM_STABLE.toBase58(),
-  DEVNET_PROGRAM_ID.AmmV4.toBase58(),
-  DEVNET_PROGRAM_ID.AmmStable.toBase58(),
+  //DEVNET_PROGRAM_ID.AmmV4.toBase58(),
+  //DEVNET_PROGRAM_ID.AmmStable.toBase58(),
+  DEVNET_PROGRAM_ID.AMM_V4.toBase58(),
+  DEVNET_PROGRAM_ID.AMM_STABLE.toBase58(),
 ]);
 const isValidAmm = (id: string) => VALID_PROGRAM_ID.has(id);
 
@@ -4627,17 +4630,17 @@ async function getMarketAndPoolInfoDb(tokenMintPublicKey: string): Promise<{
 
 export const clmmDevConfigs = [
   {
-    id: 'CQYbhr6amxUER4p5SC44C63R4qw4NFc9Z4Db9vF4tZwG',
+    id: PublicKey.findProgramAddressSync([Buffer.from('amm_config'), Buffer.from([0, 0])], DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID)[0].toBase58(),  // Compute PDA for index 0
     index: 0,
     protocolFeeRate: 120000,
     tradeFeeRate: 100,
-    tickSpacing: 10,
+    tickSpacing: 1,
     fundFeeRate: 40000,
     description: 'Best for very stable pairs',
     defaultRange: 0.005,
     defaultRangePoint: [0.001, 0.003, 0.005, 0.008, 0.01],
   },
-  {
+  /*{
     id: 'B9H7TR8PSjJT7nuW2tuPkFC63z7drtMZ4LoCtD7PrCN1',
     index: 1,
     protocolFeeRate: 120000,
@@ -4669,7 +4672,7 @@ export const clmmDevConfigs = [
     description: 'Best for tighter ranges',
     defaultRange: 0.1,
     defaultRangePoint: [0.01, 0.05, 0.1, 0.2, 0.5],
-  },
+  },*/
 ]
 
 // **Helper function to get bids from separate account**

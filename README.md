@@ -312,7 +312,7 @@ clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep
     # admin - cleanups - ## run in this order to recover!! ##
     clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "admin - pools - lock liquidity" # "burn & earn"
     ### todo: raydium.clmm.harvestAllRewards()... ###
-    
+
     clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "admin - pools - remove liquidity ###" # WITHDRAW LIQUIDITY
     clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "admin - finalize finished auctions ###" ### HARD NUKE ALL ACCOUNTS 
 
@@ -328,11 +328,6 @@ clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep
 
 # p0 - test review: e2e target 100%
 #      ## LOCK LIQUIDITY ... remove admin-withdraw ability ##
-#      finish CC contract review (admin-pause?)
-#      multi-sig for admin ops? 
-#      review with oai & grok
-#      
-#      (grind more prod keypairs)
 
 # p1 - profile pics on bubbles & holders list
 # p1 - x posts img missing

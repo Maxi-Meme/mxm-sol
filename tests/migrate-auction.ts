@@ -647,7 +647,7 @@ async function createAndFundPool_v3_CLMM(
   }
   console.log(`createAndFundPool_v3_CLMM -> balances ok.`);
 
-  const clmmProgramId = isMainnet ? CLMM_PROGRAM_ID : DEVNET_PROGRAM_ID.CLMM;
+  const clmmProgramId = isMainnet ? CLMM_PROGRAM_ID : DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID;
   const chainId = isMainnet ? 101 : 103;
 
   var logoURI = '';
@@ -864,17 +864,26 @@ function logObject(label, obj) {
 
 export const clmmDevConfigs = [
   {
-    id: 'CQYbhr6amxUER4p5SC44C63R4qw4NFc9Z4Db9vF4tZwG',
+    id: PublicKey.findProgramAddressSync([Buffer.from('amm_config'), Buffer.from([0, 0])], DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID)[0].toBase58(),  // Compute PDA for index 0
     index: 0,
     protocolFeeRate: 120000,
     tradeFeeRate: 100,
-    tickSpacing: 10,
+    tickSpacing: 1,
     fundFeeRate: 40000,
     description: 'Best for very stable pairs',
     defaultRange: 0.005,
     defaultRangePoint: [0.001, 0.003, 0.005, 0.008, 0.01],
+    // id: 'CQYbhr6amxUER4p5SC44C63R4qw4NFc9Z4Db9vF4tZwG',
+    // index: 0,
+    // protocolFeeRate: 120000,
+    // tradeFeeRate: 100,
+    // tickSpacing: 10,
+    // fundFeeRate: 40000,
+    // description: 'Best for very stable pairs',
+    // defaultRange: 0.005,
+    // defaultRangePoint: [0.001, 0.003, 0.005, 0.008, 0.01],
   },
-  {
+  /*{
     id: 'B9H7TR8PSjJT7nuW2tuPkFC63z7drtMZ4LoCtD7PrCN1',
     index: 1,
     protocolFeeRate: 120000,
@@ -906,7 +915,7 @@ export const clmmDevConfigs = [
     description: 'Best for tighter ranges',
     defaultRange: 0.1,
     defaultRangePoint: [0.01, 0.05, 0.1, 0.2, 0.5],
-  },
+  },*/
 ]
 
 export async function buyAndBurn(

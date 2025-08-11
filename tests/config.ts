@@ -84,8 +84,8 @@ export const MAXIMEME_TOKEN_SUPPLY = 35023466 /* even number pls for tests to av
 //export const MAXIMEME_TOKEN_SUPPLY = 502_512_562 * Math.pow(10, MAXIMEME_TOKEN_DECIMALS); // for ~1b total supply w/ overmint
 //export const MAXIMEME_TOKEN_SUPPLY = 100  Math.pow(10, MAXIMEME_TOKEN_DECIMALS); // test amount
 
-export const TEST_STARTPRICE_SOL = 0.000000100; // 100 lamport start price - linear decay to min (1 lamport)
-//export const TEST_STARTPRICE_SOL = 0.000000001; // ### 1 lamport!! is actually min price in contract: can't set that as start price and have any decrease...
+//export const TEST_STARTPRICE_SOL = 0.000000100; // 100 lamport start price - linear decay to min (1 lamport)
+export const TEST_STARTPRICE_SOL = 0.000000001; // ### 1 lamport!! is actually min price in contract: can't set that as start price and have any decrease...
 //export const TEST_STARTPRICE_SOL = 0.001; // test amount: ~= 1,000,000 lamports start price // [auction_sol_account min rent ~= 0.00089] 
 
 // not used/ignored - old method (2) - see place_bid.rs

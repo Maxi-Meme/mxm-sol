@@ -315,10 +315,10 @@
     bn.js "^5.1.2"
     buffer-layout "^1.2.0"
 
-"@raydium-io/raydium-sdk-v2@^0.1.128-alpha":
-  version "0.1.128-alpha"
-  resolved "https://registry.npmjs.org/@raydium-io/raydium-sdk-v2/-/raydium-sdk-v2-0.1.128-alpha.tgz"
-  integrity sha512-y0FykxqpuioQM40V7Gr/b4OeKUpVDwlz9UTL+bVExR4qdFGcGTzpdiuHEYo/CHZzLpQcCGbHfVjqf6sXeaSPIw==
+"@raydium-io/raydium-sdk-v2@^0.2.8-alpha":
+  version "0.2.8-alpha"
+  resolved "https://registry.npmjs.org/@raydium-io/raydium-sdk-v2/-/raydium-sdk-v2-0.2.8-alpha.tgz"
+  integrity sha512-oZRybJ2YEydL7cqJftqzV4Ltf7xcpOp2TmgQnpLH7yviGKjEWVWxlb+dk0H6TBjoNOmtpN+KBvTxFCAX8XApGg==
   dependencies:
     "@solana/buffer-layout" "^4.0.1"
     "@solana/spl-token" "^0.4.8"
