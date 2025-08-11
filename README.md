@@ -218,8 +218,6 @@ clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --repo
 
 # dbg
 #npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "initializes the contract" 
-#npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "admin - pools v2 - creates & LPs AMM pool" ## tmp/scratch
-#npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "admin - pools v3 - creates & LPs CLMM pool" ## tmp/scratch
 
 # base - auction creation & bidding, & cancel
 clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "base - creates an auction"
@@ -293,7 +291,7 @@ clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep
 clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "admin - list auctions & pools"
 
     # admin - cleanups - ## run in this order to recover!! ##
-    clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "admin - pools v2 & v3 - remove liquidity ###" # WITHDRAW LIOUIDITY
+    clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "admin - pools - remove liquidity ###" # WITHDRAW LIOUIDITY
     clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep "admin - finalize finished auctions ###" ### HARD NUKE ALL ACCOUNTS 
 
 # test metadata

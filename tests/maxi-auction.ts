@@ -53,6 +53,11 @@ import {
   FEE_ACCOUNTS,
   //TEST_FEE_ACCOUNT,
   TEST_DAO_ACCOUNT,
+  // Dynamic network detection
+  IS_LOCAL,
+  IS_DEVNET,
+  IS_MAINNET,
+  getCurrentNetwork,
 } from "./config";
 //import { createMarket } from "./create-market";
 
@@ -83,9 +88,16 @@ import { e } from '@raydium-io/raydium-sdk-v2/lib/api-6a529105';
 import { generateAndUploadTestTokenData, generateThemedTestToken, TestTokenData } from "./maxi-auction-testdata";
 import { dumpBufferedLogsForToken, setActiveLogToken } from "./logging";
 
+import { logAuctionInfo } from "./auctionLogging";
+
 const RENT_EXEMPT_MIN = 890880; // devnet 
 
 // ENABLE_LOG is imported; interceptors are installed in ./logging on import
+
+// Log current network configuration
+console.log(`🌐 [Network Detection] Current network: ${getCurrentNetwork()}`);
+console.log(`📍 [Network Detection] IS_LOCAL: ${IS_LOCAL}, IS_DEVNET: ${IS_DEVNET}, IS_MAINNET: ${IS_MAINNET}`);
+console.log(`🔗 [Network Detection] ANCHOR_PROVIDER_URL: ${process.env.ANCHOR_PROVIDER_URL}`);
 
 // Rate limiting configuration for batch processing
 const AUCTION_FETCH_BATCH_SIZE = 20; // Process n auctions at a time (increased from 10)
@@ -663,6 +675,9 @@ describe("maxi-auction", () => {
     console.log(`Total auctions: ${totalAuctions}`);
     const auctionIds = Array.from({ length: totalAuctions }, (_, i) => i);
 
+    // Initialize Raydium SDK for position info logging
+    const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: true, blockhashCommitment: 'confirmed' });
+
     // Batch processing to avoid rate limits
     const results = [];
 
@@ -691,14 +706,11 @@ describe("maxi-auction", () => {
     //console.log("auctions", auctions.length);
 
     // Collect poolDbInfos and pool IDs from DB
-    const { poolDbInfos, poolPpcInfosMapv2, poolPpcInfosMapv3 } = await getPoolDbAndRpcInfos(auctions);
-    // logObject("poolDbInfos", poolDbInfos);
-    // logObject("poolPpcInfosMapv2", poolPpcInfosMapv2);
-    // logObject("poolPpcInfosMapv3", poolPpcInfosMapv3);  
+    const { poolDbInfos, poolPpcInfosMapv3 } = await getPoolDbAndRpcInfos(auctions);
 
     // Log
     const detailPromises = auctions.map(async (auction, index) => {
-      logAuctionInfo(poolDbInfos, index, poolPpcInfosMapv2, poolPpcInfosMapv3, auction);
+      logAuctionInfo(poolDbInfos, index, poolPpcInfosMapv3, auction, raydium, adminKp);
     });
     await Promise.all(detailPromises);
   });
@@ -709,6 +721,9 @@ describe("maxi-auction", () => {
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
     const totalAuctions = Number(globalInfoAccount.auctionsNum);
     console.log(`Total auctions: ${totalAuctions}`);
+
+    // Initialize Raydium SDK for position info logging
+    const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: true, blockhashCommitment: 'confirmed' });
     const auctionIds = Array.from({ length: totalAuctions }, (_, i) => i); // [2]
 
     // Batch processing to avoid rate limits
@@ -738,7 +753,7 @@ describe("maxi-auction", () => {
     console.log(`Successfully fetched ${auctions.length} auctions`);
 
     // Collect poolDbInfos and pool IDs from DB
-    const { poolDbInfos, poolPpcInfosMapv2, poolPpcInfosMapv3 } = await getPoolDbAndRpcInfos(auctions);
+    const { poolDbInfos, poolPpcInfosMapv3 } = await getPoolDbAndRpcInfos(auctions);
 
     // CLEANUP - Sequential processing with enhanced rate limiting
     const unfinalized = auctions.filter(x => !x.isFinalized);
@@ -756,7 +771,7 @@ describe("maxi-auction", () => {
         const originalIndex = auctions.findIndex(a => a.auctionId === x.auctionId);
         
         console.log("BEFORE:")
-        logAuctionInfo(poolDbInfos, originalIndex, poolPpcInfosMapv2, poolPpcInfosMapv3, x);
+        logAuctionInfo(poolDbInfos, originalIndex, poolPpcInfosMapv3, x, raydium, adminKp);
 
         try {
           await retryWithBackoff(async () => await finalizeAuction(x.auctionId));
@@ -764,7 +779,7 @@ describe("maxi-auction", () => {
           console.log("AFTER:")
           const refreshed = await getAuctionDetails(x.auctionId, connection, program, auctionDataSeed, auctionSolSeed, auctionBidsSeed);
           auctions[originalIndex] = { ...x, ...refreshed };
-          logAuctionInfo(poolDbInfos, originalIndex, poolPpcInfosMapv2, poolPpcInfosMapv3, auctions[originalIndex]);
+          logAuctionInfo(poolDbInfos, originalIndex, poolPpcInfosMapv3, auctions[originalIndex], raydium, adminKp);
           
           // Small delay between individual finalizations
           await sleep(2);
@@ -782,7 +797,7 @@ describe("maxi-auction", () => {
     }
   });
 
-  it("admin - pools v2 & v3 - remove liquidity ###", async () => { // ### ACHTUNG!
+  it("admin - pools - remove liquidity ###", async () => { // ### ACHTUNG!
   // Get all auctions
     const [globalInfo] = PublicKey.findProgramAddressSync([Buffer.from(globalInfoSeed)], program.programId);
     const globalInfoAccount = await program.account.globalInfo.fetch(globalInfo);
@@ -824,298 +839,149 @@ describe("maxi-auction", () => {
     console.log(`Successfully fetched ${auctions.length} auctions`);
 
     // Collect poolDbInfos and pool IDs from DB
-    const { poolDbInfos, poolPpcInfosMapv2, poolPpcInfosMapv3 } = await getPoolDbAndRpcInfos(auctions);
-    //console.log("poolDbInfos", poolDbInfos);
-    //console.log("poolPpcInfosMapv2", poolPpcInfosMapv2);
-    //console.log("poolPpcInfosMapv3", poolPpcInfosMapv3);  
+    const { poolDbInfos, poolPpcInfosMapv3 } = await getPoolDbAndRpcInfos(auctions);
 
     // Process each auction sequentially
     for (const [index, x] of auctions.entries()) {
       const poolDb = poolDbInfos[index];
-      const poolPpcInfo_v2 = poolDb?.pool_id ? poolPpcInfosMapv2.get(poolDb.pool_id) : undefined;
       const poolPpcInfo_v3 = poolDb?.pool_id ? poolPpcInfosMapv3.get(poolDb.pool_id) : undefined;
 
-      //console.log("poolPpcInfo_v2", poolPpcInfo_v2);
-      //console.log("poolPpcInfo_v3", poolPpcInfo_v3);
-
-      if (poolPpcInfo_v2) {
+      if (poolPpcInfo_v3) {
         try {
           const poolId = poolDb.pool_id;
-          console.log(`\n=== Processing v2 pool for auction ID: ${x.auctionId} ===`);
+          console.log(`\n=== Processing CLMM v3 pool for auction ID: ${x.auctionId} ===`);
 
-          // Get LP mint and total supply
-          const lpMint = new PublicKey(poolPpcInfo_v2.lpMint);
-          let totalLpSupply;
-          try {
-            const mintInfo = await getMint(connection, lpMint);
-            totalLpSupply = mintInfo.supply.toString();
-            console.log(`Total LP token supply: ${totalLpSupply} LP tokens`);
-          } catch (err) {
-            console.error(`Error fetching LP mint info for ${lpMint.toBase58()}:`, err);
-            continue;
-          }
+          // Get admin's positions for this pool
+          const adminPositions = await raydium.clmm.getOwnerPositionInfo({
+            programId: DEVNET_PROGRAM_ID.CLMM
+          });
 
-          // Get admin's LP token balance
-          let lpBalance = { value: { amount: '0' } };
-          const lpAta = await getAssociatedTokenAddress(new PublicKey(poolPpcInfo_v2.lpMint), adminKp.publicKey, true);
-          try {
-            lpBalance = await connection.getTokenAccountBalance(lpAta);
-            console.log(`Admin LP balance: ${lpBalance.value.amount} LP tokens`);
-          } catch (err) {
-            if (err instanceof TokenAccountNotFoundError) {
-              console.log(`Admin LP token account not found; balance set to 0`);
-            } else {
-              console.error(`Error fetching admin LP balance:`, err);
-              continue;
+          const poolPositions = adminPositions.filter(pos =>
+            pos.poolId.toBase58() === poolId
+          );
+
+          console.log(`Found ${poolPositions.length} position(s) for admin in pool ${poolId}`);
+
+          // Log detailed auction info with position data
+          await logAuctionInfo(poolDbInfos, index, poolPpcInfosMapv3, x, raydium, adminKp);
+
+          if (poolPositions.length > 0) {
+            // Get pool info for calculations
+            const poolInfo = await raydium.clmm.getPoolInfoFromRpc(poolId);
+
+            // Get admin's token balances before withdrawal
+            const poolTokens = [poolInfo.poolInfo.mintA, poolInfo.poolInfo.mintB];
+            const adminTokenAccountsBefore = [];
+            const balancesBefore = [];
+
+            for (const token of poolTokens) {
+              const tokenAccount = await getAssociatedTokenAddress(new PublicKey(token.address), adminKp.publicKey);
+              adminTokenAccountsBefore.push(tokenAccount);
+              try {
+                const balance = await connection.getTokenAccountBalance(tokenAccount);
+                balancesBefore.push(Number(balance.value.amount));
+              } catch (err) {
+                balancesBefore.push(0); // Account doesn't exist
+              }
             }
-          }
 
-          // Verify if admin is the sole LP
-          if (lpBalance.value.amount === totalLpSupply) {
-            console.log(`Admin is the sole LP for pool ${poolId}`);
-          } else {
-            console.log(`Warning: Admin holds ${lpBalance.value.amount} of ${totalLpSupply} LP tokens; other LPs may exist`);
-          }
+            const adminSolBefore = await connection.getBalance(adminKp.publicKey);
 
-          // Check if there are LP tokens to withdraw
-          if (Number(lpBalance.value.amount) > 0) {
-            // Log pool state BEFORE withdrawal
             console.log("BEFORE withdrawal:");
-            const poolPriceBefore = Number(poolPpcInfo_v2.poolPrice);
-            const baseReserveBefore = new BN(poolPpcInfo_v2.baseReserve, 16);
-            const quoteReserveBefore = new BN(poolPpcInfo_v2.quoteReserve, 16);
-            console.log(`ID: ${x.auctionId.toString().padEnd(3)}, [${x.status.padEnd(20)}], SOL: ${x.solBalance}, Tokens: ${x.tokenBalance}, Mint: ${x.tokenMintPublicKey}` +
-              ` > ${poolId} price: ${poolPriceBefore.toFixed(6)} >> LIQ: [${baseReserveBefore.toString()} T-lamports, ${Number(quoteReserveBefore.toString()) / LAMPORTS_PER_SOL} WSOL]`
-            );
+            console.log(`Admin SOL: ${(adminSolBefore / LAMPORTS_PER_SOL).toFixed(6)}`);
+            console.log(`Admin Token A: ${new Decimal(balancesBefore[0].toString()).div(Math.pow(10, poolInfo.poolInfo.mintA.decimals)).toString()}`);
+            console.log(`Admin Token B: ${new Decimal(balancesBefore[1].toString()).div(Math.pow(10, poolInfo.poolInfo.mintB.decimals)).toString()}`);
 
-            // Prepare withdrawal
-            let poolKeys;
-            let poolInfo;
-            const withdrawLpAmount = new BN(lpBalance.value.amount);
-            const isMainnet = false;
+            // Process each position
+            for (const [index, position] of poolPositions.entries()) {
+              console.log(`\n=== Withdrawing Position ${index + 1} ===`);
+              console.log(`Position ID: ${position.nftMint.toBase58()}`);
+              console.log(`Liquidity: ${position.liquidity.toString()}`);
+              console.log(`Tick Range: [${position.tickLower}, ${position.tickUpper}]`);
 
-            if (isMainnet) {
-              const data = await raydium.api.fetchPoolById({ ids: poolId });
-              poolInfo = data[0];
-            } else {
-              const data = await raydium.liquidity.getPoolInfoFromRpc({ poolId });
-              poolInfo = data.poolInfo;
-              poolKeys = data.poolKeys;
+              // Check if position has liquidity to withdraw
+              if (position.liquidity.gt(new BN(0))) {
+                // Calculate amounts for full liquidity withdrawal with high slippage tolerance
+                const decreaseLiquidityQuote = await PoolUtils.getLiquidityAmountOutFromAmountIn({
+                  poolInfo: poolInfo.poolInfo,
+                  slippage: 0.5, // 50% slippage tolerance to handle volatile markets
+                  inputA: true,
+                  tickLower: position.tickLower,
+                  tickUpper: position.tickUpper,
+                  amount: position.liquidity,
+                  add: false, // false for withdrawal/decrease
+                  amountHasFee: false,
+                  epochInfo: await connection.getEpochInfo(),
+                });
+
+                // Use very conservative minimum amounts to avoid slippage errors
+                const amountAMin = new BN(0); // Accept any amount for token A
+                const amountBMin = new BN(0); // Accept any amount for token B
+
+                // Use Decimal for safe large number handling
+                const tokenAWithdrawal = new Decimal(decreaseLiquidityQuote.amountA.amount.toString()).div(Math.pow(10, poolInfo.poolInfo.mintA.decimals));
+                const tokenBWithdrawal = new Decimal(decreaseLiquidityQuote.amountB.amount.toString()).div(Math.pow(10, poolInfo.poolInfo.mintB.decimals));
+
+                console.log(`Expected Token A withdrawal: ${tokenAWithdrawal.toString()}`);
+                console.log(`Expected Token B withdrawal: ${tokenBWithdrawal.toString()}`);
+                console.log(`Using minimum amounts: Token A = 0, Token B = 0 (to avoid slippage errors)`);
+
+                // Execute liquidity decrease
+                const { execute: execDecrease } = await raydium.clmm.decreaseLiquidity({
+                  poolInfo: poolInfo.poolInfo,
+                  poolKeys: poolInfo.poolKeys,
+                  ownerPosition: position,
+                  liquidity: position.liquidity, // Withdraw all liquidity
+                  amountMinA: amountAMin,
+                  amountMinB: amountBMin,
+                  ownerInfo: {
+                    useSOLBalance: false,
+                  },
+                  txVersion: TxVersion.LEGACY,
+                });
+
+                console.log(`Executing decreaseLiquidity for position ${position.nftMint.toBase58()}...`);
+                const decreaseTx = await execDecrease({ sendAndConfirm: true });
+                console.log(`Withdrawal successful - txId: ${decreaseTx.txId}`);
+              } else {
+                console.log(`Position has no liquidity to withdraw`);
+              }
             }
 
-            if (!poolInfo) {
-              console.log(`Pool info is undefined for auction ID ${x.auctionId}`);
-              continue;
+            // Get admin's token balances after withdrawal
+            const balancesAfter = [];
+            for (let i = 0; i < poolTokens.length; i++) {
+              try {
+                const balance = await connection.getTokenAccountBalance(adminTokenAccountsBefore[i]);
+                balancesAfter.push(Number(balance.value.amount));
+              } catch (err) {
+                balancesAfter.push(0);
+              }
             }
 
-            if (!isValidAmm(poolInfo.programId)) {
-              console.log(`Target pool is not an AMM pool for auction ID ${x.auctionId}`);
-              continue;
-            }
+            const adminSolAfter = await connection.getBalance(adminKp.publicKey);
 
-            // Calculate withdrawal amounts
-            const [baseRatio, quoteRatio] = [
-              new Decimal(poolInfo.mintAmountA).div(poolInfo.lpAmount || 1),
-              new Decimal(poolInfo.mintAmountB).div(poolInfo.lpAmount || 1),
-            ];
+            console.log("\nAFTER withdrawal:");
+            console.log(`Admin SOL: ${(adminSolAfter / LAMPORTS_PER_SOL).toFixed(6)}`);
+            console.log(`Admin Token A: ${new Decimal(balancesAfter[0].toString()).div(Math.pow(10, poolInfo.poolInfo.mintA.decimals)).toString()}`);
+            console.log(`Admin Token B: ${new Decimal(balancesAfter[1].toString()).div(Math.pow(10, poolInfo.poolInfo.mintB.decimals)).toString()}`);
 
-            const withdrawAmountDe = new Decimal(withdrawLpAmount.toString()).div(10 ** poolInfo.lpMint.decimals);
-            const [withdrawAmountA, withdrawAmountB] = [
-              withdrawAmountDe.mul(baseRatio).mul(10 ** (poolInfo?.mintA.decimals || 0)),
-              withdrawAmountDe.mul(quoteRatio).mul(10 ** (poolInfo?.mintB.decimals || 0)),
-            ];
+            // Calculate and log withdrawal amounts using Decimal for safe arithmetic
+            const tokenAWithdrawn = balancesAfter[0] - balancesBefore[0];
+            const tokenBWithdrawn = balancesAfter[1] - balancesBefore[1];
+            const solSpent = adminSolBefore - adminSolAfter;
 
-            const lpSlippage = 0.1; // 10% slippage tolerance
-            const baseAmountMin = new BN(withdrawAmountA.mul(1 - lpSlippage).toFixed(0));
-            const quoteAmountMin = new BN(withdrawAmountB.mul(1 - lpSlippage).toFixed(0));
+            console.log("\nWITHDRAWAL SUMMARY:");
+            console.log(`Token A withdrawn: ${new Decimal(tokenAWithdrawn.toString()).div(Math.pow(10, poolInfo.poolInfo.mintA.decimals)).toString()}`);
+            console.log(`Token B withdrawn: ${new Decimal(tokenBWithdrawn.toString()).div(Math.pow(10, poolInfo.poolInfo.mintB.decimals)).toString()}`);
+            console.log(`SOL spent (fees): ${(solSpent / LAMPORTS_PER_SOL).toFixed(6)}`);
 
-            // Log withdrawal details
-            console.log(`Withdrawal details:`);
-            console.log(`- lpMint: ${poolInfo.lpMint}`);
-            console.log(`- lpMint.decimals: ${poolInfo.lpMint.decimals}`);
-            console.log(`- withdrawLpAmount: ${withdrawLpAmount.toString()} LP tokens`);
-            console.log(`- withdrawAmountA (base): ${withdrawAmountA.toString()}`);
-            console.log(`- withdrawAmountB (quote): ${withdrawAmountB.toString()}`);
-            console.log(`- baseAmountMin: ${baseAmountMin.toString()}`);
-            console.log(`- quoteAmountMin: ${quoteAmountMin.toString()}`);
-
-            // Execute withdrawal
-            const { execute: execRL } = await raydium.liquidity.removeLiquidity({
-              poolInfo,
-              poolKeys,
-              lpAmount: withdrawLpAmount,
-              baseAmountMin,
-              quoteAmountMin,
-              txVersion: TxVersion.LEGACY,
-            });
-
-            console.log(`Executing removeLiquidity for auction ID: ${x.auctionId}...`);
-            const rlSig = await execRL({ sendAndConfirm: true });
-            console.log(`Withdrawal successful - txId: ${rlSig.txId}`);
-
-            // Query and log pool state AFTER withdrawal
-            console.log("AFTER withdrawal:");
-            const updatedPoolInfo = await raydium.liquidity.getRpcPoolInfos([poolId]);
-            const updatedPool = updatedPoolInfo[poolId];
-            if (updatedPool) {
-              const baseReserveAfter = new BN(updatedPool.baseReserve, 16);
-              const quoteReserveAfter = new BN(updatedPool.quoteReserve, 16);
-              console.log(`LIQ: [${baseReserveAfter.toString()} T-lamports, ${Number(quoteReserveAfter.toString()) / LAMPORTS_PER_SOL} WSOL]`);
-            } else {
-              console.log(`Failed to fetch updated pool info for pool ID: ${poolId}`);
-            }
-
-            // Verify admin's LP balance post-withdrawal
-            try {
-              const postLpBalance = await connection.getTokenAccountBalance(lpAta);
-              console.log(`Admin LP balance after withdrawal: ${postLpBalance.value.amount} LP tokens`);
-            } catch (err) {
-              console.log(`Admin LP balance after withdrawal: 0 (account likely closed)`);
-            }
           } else {
-            console.log(`No LP tokens to withdraw for auction ID: ${x.auctionId}`);
+            console.log(`No positions found for admin in CLMM v3 pool ${poolId}`);
           }
+
         } catch (err) {
-          console.error(`Error processing auction ID: ${x.auctionId}:`, err);
-        }
-      } else {
-        if (poolPpcInfo_v3) {
-          try {
-            const poolId = poolDb.pool_id;
-            console.log(`\n=== Processing CLMM v3 pool for auction ID: ${x.auctionId} ===`);
-
-            // Get admin's positions for this pool
-            const adminPositions = await raydium.clmm.getOwnerPositionInfo({ 
-              programId: DEVNET_PROGRAM_ID.CLMM 
-            });
-            
-            const poolPositions = adminPositions.filter(pos => 
-              pos.poolId.toBase58() === poolId
-            );
-
-            console.log(`Found ${poolPositions.length} position(s) for admin in pool ${poolId}`);
-
-            if (poolPositions.length > 0) {
-              // Get pool info for calculations
-              const poolInfo = await raydium.clmm.getPoolInfoFromRpc(poolId);
-              
-              // Get admin's token balances before withdrawal
-              const poolTokens = [poolInfo.poolInfo.mintA, poolInfo.poolInfo.mintB];
-              const adminTokenAccountsBefore = [];
-              const balancesBefore = [];
-              
-              for (const token of poolTokens) {
-                const tokenAccount = await getAssociatedTokenAddress(new PublicKey(token.address), adminKp.publicKey);
-                adminTokenAccountsBefore.push(tokenAccount);
-                try {
-                  const balance = await connection.getTokenAccountBalance(tokenAccount);
-                  balancesBefore.push(Number(balance.value.amount));
-                } catch (err) {
-                  balancesBefore.push(0); // Account doesn't exist
-                }
-              }
-              
-              const adminSolBefore = await connection.getBalance(adminKp.publicKey);
-              
-                             console.log("BEFORE withdrawal:");
-               console.log(`Admin SOL: ${(adminSolBefore / LAMPORTS_PER_SOL).toFixed(6)}`);
-               console.log(`Admin Token A: ${new Decimal(balancesBefore[0].toString()).div(Math.pow(10, poolInfo.poolInfo.mintA.decimals)).toString()}`);
-               console.log(`Admin Token B: ${new Decimal(balancesBefore[1].toString()).div(Math.pow(10, poolInfo.poolInfo.mintB.decimals)).toString()}`);
-
-              // Process each position
-              for (const [index, position] of poolPositions.entries()) {
-                console.log(`\n=== Withdrawing Position ${index + 1} ===`);
-                console.log(`Position ID: ${position.nftMint.toBase58()}`);
-                console.log(`Liquidity: ${position.liquidity.toString()}`);
-                console.log(`Tick Range: [${position.tickLower}, ${position.tickUpper}]`);
-
-                                 // Check if position has liquidity to withdraw
-                 if (position.liquidity.gt(new BN(0))) {
-                   // Calculate amounts for full liquidity withdrawal with high slippage tolerance
-                   const decreaseLiquidityQuote = await PoolUtils.getLiquidityAmountOutFromAmountIn({
-                     poolInfo: poolInfo.poolInfo,
-                     slippage: 0.5, // 50% slippage tolerance to handle volatile markets
-                     inputA: true,
-                     tickLower: position.tickLower,
-                     tickUpper: position.tickUpper,
-                     amount: position.liquidity,
-                     add: false, // false for withdrawal/decrease
-                     amountHasFee: false,
-                     epochInfo: await connection.getEpochInfo(),
-                  });
-
-                   // Use very conservative minimum amounts to avoid slippage errors
-                   const amountAMin = new BN(0); // Accept any amount for token A
-                   const amountBMin = new BN(0); // Accept any amount for token B
-
-                   // Use Decimal for safe large number handling
-                   const tokenAWithdrawal = new Decimal(decreaseLiquidityQuote.amountA.amount.toString()).div(Math.pow(10, poolInfo.poolInfo.mintA.decimals));
-                   const tokenBWithdrawal = new Decimal(decreaseLiquidityQuote.amountB.amount.toString()).div(Math.pow(10, poolInfo.poolInfo.mintB.decimals));
-                   
-                   console.log(`Expected Token A withdrawal: ${tokenAWithdrawal.toString()}`);
-                   console.log(`Expected Token B withdrawal: ${tokenBWithdrawal.toString()}`);
-                   console.log(`Using minimum amounts: Token A = 0, Token B = 0 (to avoid slippage errors)`);
-
-                   // Execute liquidity decrease
-                   const { execute: execDecrease } = await raydium.clmm.decreaseLiquidity({
-                     poolInfo: poolInfo.poolInfo,
-                     poolKeys: poolInfo.poolKeys,
-                     ownerPosition: position,
-                     liquidity: position.liquidity, // Withdraw all liquidity
-                     amountMinA: amountAMin,
-                     amountMinB: amountBMin,
-                     ownerInfo: {
-                       useSOLBalance: false,
-                     },
-                     txVersion: TxVersion.LEGACY,
-                   });
-
-                   console.log(`Executing decreaseLiquidity for position ${position.nftMint.toBase58()}...`);
-                   const decreaseTx = await execDecrease({ sendAndConfirm: true });
-                   console.log(`Withdrawal successful - txId: ${decreaseTx.txId}`);
-                 } else {
-                   console.log(`Position has no liquidity to withdraw`);
-                 }
-              }
-
-              // Get admin's token balances after withdrawal
-              const balancesAfter = [];
-              for (let i = 0; i < poolTokens.length; i++) {
-                try {
-                  const balance = await connection.getTokenAccountBalance(adminTokenAccountsBefore[i]);
-                  balancesAfter.push(Number(balance.value.amount));
-                } catch (err) {
-                  balancesAfter.push(0);
-                }
-              }
-              
-              const adminSolAfter = await connection.getBalance(adminKp.publicKey);
-
-                             console.log("\nAFTER withdrawal:");
-               console.log(`Admin SOL: ${(adminSolAfter / LAMPORTS_PER_SOL).toFixed(6)}`);
-               console.log(`Admin Token A: ${new Decimal(balancesAfter[0].toString()).div(Math.pow(10, poolInfo.poolInfo.mintA.decimals)).toString()}`);
-               console.log(`Admin Token B: ${new Decimal(balancesAfter[1].toString()).div(Math.pow(10, poolInfo.poolInfo.mintB.decimals)).toString()}`);
-
-               // Calculate and log withdrawal amounts using Decimal for safe arithmetic
-               const tokenAWithdrawn = balancesAfter[0] - balancesBefore[0];
-               const tokenBWithdrawn = balancesAfter[1] - balancesBefore[1];
-               const solSpent = adminSolBefore - adminSolAfter;
-
-               console.log("\nWITHDRAWAL SUMMARY:");
-               console.log(`Token A withdrawn: ${new Decimal(tokenAWithdrawn.toString()).div(Math.pow(10, poolInfo.poolInfo.mintA.decimals)).toString()}`);
-               console.log(`Token B withdrawn: ${new Decimal(tokenBWithdrawn.toString()).div(Math.pow(10, poolInfo.poolInfo.mintB.decimals)).toString()}`);
-               console.log(`SOL spent (fees): ${(solSpent / LAMPORTS_PER_SOL).toFixed(6)}`);
-              
-            } else {
-              console.log(`No positions found for admin in CLMM v3 pool ${poolId}`);
-            }
-
-          } catch (err) {
-            console.error(`Error withdrawing CLMM v3 liquidity for auction ID: ${x.auctionId}:`, err);
-          }
-        }
-        else {
-          console.log(`\nNo v2 or v3 pool info available for auction ID: ${x.auctionId}`);
+          console.error(`Error withdrawing CLMM v3 liquidity for auction ID: ${x.auctionId}:`, err);
         }
       }
     }
@@ -2943,325 +2809,6 @@ describe("maxi-auction", () => {
     assert.ok(Math.abs(INITIAL_PRICE - 1 / poolInfoRpc.currentPrice) < 1e-6, 'Current price mismatch');
   }
 
-  //
-  // Raydium - v2 AMM Pools
-  //
-  it("admin - pools v2 - creates & LPs AMM pool", async () => {
-    //await test_create_amm_and_trade_v2();
-  });
-  async function test_create_amm_and_trade_v2() { // https://github.com/raydium-io/raydium-sdk-V2-demo/tree/master/src/amm
-    if (isLocal) { logger.color("yellow").log("Skipping pool creation on localnet"); return; }
-    const adminBalanceAtStart = await connection.getBalance(adminKp.publicKey);
-    const txVersion = TxVersion.LEGACY; // TxVersion.V0
-    const LIQ_SOL = 0.1; // max one decimal please
-    const SUPPLY_TOKENS = 1_000_000_000; //1_000_000;
-    const SUPPLY_DECIMALS = 9;
-    const LIQ_TOKENS = SUPPLY_TOKENS * 0.1;
-
-    // **Step 1: Set up connection and keypairs && Initialize the Raydium SDK **
-    const minterKp = adminKp; //Keypair.generate();
-    const raydium = await Raydium.load({ connection, owner: minterKp, disableFeatureCheck: true, blockhashCommitment: 'finalized', });
-    logger.color("green").log("Raydium SDK loaded");
-
-    // **Step 2: Mint a new fucking token**
-    const tokenMint = await createMint(connection, minterKp, minterKp.publicKey, null, SUPPLY_DECIMALS);
-    const minterTokenAccount = await getOrCreateAssociatedTokenAccount(connection, minterKp, tokenMint, minterKp.publicKey); // ATA
-    const totalSupply = new BN(SUPPLY_TOKENS).mul(new BN(10).pow(new BN(SUPPLY_DECIMALS)));
-    await mintTo(connection, minterKp, tokenMint, minterTokenAccount.address, minterKp, BigInt(totalSupply.toString()));
-    console.log('WSOLMint', WSOLMint.toBase58());
-    console.log('tokenMint', tokenMint.toBase58());
-
-    // Check that the tokens are there
-    const tokenBalance = await connection.getTokenAccountBalance(minterTokenAccount.address);
-    assert.equal(tokenBalance.value.uiAmount, SUPPLY_TOKENS, "Minter has wrong # of tokens after mint");
-    logger.color("green").log("Minted tokens");
-
-    // **Step 3: Wrap SOL into WSOL **
-    console.log('TOKEN_WSOL.address', TOKEN_WSOL.address); // So11111111111111111111111111111111111111112
-    const minterWsolAccount = await getOrCreateAssociatedTokenAccount(connection, minterKp, new PublicKey(TOKEN_WSOL.address), minterKp.publicKey);
-    const wsolBalance = await connection.getTokenAccountBalance(minterWsolAccount.address); // Get current WSOL balance
-    const currentWsolAmount = wsolBalance.value.uiAmount || 0; // Default to 0 if null
-    console.log(`Current WSOL balance: ${currentWsolAmount} WSOL`);
-    if (currentWsolAmount < LIQ_SOL) { // Check if we need to wrap more SOL
-      const shortfall = LIQ_SOL - currentWsolAmount;
-      const lamportsToWrap = Math.ceil(shortfall * LAMPORTS_PER_SOL);
-      console.log(`Wrapping ${shortfall} SOL to reach ${LIQ_SOL} WSOL`);
-      const wrapTx = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: minterKp.publicKey,
-          toPubkey: minterWsolAccount.address,
-          lamports: lamportsToWrap,
-        }),
-        createSyncNativeInstruction(minterWsolAccount.address)
-      );
-      wrapTx.feePayer = minterKp.publicKey;
-      wrapTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
-      const wrapSig = await sendAndConfirmTransaction(connection, wrapTx, [minterKp]);
-      await logSuccessTx(connection, wrapSig, "Wrapped minter's SOL into WSOL");
-    }
-
-    //
-    // **Step 4: create a market ** ~1.9 SOL FEE TO CREATE A MARKET
-    //
-    //console.log('RAYMint', RAYMint.toBase58());
-    //console.log('USDCMint', USDCMint.toBase58());
-    var { execute: execCM, extInfo: extInfoCM, transactions: txsCM } = await raydium.marketV2.create({
-      baseInfo: {
-        // create market doesn't support token 2022
-        mint: tokenMint, //RAYMint,
-        decimals: SUPPLY_DECIMALS,
-      },
-      quoteInfo: {
-        // create market doesn't support token 2022
-        mint: WSOLMint, //USDCMint, //new PublicKey(TOKEN_WSOL.address), //USDCMint,
-        decimals: 9,
-      },
-      lotSize: 1,
-      tickSize: 0.01,
-      //dexProgramId: OPEN_BOOK_PROGRAM, // MAINNET
-      dexProgramId: DEVNET_PROGRAM_ID.OPENBOOK_MARKET, // devnet
-
-      // requestQueueSpace: 5120 + 12, // optional
-      // eventQueueSpace: 262144 + 12, // optional
-      // orderbookQueueSpace: 65536 + 12, // optional
-
-      txVersion,
-      // optional: set up priority fee here
-      // computeBudgetConfig: {
-      //   units: 600000,
-      //   microLamports: 46591500,
-      // },
-    })
-    const txIds = await execCM({ sequentially: true, });
-    await logSuccessTx(connection, txIds.txIds[0], "Create market");
-    const marketInfo = Object.keys(extInfoCM.address).reduce(
-      (acc, cur) => ({ ...acc, [cur]: extInfoCM.address[cur as keyof typeof extInfoCM.address].toBase58(), }), {});
-    console.log(`create market total ${txsCM.length} txs, market info: `, marketInfo);
-    const marketId = new PublicKey(marketInfo['marketId']);
-    //const marketId = new PublicKey('EGkf4X4XCdzH8dmefyL6dyj9oUqxu8q2YZEoEQMniiHo'); // sale devnet SOL - this costs 1.9 SOL
-    console.log('marketId', marketId.toBase58());
-
-    // **Step 5: Create a pool**
-    const marketBufferInfo = await raydium.connection.getAccountInfo(new PublicKey(marketId));
-    console.log('marketBufferInfo', marketBufferInfo);
-    const { baseMint, quoteMint } = MARKET_STATE_LAYOUT_V3.decode(marketBufferInfo!.data);
-    const baseMintInfo = await raydium.token.getTokenInfo(baseMint);
-    const quoteMintInfo = await raydium.token.getTokenInfo(quoteMint);
-    console.log('baseMintInfo', baseMintInfo);
-    console.log('quoteMintInfo', quoteMintInfo);
-    console.log('TOKEN_PROGRAM_ID', TOKEN_PROGRAM_ID.toBase58());
-    if (baseMintInfo.programId !== TOKEN_PROGRAM_ID.toBase58() || quoteMintInfo.programId !== TOKEN_PROGRAM_ID.toBase58()) {
-      throw new Error('baseMint or quoteMint is not a supported token type');
-    }
-    const baseAmount = new BN(LIQ_TOKENS).mul(new BN(10).pow(new BN(SUPPLY_DECIMALS)));
-    const quoteAmount = new BN(LIQ_SOL * 10).mul(new BN(10).pow(new BN(8)));
-    console.log('baseAmount', baseAmount.toString());
-    console.log('quoteAmount', quoteAmount.toString());
-
-    console.log('baseAmount (tokens)', BigInt(baseAmount.toString()) / BigInt(10 ** SUPPLY_DECIMALS));
-    console.log('quoteAmount (wsol)', BigInt(quoteAmount.toString()) / BigInt(10 ** 9));
-
-    if (baseAmount.mul(quoteAmount).lte(new BN(1).mul(new BN(10 ** baseMintInfo.decimals)).pow(new BN(2)))) {
-      throw new Error('initial liquidity too low, try adding more baseAmount/quoteAmount');
-    }
-
-    const { execute: execCP, extInfo: extInfoCP, } = await raydium.liquidity.createPoolV4({
-      //programId: AMM_V4, // MAINNET
-      programId: DEVNET_PROGRAM_ID.AmmV4, // devnet
-
-      marketInfo: {
-        marketId,
-        //programId: OPEN_BOOK_PROGRAM, // MAINNET
-        programId: DEVNET_PROGRAM_ID.OPENBOOK_MARKET, // devent
-      },
-      baseMintInfo: {
-        mint: baseMint,
-        decimals: baseMintInfo.decimals, // if you know mint decimals here, can pass number directly
-      },
-      quoteMintInfo: {
-        mint: quoteMint,
-        decimals: quoteMintInfo.decimals, // if you know mint decimals here, can pass number directly
-      },
-      baseAmount, //: new BN(1000),
-      quoteAmount, //: new BN(1000),
-
-      // sol devnet faucet: https://faucet.solana.com/
-      // baseAmount: new BN(4 * 10 ** 9), // if devent pool with sol/wsol, better use amount >= 4*10**9
-      // quoteAmount: new BN(4 * 10 ** 9), // if devent pool with sol/wsol, better use amount >= 4*10**9
-
-      startTime: new BN(0), // unit in seconds
-      ownerInfo: {
-        useSOLBalance: true,
-      },
-      associatedOnly: false,
-      txVersion,
-
-      //feeDestinationId: FEE_DESTINATION_ID, // MAINNET
-      feeDestinationId: DEVNET_PROGRAM_ID.FEE_DESTINATION_ID, // devnet
-
-      // optional: set up priority fee here
-      // computeBudgetConfig: {
-      //   units: 600000,
-      //   microLamports: 4659150,
-      // },
-    });
-    const { txId } = await execCP({ sendAndConfirm: true })
-    const poolKeys = Object.keys(extInfoCP.address).reduce(
-      (acc, cur) => ({
-        ...acc,
-        [cur]: extInfoCP.address[cur as keyof typeof extInfoCP.address].toBase58(),
-      }),
-      {}
-    );
-    console.log('amm pool created! txId: ', txId, ', poolKeys:', poolKeys);
-
-    const tokenBalanceAfter = await connection.getTokenAccountBalance(minterTokenAccount.address);
-    console.log('tokenBalanceAfter', tokenBalanceAfter);
-    console.log('tokenBalanceAfter.value.uiAmount', tokenBalanceAfter.value.uiAmount);
-    console.log('SUPPLY_TOKENS', SUPPLY_TOKENS);
-    console.log('LIQ_TOKENS', LIQ_TOKENS);
-    assert.equal(tokenBalanceAfter.value.uiAmount, SUPPLY_TOKENS - LIQ_TOKENS, "Minter has wrong # of tokens after pool creation");
-
-    // get total admin cost to create market & pool
-    const adminBalanceAtEnd = await connection.getBalance(adminKp.publicKey);
-    const totalCost = adminBalanceAtEnd - adminBalanceAtStart;
-    console.log('totalCost', totalCost);
-    console.log('totalCost (SOL)', totalCost / LAMPORTS_PER_SOL);
-
-    // test poolkeys - ignore
-    /*const poolKeys = { // devnet pool: 4t7PN6oWscEqnqiSwRuTZXWosyshVD4qJpp7iJhffNdR8StTjRvuGKngw2uyuRpB1ihdK5WCbrwuF52RpXzL6PZW
-      programId: 'HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8',
-      ammId: 'BpdmAjTjMDamyyEzShzjzMQnjfkrs1vn9amSQGJzxLMX',
-      ammAuthority: 'DbQqP6ehDYmeYjcBaMRuA8tAJY1EjDUz9DpwSLjaQqfC',
-      ammOpenOrders: '2ZRHYYKB6t7Ko19M4v2LjhrnLX7npLHJNokya5kZMeNf',
-      lpMint: '79UAW3WqbgaPQEbVsCdNK9MHmEiG6fJJv5gXvhAUHfWu',
-      coinMint: 'HXGt4TmVWKmwGkGPwHP3Kp4T2Jd52NoieA7Gad9Bhkdb',
-      pcMint: 'So11111111111111111111111111111111111111112',
-      coinVault: '2diEnXLNHrMsDBcADYu2ubZCZtjWf1C63C1hN1pUZf5v',
-      pcVault: '6QJZAhbQ9UDdSUVK12AzzEP5ArUcG64mrZMyD4wK1Nkp',
-      withdrawQueue: '2hFbvzyQWbHNXqBWJxNV9JK7eFTuQcQtmANxsV7SVcuX',
-      ammTargetOrders: 'CaUstCJsdT56uzk6JsBCxg6RyBuudYDyvcqNGSKAbuLo',
-      poolTempLp: 'Hv5dTdndbvL9hw8sHQumsnwJtW2Xckj2Xwrhsea8kspE',
-      marketProgramId: 'EoTcMgcDRTJVZDMZWBoU6rhYHZfkNTVEAfz3uUJRcYGj',
-      marketId: 'FYiWxYY2w5L4wXGNCSK4ouvxTnP6CyPKmyb6B4jPye6T',
-      ammConfigId: '8QN9yfKqWDoKjvZmqFsgCzAqwZBQuzVVnC388dN5RCPo',
-      feeDestinationId: '3XMrhbv989VxAMi3DErLV9eJht1pHppW5LbKxe9fkEFR'
-    };*/
-
-    // **Step 6: Query the damn pool price**
-    const poolId = poolKeys['ammId'];
-    let poolInfo: AmmRpcData | undefined;
-    const getPrice = async () => {
-      const poolInfos = await raydium.liquidity.getRpcPoolInfos([poolId]);
-      const poolInfo = poolInfos[poolId];
-      const price = new Decimal(poolInfo.quoteReserve.toString()).div(poolInfo.baseReserve.toString()).toNumber();
-      logger.color("green").log(`Reserve ratios: ${price} WSOL per token`);
-      logger.color("green").log(`poolInfo.poolPrice: ${poolInfo.poolPrice} WSOL per token`);
-      return poolInfo;
-    }
-    poolInfo = await getPrice();
-
-    //
-    // **Step 7: Buy & sell some tokens **
-    //
-    const swap = async (buyTokens: boolean) => {
-      const inputMint = buyTokens ? poolInfo.quoteMint.toBase58() : poolInfo.baseMint.toBase58();
-      const amountIn = buyTokens ? 0.01 * 10 ** 9 // 0.01 WSOL 
-        : 100_00 * 10 ** 6 // 10k TOKENS
-      let poolInfo2: ApiV3PoolInfoStandardItem | undefined;
-      let poolKeys2: AmmV4Keys | undefined;
-      let rpcData: AmmRpcData;
-      if (isMainnet) {
-        // note: api doesn't support get devnet pool info, so in devnet else we go rpc method
-        // if you wish to get pool info from rpc, also can modify logic to go rpc method directly
-        const data = await raydium.api.fetchPoolById({ ids: poolId });
-        poolInfo2 = data[0] as ApiV3PoolInfoStandardItem;
-        if (!isValidAmm(poolInfo2.programId)) throw new Error('target pool is not AMM pool');
-        poolKeys2 = await raydium.liquidity.getAmmPoolKeys(poolId);
-        rpcData = await raydium.liquidity.getRpcPoolInfo(poolId);
-      } else {
-        // note: getPoolInfoFromRpc method only return required pool data for computing not all detail pool info
-        const data = await raydium.liquidity.getPoolInfoFromRpc({ poolId });
-        poolInfo2 = data.poolInfo;
-        poolKeys2 = data.poolKeys;
-        rpcData = data.poolRpcData;
-      }
-
-      //assert.equal(poolInfo2, poolInfo, 'poolInfo2 should be equal to poolInfo');
-      //assert.equal(poolKeys2, poolKeys, 'poolKeys2 should be equal to poolKeys');
-      const [baseReserve, quoteReserve, status] = [rpcData.baseReserve, rpcData.quoteReserve, rpcData.status.toNumber()];
-      if (poolInfo2.mintA.address !== inputMint && poolInfo2.mintB.address !== inputMint) throw new Error('input mint does not match pool')
-
-      const baseIn = inputMint === poolInfo2.mintA.address
-      const [mintIn, mintOut] = baseIn ? [poolInfo2.mintA, poolInfo2.mintB] : [poolInfo2.mintB, poolInfo2.mintA]
-      console.log('baseIn', baseIn);
-      console.log('mintIn', mintIn.address);
-      console.log('mintOut', mintOut.address);
-      const out = raydium.liquidity.computeAmountOut({
-        poolInfo: {
-          ...poolInfo2,
-          baseReserve,
-          quoteReserve,
-          status,
-          version: 4,
-        },
-        amountIn: new BN(amountIn),
-        mintIn: mintIn.address,
-        mintOut: mintOut.address,
-        slippage: 0.01, // range: 1 ~ 0.0001, means 100% ~ 0.01%
-      })
-      console.log(
-        `computed swap ${new Decimal(amountIn)
-          .div(10 ** mintIn.decimals)
-          .toDecimalPlaces(mintIn.decimals)
-          .toString()} ${mintIn.symbol || mintIn.address} to ${new Decimal(out.amountOut.toString())
-            .div(10 ** mintOut.decimals)
-            .toDecimalPlaces(mintOut.decimals)
-            .toString()} ${mintOut.symbol || mintOut.address}, minimum amount out ${new Decimal(out.minAmountOut.toString())
-              .div(10 ** mintOut.decimals)
-              .toDecimalPlaces(mintOut.decimals)} ${mintOut.symbol || mintOut.address}`
-      );
-
-      const { execute } = await raydium.liquidity.swap({
-        poolInfo: poolInfo2,
-        poolKeys: poolKeys2,
-        amountIn: new BN(amountIn),
-        amountOut: out.minAmountOut, // out.amountOut means amount 'without' slippage
-        fixedSide: 'in',
-        inputMint: mintIn.address,
-        txVersion,
-        // optional: set up token account
-        // config: {
-        //   inputUseSolBalance: true, // default: true, if you want to use existed wsol token account to pay token in, pass false
-        //   outputUseSolBalance: true, // default: true, if you want to use existed wsol token account to receive token out, pass false
-        //   associatedOnly: true, // default: true, if you want to use ata only, pass true
-        // },
-        // optional: set up priority fee here
-        // computeBudgetConfig: {
-        //   units: 600000,
-        //   microLamports: 46591500,
-        // },
-        // optional: add transfer sol to tip account instruction. e.g sent tip to jito
-        // txTipConfig: {
-        //   address: new PublicKey('96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5'),
-        //   amount: new BN(10000000), // 0.01 sol
-        // },
-      });
-
-      // don't want to wait confirm, set sendAndConfirm to false or don't pass any params to execute
-      const { txId: swapTx1Id } = await execute({ sendAndConfirm: true });
-      const SwapTx1 = await getTransactionDetailsWithRetry(connection, swapTx1Id);
-      if (SwapTx1.meta.err) {
-        throw new Error(`SwapTx1 failed: ${JSON.stringify(SwapTx1.meta.err)}`);
-      }
-      console.log(`${buyTokens ? 'bought' : 'sold'} tokens successfully in amm pool:`, swapTx1Id);
-    }
-    await swap(true);
-    poolInfo = await getPrice();
-    await swap(false);
-    poolInfo = await getPrice();
-  }
-
   // [REF] - Referral system test cases
   it("admin - adds referral mapping successfully", async () => {
     await test_clear_referrals();
@@ -4287,28 +3834,23 @@ async function getPoolDbAndRpcInfos(successfulResults: { auctionId: any; solBala
 
   const poolDbInfosPromises = successfulResults.map(x => getMarketAndPoolInfoDb(x.tokenMintPublicKey));
   const poolDbInfos = await Promise.all(poolDbInfosPromises);
-  const v2PoolIds = poolDbInfos.filter(p => p?.market_id).map(info => info?.pool_id).filter(id => id !== undefined && id !== null); // v2 AMMs use markets
-  const uniquev2PoolIds = [...new Set(v2PoolIds)];
 
   const v3PoolIds = poolDbInfos.filter(p => p?.pool_id && !p?.market_id).map(info => info?.pool_id).filter(id => id !== undefined && id !== null); // v3 CLMM use only pools
   const uniquev3PoolIds = [...new Set(v3PoolIds)];
 
-  logObject("uniquev2PoolIds", uniquev2PoolIds);
-  logObject("uniquev3PoolIds", uniquev3PoolIds);
+  //logObject("uniquev3PoolIds", uniquev3PoolIds);
 
   // Fetch all pool infos in one RPC - v2
   const raydium = await Raydium.load({ connection, owner: adminKp, disableFeatureCheck: false, blockhashCommitment: 'finalized' });
-  const rpcResultv2 = uniquev2PoolIds.length > 0 ? await raydium.liquidity.getRpcPoolInfos(uniquev2PoolIds) : {};
-  const poolPpcInfosMapv2 = new Map(Object.entries(rpcResultv2));
 
   // Fetch all pool infos in one RPC - v3
   const rpcResultv3 = uniquev3PoolIds.length > 0 ? await raydium.clmm.getRpcClmmPoolInfos({ poolIds: uniquev3PoolIds }) : {};
   const poolPpcInfosMapv3 = new Map(Object.entries(rpcResultv3));
 
-  return { poolDbInfos, poolPpcInfosMapv2, poolPpcInfosMapv3 };
+  return { poolDbInfos, poolPpcInfosMapv3 };
 }
 
-async function logAuctionInfo(
+/*async function logAuctionInfo(
   poolDbInfos: { market_info: string | null; pool_keys: string | null; market_id: string | null; pool_id: string | null; }[],
   index: number,
   poolPpcInfosMapv2: Map<string, AmmRpcData>,
@@ -4393,7 +3935,7 @@ async function fetchLpProviders(connection, lpMint) {
   ];
   const accounts = await connection.getProgramAccounts(TOKEN_PROGRAM_ID, { filters });
   return accounts.map(account => account.pubkey);
-}
+}*/
 
 // Recursively convert BN and PublicKey values
 function convertValue(value) {

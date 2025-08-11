@@ -1,6 +1,46 @@
 import { Connection, Keypair } from "@solana/web3.js";
 import { bs58 } from "@coral-xyz/anchor/dist/cjs/utils/bytes";
 
+// Dynamic network detection based on ANCHOR_PROVIDER_URL
+const getNetworkFromUrl = (url: string | undefined): { isLocal: boolean; isDevnet: boolean; isMainnet: boolean } => {
+    if (!url) {
+        return { isLocal: false, isDevnet: false, isMainnet: false };
+    }
+
+    const urlLower = url.toLowerCase();
+
+    // Local network detection
+    if (urlLower.includes('localhost') || urlLower.includes('127.0.0.1') || urlLower.includes('0.0.0.0:8899')) {
+        return { isLocal: true, isDevnet: false, isMainnet: false };
+    }
+
+    // Mainnet detection
+    if (urlLower.includes('mainnet') ||
+        urlLower.includes('api.mainnet-beta.solana.com') ||
+        urlLower.includes('solana-api.projectserum.com') ||
+        (urlLower.includes('rpc.') && !urlLower.includes('devnet'))) {
+        return { isLocal: false, isDevnet: false, isMainnet: true };
+    }
+
+    // Devnet detection (default fallback for most RPC providers)
+    return { isLocal: false, isDevnet: true, isMainnet: false };
+};
+
+const networkConfig = getNetworkFromUrl(process.env.ANCHOR_PROVIDER_URL);
+
+// Export dynamic environment variables
+export const IS_LOCAL = networkConfig.isLocal;
+export const IS_DEVNET = networkConfig.isDevnet;
+export const IS_MAINNET = networkConfig.isMainnet;
+
+// Utility function to get current network as string
+export const getCurrentNetwork = (): string => {
+    if (IS_LOCAL) return 'local';
+    if (IS_DEVNET) return 'devnet';
+    if (IS_MAINNET) return 'mainnet';
+    return 'unknown';
+};
+
 export const globalInfoSeed = "global_info_seed";
 export const auctionSolSeed = "auction_sol_seed";
 export const auctionDataSeed = "auction_data_seed";
