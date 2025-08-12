@@ -83,7 +83,6 @@ import { migrateAuction } from "./migrate-auction"
 import { bs58 } from "@coral-xyz/anchor/dist/cjs/utils/bytes";
 import "dotenv/config";
 import * as sql from "mssql";
-import { e } from '@raydium-io/raydium-sdk-v2/lib/api-6a529105';
 //import { program } from "@coral-xyz/anchor/dist/cjs/native/system";
 
 import { generateAndUploadTestTokenData, generateThemedTestToken, TestTokenData } from "./maxi-auction-testdata";
@@ -135,7 +134,10 @@ var CONTRACT_CONFIG: any;
 // moveliq callback 
 const auctionFilledPromises = new Map();
 
-var MOVELIQ_DISABLE = false; // prevent moveliq from triggering at all, ever - set this when testing deployed API...
+//
+// MOVELIQ FLAG - set this when testing deployed or local API migrations
+//
+var MOVELIQ_DISABLE = true;
 var MOVELIQ_PAUSE = false; // (keep this as-is; used by tests to deliberately pause moveliq)
 
 // admin & test keypairs
@@ -2369,51 +2371,70 @@ describe("maxi-auction", () => {
     try {
       const sig = await sendAndConfirmTransaction(connection, tx, [adminKp, signer, token]);
 
-          // 🏷️ [TX] Clear transaction info for on-chain verification
-          logger.color("green").log(`✅ [CREATE AUCTION TX] SUCCESS - Transaction confirmed!`);
-          logger.color("green").log(`🔗 [CREATE AUCTION TX] Signature: ${sig}`);
-          logger.color("blue").log(`🔍 [CREATE AUCTION TX] Verify on explorer: https://solscan.io/tx/${sig}`);
+      // 🏷️ [TX] Clear transaction info for on-chain verification
+      logger.color("green").log(`✅ [CREATE AUCTION TX] SUCCESS - Transaction confirmed!`);
+      logger.color("green").log(`🔗 [CREATE AUCTION TX] Signature: ${sig}`);
+      logger.color("blue").log(`🔍 [CREATE AUCTION TX] Verify on explorer: https://solscan.io/tx/${sig}`);
 
       await logSuccessTx(connection, sig, "createAuction and initAuctionBids");
 
-          // 🏷️ [COST] Measure exact SOL cost of auction creation
-          const [adminBalanceAfter, signerBalanceAfter, tokenBalanceAfter] = await Promise.all([
-            connection.getBalance(adminKp.publicKey),
-            connection.getBalance(signer.publicKey),
-            connection.getBalance(token.publicKey),
-          ]);
+      // 🏷️ [COST] Measure exact SOL cost of auction creation
+      const [adminBalanceAfter, signerBalanceAfter, tokenBalanceAfter] = await Promise.all([
+        connection.getBalance(adminKp.publicKey),
+        connection.getBalance(signer.publicKey),
+        connection.getBalance(token.publicKey),
+      ]);
 
-          // Calculate costs in lamports first for precision, then convert to SOL
-          const adminCostLamports = adminBalanceBefore - adminBalanceAfter;
-          const signerCostLamports = signerBalanceBefore - signerBalanceAfter;
-          const tokenCostLamports = tokenBalanceBefore - tokenBalanceAfter;
-          const totalCostLamports = adminCostLamports + signerCostLamports + tokenCostLamports;
+      // Calculate costs in lamports first for precision, then convert to SOL
+      const adminCostLamports = adminBalanceBefore - adminBalanceAfter;
+      const signerCostLamports = signerBalanceBefore - signerBalanceAfter;
+      const tokenCostLamports = tokenBalanceBefore - tokenBalanceAfter;
+      const totalCostLamports = adminCostLamports + signerCostLamports + tokenCostLamports;
 
-          const adminCost = adminCostLamports / LAMPORTS_PER_SOL;
-          const signerCost = signerCostLamports / LAMPORTS_PER_SOL;
-          const tokenCost = tokenCostLamports / LAMPORTS_PER_SOL;
-          const totalCost = totalCostLamports / LAMPORTS_PER_SOL;
+      const adminCost = adminCostLamports / LAMPORTS_PER_SOL;
+      const signerCost = signerCostLamports / LAMPORTS_PER_SOL;
+      const tokenCost = tokenCostLamports / LAMPORTS_PER_SOL;
+      const totalCost = totalCostLamports / LAMPORTS_PER_SOL;
 
-          // Current SOL price for USD conversion (approximate market price)
-          const solPriceUSD = 181.0; // Current SOL price from CoinMarketCap
-          const totalCostUSD = totalCost * solPriceUSD;
-          const adminCostUSD = adminCost * solPriceUSD;
-          const signerCostUSD = signerCost * solPriceUSD;
-          const tokenCostUSD = tokenCost * solPriceUSD;
+      // Current SOL price for USD conversion (approximate market price)
+      const solPriceUSD = 181.0; // Current SOL price from CoinMarketCap
+      const totalCostUSD = totalCost * solPriceUSD;
+      const adminCostUSD = adminCost * solPriceUSD;
+      const signerCostUSD = signerCost * solPriceUSD;
+      const tokenCostUSD = tokenCost * solPriceUSD;
 
-          logger.info("🔍 [test_create_auction_KP0] Balances after creating auction:");
-          logger.info(`🔍 [test_create_auction_KP0] Admin (${adminKp.publicKey.toBase58()}): ${(adminBalanceAfter / LAMPORTS_PER_SOL).toFixed(6)} SOL (cost: ${adminCostLamports} lamports = ${adminCost.toFixed(6)} SOL = $${adminCostUSD.toFixed(4)})`);
-          logger.info(`🔍 [test_create_auction_KP0] Signer/FeePayer (${signer.publicKey.toBase58()}): ${(signerBalanceAfter / LAMPORTS_PER_SOL).toFixed(6)} SOL (cost: ${signerCostLamports} lamports = ${signerCost.toFixed(6)} SOL = $${signerCostUSD.toFixed(4)})`);
-          logger.info(`🔍 [test_create_auction_KP0] Token mint (${token.publicKey.toBase58()}): ${(tokenBalanceAfter / LAMPORTS_PER_SOL).toFixed(6)} SOL (cost: ${tokenCostLamports} lamports = ${tokenCost.toFixed(6)} SOL = $${tokenCostUSD.toFixed(4)})`);
+      logger.info("🔍 [test_create_auction_KP0] Balances after creating auction:");
+      logger.info(`🔍 [test_create_auction_KP0] Admin (${adminKp.publicKey.toBase58()}): ${(adminBalanceAfter / LAMPORTS_PER_SOL).toFixed(6)} SOL (cost: ${adminCostLamports} lamports = ${adminCost.toFixed(6)} SOL = $${adminCostUSD.toFixed(4)})`);
+      logger.info(`🔍 [test_create_auction_KP0] Signer/FeePayer (${signer.publicKey.toBase58()}): ${(signerBalanceAfter / LAMPORTS_PER_SOL).toFixed(6)} SOL (cost: ${signerCostLamports} lamports = ${signerCost.toFixed(6)} SOL = $${signerCostUSD.toFixed(4)})`);
+      logger.info(`🔍 [test_create_auction_KP0] Token mint (${token.publicKey.toBase58()}): ${(tokenBalanceAfter / LAMPORTS_PER_SOL).toFixed(6)} SOL (cost: ${tokenCostLamports} lamports = ${tokenCost.toFixed(6)} SOL = $${tokenCostUSD.toFixed(4)})`);
 
-          logger.color("yellow").log(`💰 [AUCTION COST SUMMARY]`);
-          logger.color("yellow").log(`💰 Total cost: ${totalCostLamports} lamports = ${totalCost.toFixed(6)} SOL = $${totalCostUSD.toFixed(4)} USD`);
-          logger.color("cyan").log(`💰 Breakdown by account:`);
-          logger.color("cyan").log(`💰   • Admin: ${adminCostLamports} lamports (${adminCost.toFixed(6)} SOL = $${adminCostUSD.toFixed(4)})`);
-          logger.color("cyan").log(`💰   • FeePayer: ${signerCostLamports} lamports (${signerCost.toFixed(6)} SOL = $${signerCostUSD.toFixed(4)})`);
-          logger.color("cyan").log(`💰   • TokenMint: ${tokenCostLamports} lamports (${tokenCost.toFixed(6)} SOL = $${tokenCostUSD.toFixed(4)})`);
-          logger.color("magenta").log(`💰 [VERIFICATION] Use transaction signature above to verify costs on Solscan explorer`);
-          logger.color("magenta").log(`💰 [RATE] USD conversion based on SOL price of $${solPriceUSD} (Jan 2025)`);
+      logger.color("yellow").log(`💰 [AUCTION COST SUMMARY]`);
+      logger.color("yellow").log(`💰 Total cost: ${totalCostLamports} lamports = ${totalCost.toFixed(6)} SOL = $${totalCostUSD.toFixed(4)} USD`);
+      logger.color("cyan").log(`💰 Breakdown by account:`);
+      logger.color("cyan").log(`💰   • Admin: ${adminCostLamports} lamports (${adminCost.toFixed(6)} SOL = $${adminCostUSD.toFixed(4)})`);
+      logger.color("cyan").log(`💰   • FeePayer: ${signerCostLamports} lamports (${signerCost.toFixed(6)} SOL = $${signerCostUSD.toFixed(4)})`);
+      logger.color("cyan").log(`💰   • TokenMint: ${tokenCostLamports} lamports (${tokenCost.toFixed(6)} SOL = $${tokenCostUSD.toFixed(4)})`);
+      logger.color("magenta").log(`💰 [VERIFICATION] Use transaction signature above to verify costs on Solscan explorer`);
+      logger.color("magenta").log(`💰 [RATE] USD conversion based on SOL price of $${solPriceUSD} (Jan 2025)`);
+
+      // Save auction to database (test helper equivalent to API saveAuctionToDatabase)
+      try {
+        logger.info("🔍 [test_create_auction_KP0] Getting auction ID for database insertion");
+        const globalInfoForDb = await program.account.globalInfo.fetch(globalInfo);
+        const auctionIdForDb = Number(globalInfoForDb.auctionsNum) - 1;
+
+        logger.info("💾 [test_create_auction_KP0] Saving auction to database using test helper");
+        await test_saveAuctionToDatabase(auctionIdForDb, sig, xId.toString(), token.publicKey.toBase58());
+        logger.info(`✅ [test_create_auction_KP0] Successfully saved auction ${auctionIdForDb} to database`);
+
+        // Now update KeyPair with auctionId (FK constraint satisfied)
+        logger.info("💾 [test_create_auction_KP0] Updating KeyPair with auction ID using test helper");
+        await test_updateKeypairAuctionId(auctionIdForDb, token.publicKey.toBase58());
+        logger.info(`✅ [test_create_auction_KP0] Successfully updated KeyPair for auction ${auctionIdForDb}`);
+      } catch (dbError) {
+        logger.error("❌ [test_create_auction_KP0] Failed to save auction to database (non-critical):", dbError);
+        // Don't fail the auction creation if database save fails (matches API behavior)
+      }
 
     } catch (err) {
       console.error("Error during transaction:", err);
@@ -4334,6 +4355,125 @@ const markMaxiKeyUsed = async (publicKey: string) => {
     .query(markUsedQuery);
   console.log(`Successfully marked key as used: ${publicKey}`);
   await pool.close();
+};
+
+/**
+ * Test helper: Save auction data to the auction table
+ * Equivalent to saveAuctionToDatabase in BlockchainController
+ */
+const test_saveAuctionToDatabase = async (
+  auctionId: number,
+  signature: string,
+  xId: string,
+  tokenMint: string
+): Promise<void> => {
+  try {
+    logger.info(`💾 [test_saveAuctionToDatabase] Starting to save auction ${auctionId} to database`);
+    logger.info(`💾 [test_saveAuctionToDatabase] Token mint: ${tokenMint || 'null'}`);
+
+    const pool = new sql.ConnectionPool(DB_CONFIG);
+    await pool.connect();
+
+    logger.info("🔍 [test_saveAuctionToDatabase] Starting database transaction");
+    const transaction = pool.transaction();
+    await transaction.begin();
+    logger.info("✅ [test_saveAuctionToDatabase] Database transaction started");
+
+    try {
+      const insertQuery = `
+        INSERT INTO [auction] (
+          id,
+          txid,
+          x_id,
+          token_mint
+        ) VALUES (
+          @auctionId,
+          @txid,
+          @xId,
+          @tokenMint
+        )
+      `;
+
+      logger.info(`🔍 [test_saveAuctionToDatabase] Executing insert for auction ${auctionId}:`, {
+        auctionId,
+        txid: signature,
+        xId,
+        tokenMint
+      });
+
+      await transaction.request()
+        .input('auctionId', sql.Int, auctionId)
+        .input('txid', sql.NVarChar(88), signature)
+        .input('xId', sql.NVarChar(40), xId)
+        .input('tokenMint', sql.NVarChar(255), tokenMint)
+        .query(insertQuery);
+
+      logger.info(`✅ [test_saveAuctionToDatabase] Successfully inserted auction ${auctionId} to database`);
+
+      await transaction.commit();
+    } catch (error) {
+      logger.error("❌ [test_saveAuctionToDatabase] Error during auction insertion, rolling back transaction");
+      await transaction.rollback();
+      throw error;
+    } finally {
+      await pool.close();
+    }
+
+  } catch (error) {
+    logger.error(`❌ [test_saveAuctionToDatabase] Failed to save auction ${auctionId} to database:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Test helper: Update KeyPair with auction ID
+ * Equivalent to updateKeypairAuctionId in BlockchainController
+ */
+const test_updateKeypairAuctionId = async (
+  auctionId: number,
+  tokenMint: string
+): Promise<void> => {
+  try {
+    logger.info(`💾 [test_updateKeypairAuctionId] Starting to update KeyPair for auction ${auctionId}`);
+
+    const pool = new sql.ConnectionPool(DB_CONFIG);
+    await pool.connect();
+
+    const transaction = pool.transaction();
+    await transaction.begin();
+
+    try {
+      const updateQuery = `
+        UPDATE [dbo].[KeyPair] 
+        SET auctionId = @auctionId
+        WHERE PublicKey = @publicKey
+      `;
+
+      logger.info(`🔍 [test_updateKeypairAuctionId] Executing update for auction ${auctionId}:`, {
+        auctionId,
+        publicKey: tokenMint
+      });
+
+      await transaction.request()
+        .input('auctionId', sql.Int, auctionId)
+        .input('publicKey', sql.VarChar(255), tokenMint)
+        .query(updateQuery);
+
+      logger.info(`✅ [test_updateKeypairAuctionId] Successfully updated KeyPair for auction ${auctionId}`);
+
+      await transaction.commit();
+    } catch (error) {
+      logger.error("❌ [test_updateKeypairAuctionId] Error during KeyPair update, rolling back transaction");
+      await transaction.rollback();
+      throw error;
+    } finally {
+      await pool.close();
+    }
+
+  } catch (error) {
+    logger.error(`❌ [test_updateKeypairAuctionId] Failed to update KeyPair for auction ${auctionId}:`, error);
+    throw error;
+  }
 };
 
 const VALID_PROGRAM_ID = new Set([

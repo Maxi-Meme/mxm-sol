@@ -326,10 +326,11 @@ clear && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --grep
 
 #------------
 
-# p0 - test review: e2e target 100%
-#      ## LOCK LIQUIDITY ... remove admin-withdraw ability ##
+# p0 - ## LOCK LIQUIDITY >> test ok
+#      todo: add new step into migration, show lock tx in auction call
 
-# p1 - profile pics on bubbles & holders list
+# p0 - broken refund button without bid, on auction chart
+
 # p1 - x posts img missing
 # p1 - socials on upcoming (and others) hard to find
 

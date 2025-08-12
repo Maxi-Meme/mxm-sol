@@ -669,8 +669,8 @@ async function isValidClmmPool(connection, poolId) {
             return false;
         }
 
-        const clmmProgramId_devnet = new PublicKey('devi51mZmdwUJGU9hjN27vEz64Gps7uUefqxg27EAtH'); // devnet
-        const clmmProgramId_mainnet = new PublicKey('CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK'); // mainnet - TBC!!
+        const clmmProgramId_devnet = new PublicKey('DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH'); // devnet
+        const clmmProgramId_mainnet = new PublicKey('CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK'); // mainnet 
         if (!accountInfo.owner.equals(clmmProgramId_devnet) && !accountInfo.owner.equals(clmmProgramId_mainnet)) {
             console.error(`Pool ${poolId.toBase58()} is not a CLMM pool (owned by ${accountInfo.owner.toBase58()})`);
             return false;
