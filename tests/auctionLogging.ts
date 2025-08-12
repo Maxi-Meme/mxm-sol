@@ -1,4 +1,3 @@
-// File: tests/auctionLogging.ts
 import { DEVNET_PROGRAM_ID } from "@raydium-io/raydium-sdk-v2";
 import { Connection, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import BN from "bn.js";
@@ -77,43 +76,43 @@ async function fetchClmmPoolsInfoViaApiBatch(poolIds: string[], timeoutMs = 6000
     if (ids.length === 0) return out;
 
     const url = `https://api-v3.raydium.io/pools/info/ids?ids=${encodeURIComponent(ids.join(","))}`;
-let res: Response;
-try {
-    res = await fetchWithTimeout(url, timeoutMs);
-} catch (e) {
-    console.log("Fetch timeout or error for Raydium API:", e);
-    return out;
-}
-if (!res.ok) {
-    console.log("Raydium API response not OK:", res.status, res.statusText);
-    return out;
-}
-
-let json: RaydiumV3ApiResponse<unknown>;
-try {
-    json = await res.json() as RaydiumV3ApiResponse<unknown>;
-} catch (e) {
-    console.log("Failed to parse Raydium API JSON:", e);
-    return out;
-}
-if (!json || (json as any).success !== true) {
-    console.log("Raydium API response invalid or not success:", json);
-    return out;
-}
-
-const dataRaw = (json as RaydiumV3ApiResponse<any>).data;
-if (!Array.isArray(dataRaw)) {
-    console.log("Raydium API data not an array:", dataRaw);
-    return out;
-}
-
-for (const it of dataRaw) {
-    if (it && typeof it === "object" && typeof (it as any).id === "string") {
-        const item = it as RaydiumV3PoolInfoItem;
-        out.set(item.id, item);
+    let res: Response;
+    try {
+        res = await fetchWithTimeout(url, timeoutMs);
+    } catch (e) {
+        console.log("Fetch timeout or error for Raydium API:", e);
+        return out;
     }
-}
-return out;
+    if (!res.ok) {
+        console.log("Raydium API response not OK:", res.status, res.statusText);
+        return out;
+    }
+
+    let json: RaydiumV3ApiResponse<unknown>;
+    try {
+        json = await res.json() as RaydiumV3ApiResponse<unknown>;
+    } catch (e) {
+        console.log("Failed to parse Raydium API JSON:", e);
+        return out;
+    }
+    if (!json || (json as any).success !== true) {
+        console.log("Raydium API response invalid or not success:", json);
+        return out;
+    }
+
+    const dataRaw = (json as RaydiumV3ApiResponse<any>).data;
+    if (!Array.isArray(dataRaw)) {
+        console.log("Raydium API data not an array:", dataRaw);
+        return out;
+    }
+
+    for (const it of dataRaw) {
+        if (it && typeof it === "object" && typeof (it as any).id === "string") {
+            const item = it as RaydiumV3PoolInfoItem;
+            out.set(item.id, item);
+        }
+    }
+    return out;
 }
 
 /* ===== One-time API init with a proper lock (prevents races) ===== */
@@ -159,17 +158,17 @@ async function fetchPoolPositionsInfo(
             pos.poolId.toBase58() === poolIdStr
         );
 
-        // console.log(`Found ${poolPositions.length} position(s) for pool ${poolIdStr}`);
+        //console.log(`Found ${poolPositions.length} position(s) for pool ${poolIdStr}`);
 
         let lockedPositionCount = 0;
 
         // Check each position for lock status (detailed logging commented out)
         for (const [index, position] of poolPositions.entries()) {
-            // console.log(`\n--- Position ${index + 1} ---`);
+            //console.log(`\n--- Position ${index + 1} ---`);
 
             // Basic position analysis (no logging)
             const hasActiveLiquidity = position.liquidity && position.liquidity.gt && position.liquidity.gt(new BN(0));
-            
+
             let hasActiveRewards = false;
             if (position.rewardInfos && Array.isArray(position.rewardInfos)) {
                 for (const reward of position.rewardInfos) {
@@ -226,7 +225,17 @@ async function fetchPoolPositionsInfo(
             }
         }
 
-        const positionCount = poolPositions.length;
+        // If no positions found but pool has liquidity, assume locked
+        if (poolPositions.length === 0) {
+            const poolInfos = await raydium.clmm.getRpcClmmPoolInfos({ poolIds: [new PublicKey(poolIdStr)] });
+            const poolInfo = poolInfos[poolIdStr];
+            if (poolInfo && poolInfo.liquidity && poolInfo.liquidity.gt(new BN(0))) {
+                //console.log('No admin positions, but pool has liquidity - assuming 1 locked position');
+                lockedPositionCount = 1;
+            }
+        }
+
+        const positionCount = poolPositions.length + lockedPositionCount; // Include inferred locked
         const hasLockedPositions = lockedPositionCount > 0;
 
         // console.log(`\n=== Summary for Pool ${poolIdStr} ===`);
@@ -236,7 +245,7 @@ async function fetchPoolPositionsInfo(
 
         return { positionCount, lockedPositionCount, hasLockedPositions };
     } catch (e) {
-        console.log("Error fetching positions info:", e);
+        //console.log("Error fetching positions info:", e);
         return { positionCount: 0, lockedPositionCount: 0, hasLockedPositions: false };
     }
 }
@@ -429,8 +438,6 @@ export async function logAuctionInfo(
                 `${isFinite(tokenInPool) ? tokenInPool.toString() : "?"}] ` +
                 `(burnPercent=${burnPctStr})`;
 
-            console.log(baseLine + v3Line);
-            return;
         } else {
             //console.log("No API info for pool:", poolId, "- falling back to on-chain");
         }
@@ -462,9 +469,7 @@ export async function logAuctionInfo(
         let lockStatus = "";
         if (raydium && adminKp) {
             const positionInfo = await fetchPoolPositionsInfo(poolId, raydium, adminKp);
-            if (positionInfo.positionCount > 0) {
-                lockStatus = positionInfo.positionCount == 0 ? "(no position)" : positionInfo.lockedPositionCount > 0 ? " LOCKED" : " unlocked";
-            }
+            lockStatus = positionInfo.positionCount == 0 ? " -" : positionInfo.hasLockedPositions ? " LOCKED" : " unlocked";
         } else {
             console.log("Raydium instance or adminKp not provided - skipping position info");
         }

@@ -808,7 +808,7 @@ describe("maxi-auction", () => {
 
     // Generate auction IDs
     // ##############
-    const auctionIds = [156]; //Array.from({ length: totalAuctions }, (_, i) => i);
+    const auctionIds = [22, 25, 24]; //Array.from({ length: totalAuctions }, (_, i) => i);
     // ##############
 
     // Initialize Raydium SDK
@@ -996,7 +996,7 @@ describe("maxi-auction", () => {
     const totalAuctions = Number(globalInfoAccount.auctionsNum);
 
     // ##############
-    const auctionIds = [22]; //Array.from({ length: totalAuctions }, (_, i) => i);
+    const auctionIds = [35]; //Array.from({ length: totalAuctions }, (_, i) => i);
     // ##############
 
     // Initialize Raydium SDK
@@ -1035,11 +1035,11 @@ describe("maxi-auction", () => {
     // Determine CLMM program ID based on network
     const clmmProgramId = IS_MAINNET
       ? new PublicKey("CAMMCzo5YL8w4VFF8KVHrK22GGUQpMDdHFWmNp2wxCM") // Mainnet CLMM program ID
-      : DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID // "DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH" ???
+      : DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID // "DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH" 
 
     // *************
     //console.log('??? ==> DEVNET_PROGRAM_ID.CLMM', DEVNET_PROGRAM_ID.CLMM); // "@raydium-io/raydium-sdk-v2": "^0.1.128-alpha", == devi51mZmdwUJGU9hjN27vEz64Gps7uUefqxg27EAtH -- an "old" devnet CLMM program ID ??!!!
-    console.log('??? ==> DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID', DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID); // "@raydium-io/raydium-sdk-v2": "^0.2.8-alpha", == DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH
+    //console.log('??? ==> DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID', DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID); // "@raydium-io/raydium-sdk-v2": "^0.2.8-alpha", == DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH
     // *************
 
     // Determine locker program ID based on network
@@ -1142,6 +1142,12 @@ describe("maxi-auction", () => {
                   // await harvest.execute();
                   // console.log(` [lockPosition] Harvested pending rewards before locking`);
 
+                  // Derive authority PDA
+                  const [authorityPda] = PublicKey.findProgramAddressSync(
+                    [Buffer.from("authority")],  // Common seed for Raydium-style auth PDAs; confirm via program IDL if needed
+                    authProgramId
+                  );                  
+
                   //console.dir(poolInfo, { depth: null });
                   console.log(` [lockPosition] Using Pool Program ID: ${poolInfo.programId}`);
                   console.log(` [lockPosition] Using Locker Program ID: ${lockerProgramId.toBase58()}`);
@@ -1151,7 +1157,7 @@ describe("maxi-auction", () => {
                   const lock = await raydium.clmm.lockPosition({
                     ownerPosition: position,
                     programId: lockerProgramId,      // Lock authority program
-                    authProgramId: authProgramId,    // Auth program
+                    authProgramId: DEVNET_PROGRAM_ID.CLMM_LOCK_AUTH_ID, // authorityPda,     //authProgramId,    // Auth program
                     poolProgramId: new PublicKey(poolInfo.programId),    // Actual pool program ID
                   });
 
@@ -2940,7 +2946,7 @@ describe("maxi-auction", () => {
       connection,
       owner: minterKp,
       disableFeatureCheck: true,
-      blockhashCommitment: 'confirmed'
+      blockhashCommitment: 'confirmed' 
     });
     logger.color("green").log("Raydium SDK loaded");
 
