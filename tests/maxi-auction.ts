@@ -89,6 +89,9 @@ import { generateAndUploadTestTokenData, generateThemedTestToken, TestTokenData 
 import { dumpBufferedLogsForToken, setActiveLogToken } from "./logging";
 
 import { logAuctionInfo } from "./auctionLogging";
+import { SPL_ACCOUNT_LAYOUT } from '@raydium-io/raydium-sdk';
+
+import { getOwnerPositionsInfo_Safe } from "./getOwnerPositionInfoSafe";
 
 const RENT_EXEMPT_MIN = 890880; // devnet 
 
@@ -856,20 +859,24 @@ describe("maxi-auction", () => {
           console.log(`\n=== Processing CLMM v3 pool for auction ID: ${x.auctionId} ===`);
 
           // Get admin's positions for this pool
-          const adminPositions = await raydium.clmm.getOwnerPositionInfo({
-            programId: DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID
+          const adminPositions = await getOwnerPositionsInfo_Safe({
+            connection,
+            owner: adminKp.publicKey,
+            poolId: new PublicKey(poolId),
+            programId: DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID,
           });
+          console.log("adminPositions", adminPositions);
+          //const poolPositions = [adminPositions];
+          // const poolPositions = adminPositions.filter(pos =>
+          //   pos.poolId.toBase58() === poolId
+          // );
 
-          const poolPositions = adminPositions.filter(pos =>
-            pos.poolId.toBase58() === poolId
-          );
-
-          console.log(`Found ${poolPositions.length} position(s) for admin in pool ${poolId}`);
+          console.log(`Found ${adminPositions.length} position(s) for admin in pool ${poolId}`);
 
           // Log detailed auction info with position data
           await logAuctionInfo(poolDbInfos, index, poolPpcInfosMapv3, x, raydium, adminKp);
 
-          if (poolPositions.length > 0) {
+          if (adminPositions.length > 0) {
             // Get pool info for calculations
             const poolInfo = await raydium.clmm.getPoolInfoFromRpc(poolId);
 
@@ -897,7 +904,7 @@ describe("maxi-auction", () => {
             console.log(`Admin Token B: ${new Decimal(balancesBefore[1].toString()).div(Math.pow(10, poolInfo.poolInfo.mintB.decimals)).toString()}`);
 
             // Process each position
-            for (const [index, position] of poolPositions.entries()) {
+            for (const [index, position] of adminPositions.entries()) {
               console.log(`\n=== Withdrawing Position ${index + 1} ===`);
               console.log(`Position ID: ${position.nftMint.toBase58()}`);
               console.log(`Liquidity: ${position.liquidity.toString()}`);
@@ -998,7 +1005,7 @@ describe("maxi-auction", () => {
     const totalAuctions = Number(globalInfoAccount.auctionsNum);
 
     // ##############
-    const auctionIds = [35]; //Array.from({ length: totalAuctions }, (_, i) => i);
+    const auctionIds = [51]; //Array.from({ length: totalAuctions }, (_, i) => i);
     // ##############
 
     // Initialize Raydium SDK
@@ -1050,13 +1057,13 @@ describe("maxi-auction", () => {
       : new PublicKey("DRay25Usp3YJAi7beckgpGUC7mGJ2cR1AVPxhYfwVCUX");
 
     // Determine auth program ID based on network  
-    const authProgramId = IS_MAINNET
-      ? new PublicKey("kN1kEznaF5Xbd8LYuqtEFcxzWSBk5Fv6ygX6SqEGJVy")
-      : new PublicKey("8qmHNvu2Kr2C7U8mJL4Vz1vTDxMhVuXKREwU7TNoaVEo");
+    // const authProgramId = IS_MAINNET
+    //   ? new PublicKey("kN1kEznaF5Xbd8LYuqtEFcxzWSBk5Fv6ygX6SqEGJVy")
+    //   : new PublicKey("8qmHNvu2Kr2C7U8mJL4Vz1vTDxMhVuXKREwU7TNoaVEo");
 
     console.log(` [lockPosition] Using CLMM Program ID for ${getCurrentNetwork()}: ${clmmProgramId.toBase58()}`);
     console.log(` [lockPosition] Using Locker Program ID for ${getCurrentNetwork()}: ${lockerProgramId.toBase58()}`);
-    console.log(` [lockPosition] Using Auth Program ID for ${getCurrentNetwork()}: ${authProgramId.toBase58()}`);
+    //console.log(` [lockPosition] Using Auth Program ID for ${getCurrentNetwork()}: ${authProgramId.toBase58()}`);
 
     // Process each auction sequentially
     for (const [index, x] of auctions.entries()) {
@@ -1069,20 +1076,23 @@ describe("maxi-auction", () => {
           console.log(`\n [lockPosition] === Processing CLMM v3 pool for auction ID: ${x.auctionId} ===`);
 
           // Get admin's positions for this pool
-          const adminPositions = await raydium.clmm.getOwnerPositionInfo({
-            programId: clmmProgramId
+          const adminPositions = await getOwnerPositionsInfo_Safe({
+            connection,
+            owner: adminKp.publicKey,
+            poolId: new PublicKey(poolId),
+            programId: DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID,
           });
+          //console.log("adminPositions", adminPositions);
+          // const poolPositions = adminPositions.filter(pos =>
+          //   pos.poolId.toBase58() === poolId
+          // );
 
-          const poolPositions = adminPositions.filter(pos =>
-            pos.poolId.toBase58() === poolId
-          );
-
-          console.log(` [lockPosition] Found ${poolPositions.length} position(s) for admin in pool ${poolId}`);
+          console.log(` [lockPosition] Found ${adminPositions.length} position(s) for admin in pool ${poolId}`);
 
           // Log detailed auction info with position data
           await logAuctionInfo(poolDbInfos, index, poolPpcInfosMapv3, x, raydium, adminKp);
 
-          if (poolPositions.length > 0) {
+          if (adminPositions.length > 0) {
             // Get pool info for calculations
             const poolInfo = (await raydium.clmm.getPoolInfoFromRpc(poolId)).poolInfo;
 
@@ -1091,8 +1101,9 @@ describe("maxi-auction", () => {
             console.log(` [lockPosition] Admin SOL balance before locking: ${(adminSolBefore / LAMPORTS_PER_SOL).toFixed(6)}`);
 
             // Process each position for locking
-            for (const [posIndex, position] of poolPositions.entries()) {
+            for (const [posIndex, position] of adminPositions.entries()) {
               console.log(`\n [lockPosition] === Locking Position ${posIndex + 1} (Burn & Earn) ===`);
+              console.log("position", position);
               console.log(` [lockPosition] Position ID: ${position.nftMint.toBase58()}`);
               console.log(` [lockPosition] Liquidity: ${position.liquidity.toString()}`);
               console.log(` [lockPosition] Tick Range: [${position.tickLower}, ${position.tickUpper}]`);
@@ -1144,16 +1155,10 @@ describe("maxi-auction", () => {
                   // await harvest.execute();
                   // console.log(` [lockPosition] Harvested pending rewards before locking`);
 
-                  // Derive authority PDA
-                  const [authorityPda] = PublicKey.findProgramAddressSync(
-                    [Buffer.from("authority")],  // Common seed for Raydium-style auth PDAs; confirm via program IDL if needed
-                    authProgramId
-                  );                  
-
                   //console.dir(poolInfo, { depth: null });
                   console.log(` [lockPosition] Using Pool Program ID: ${poolInfo.programId}`);
                   console.log(` [lockPosition] Using Locker Program ID: ${lockerProgramId.toBase58()}`);
-                  console.log(` [lockPosition] Using Auth Program ID: ${authProgramId.toBase58()}`);
+                  //console.log(` [lockPosition] Using Auth Program ID: ${authProgramId.toBase58()}`);
 
                   // 2. Lock the position
                   const lock = await raydium.clmm.lockPosition({
@@ -1218,23 +1223,6 @@ describe("maxi-auction", () => {
                     // Re-throw to be caught by outer error handler
                     throw lockError;
                   }
-
-                  // Log position details that were locked
-                  console.log(` [lockPosition] POSITION LOCK DETAILS:`);
-                  console.log(`   Position NFT: ${position.nftMint.toBase58()}`);
-                  console.log(`   Pool ID: ${poolId}`);
-                  console.log(`   Liquidity Amount: ${position.liquidity.toString()}`);
-                  console.log(`   Tick Range: [${position.tickLower}, ${position.tickUpper}]`);
-                  console.log(`   Current Price Impact: Locked liquidity provides continuous trading fees`);
-                  console.log(`   Network: ${getCurrentNetwork()}`);
-                  console.log(`   CLMM Program: ${clmmProgramId.toBase58()}`);
-
-                  // Calculate and display position value information
-                  console.log(` [lockPosition] POSITION VALUE INFO:`);
-                  console.log(`   Token A Mint: ${poolInfo.poolInfo.mintA.address}`);
-                  console.log(`   Token B Mint: ${poolInfo.poolInfo.mintB.address}`);
-                  console.log(`   Position is ${position.liquidity.gt(new BN(0)) ? 'ACTIVE' : 'EMPTY'}`);
-                  console.log(`   Burn & Earn Status: LOCKED`);
 
                   console.log(` [lockPosition] Position lock completed successfully`);
 
@@ -2943,7 +2931,7 @@ describe("maxi-auction", () => {
     //await test_create_clmm_and_trade_v3();
   });
 
-  async function test_create_clmm_and_trade_v3() {
+  /*async function test_create_clmm_and_trade_v3() {
     if (isLocal) return logger.color("yellow").log("Skipping pool creation on localnet");
 
     // KEY VARS
@@ -3100,7 +3088,7 @@ describe("maxi-auction", () => {
 
     // **Validate Position Range**
     await sleep(6);
-    const adminPositions = await raydium.clmm.getOwnerPositionInfo({ programId: DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID });
+    const adminPositions = await getOwnerPositionInfoSafe({ programId: DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID });
     //logObject("adminPositions", adminPositions);
     const position = adminPositions.find(pos => pos.poolId.toBase58() === poolId.toBase58());
     if (!position) throw new Error('Position not found');
@@ -3116,7 +3104,7 @@ describe("maxi-auction", () => {
     console.log(`INITIAL_PRICE: ${INITIAL_PRICE}`);
 
     assert.ok(Math.abs(INITIAL_PRICE - 1 / poolInfoRpc.currentPrice) < 1e-6, 'Current price mismatch');
-  }
+  }*/
 
   // [REF] - Referral system test cases
   it("admin - adds referral mapping successfully", async () => {

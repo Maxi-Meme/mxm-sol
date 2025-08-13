@@ -4,7 +4,7 @@ import BN from "bn.js";
 import { IS_LOCAL, IS_DEVNET, IS_MAINNET, getCurrentNetwork } from "./config";
 import { getAssociatedTokenAddress } from "@solana/spl-token";
 import { getAccount } from '@solana/spl-token';
-
+import { getOwnerPositionsInfo_Safe, getOwnerLockedPositionInfo_Safe } from "./getOwnerPositionInfoSafe";
 
 /* ===== Shapes (align with your project) ===== */
 export interface PoolDbRow {
@@ -142,111 +142,32 @@ async function fetchPoolPositionsInfo(
     poolIdStr: string,
     raydium: any,
     adminKp: any
-): Promise<{ positionCount: number; lockedPositionCount: number; hasLockedPositions: boolean }> {
+): Promise<{ positionCount: number; lockedPositionCount: number; }> {
     try {
-        // console.log(`\n=== Fetching position info for pool: ${poolIdStr} ===`, getCurrentNetwork());
-        // console.log(`Admin public key: ${adminKp?.publicKey?.toBase58() || 'N/A'}`);
-
-        // Get all owner positions using Raydium SDK
-        const allPositions = await raydium.clmm.getOwnerPositionInfo({
-            programId: IS_DEVNET ? DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID
-                : new PublicKey("CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK")
+        // Get regular positions, for this specific pool
+        const poolRegularPositions = await getOwnerPositionsInfo_Safe({
+            connection: raydium.connection,
+            owner: adminKp.publicKey,
+            programId: DEVNET_PROGRAM_ID.CLMM_PROGRAM_ID,
+            poolId: new PublicKey(poolIdStr),
         });
 
-        // Filter positions for this specific pool
-        const poolPositions = allPositions.filter(pos =>
-            pos.poolId.toBase58() === poolIdStr
-        );
+        // Get locked positions, for this specific pool
+        const poolLockedPositions = await getOwnerLockedPositionInfo_Safe({
+            connection: raydium.connection,
+            owner: adminKp.publicKey,
+            programId: DEVNET_PROGRAM_ID.CLMM_LOCK_PROGRAM_ID,
+            poolId: new PublicKey(poolIdStr),
+        });
 
-        //console.log(`Found ${poolPositions.length} position(s) for pool ${poolIdStr}`);
+        const regularPositionCount = poolRegularPositions.length;
+        const lockedPositionCount = poolLockedPositions.length;
+        const positionCount = regularPositionCount;
 
-        let lockedPositionCount = 0;
-
-        // Check each position for lock status (detailed logging commented out)
-        for (const [index, position] of poolPositions.entries()) {
-            //console.log(`\n--- Position ${index + 1} ---`);
-
-            // Basic position analysis (no logging)
-            const hasActiveLiquidity = position.liquidity && position.liquidity.gt && position.liquidity.gt(new BN(0));
-
-            let hasActiveRewards = false;
-            if (position.rewardInfos && Array.isArray(position.rewardInfos)) {
-                for (const reward of position.rewardInfos) {
-                    const hasRewardAmount = reward?.rewardAmountOwed && !reward.rewardAmountOwed.isZero();
-                    const hasGrowth = reward?.growthInsideLastX64 && !reward.growthInsideLastX64.isZero();
-                    if (hasRewardAmount || hasGrowth) {
-                        hasActiveRewards = true;
-                        break;
-                    }
-                }
-            }
-
-            // NFT Ownership Check for Lock Detection
-            let isLocked = false;
-            if (position.nftMint) {
-                try {
-                    //console.log(`🔍 [checkNFTOwnership] Checking ownership for position ${index + 1} NFT: ${position.nftMint.toString()}`);
-
-                    // Derive ATA for NFT mint under admin (should be the owner if unlocked)
-                    const adminAta = await getAssociatedTokenAddress(position.nftMint, adminKp.publicKey);
-                    //console.log(`🔍 [checkNFTOwnership] Admin ATA: ${adminAta.toString()}`);
-
-                    // Check if admin owns the NFT (amount=1 means they own it, unlocked)
-                    let adminAccount;
-                    let adminAmount = BigInt(0);
-                    try {
-                        adminAccount = await getAccount(raydium.connection, adminAta);
-                        adminAmount = adminAccount.amount;
-                        //console.log(`🔍 [checkNFTOwnership] Admin account found with amount: ${adminAmount.toString()}`);
-                    } catch (error) {
-                        if (error.name === 'TokenAccountNotFoundError') {
-                            //console.log(`🔍 [checkNFTOwnership] Admin ATA not found (amount: 0)`);
-                        } else {
-                            throw error;
-                        }
-                    }
-
-                    if (adminAmount === BigInt(1)) {
-                        //console.log(`✅ [checkNFTOwnership] Position ${index + 1} is UNLOCKED - admin owns the NFT`);
-                        isLocked = false;
-                    } else {
-                        //console.log(`🔒 [checkNFTOwnership] Position ${index + 1} is LOCKED - admin does not own the NFT (someone else has it)`);
-                        isLocked = true;
-                    }
-                } catch (error) {
-                    //console.log(`❌ [checkNFTOwnership] Error checking ownership for position ${index + 1}:`, error);
-                    // If we can't determine ownership, assume it's locked for safety
-                    isLocked = true;
-                }
-            }
-
-            if (isLocked) {
-                lockedPositionCount++;
-            }
-        }
-
-        // If no positions found but pool has liquidity, assume locked
-        if (poolPositions.length === 0) {
-            const poolInfos = await raydium.clmm.getRpcClmmPoolInfos({ poolIds: [new PublicKey(poolIdStr)] });
-            const poolInfo = poolInfos[poolIdStr];
-            if (poolInfo && poolInfo.liquidity && poolInfo.liquidity.gt(new BN(0))) {
-                //console.log('No admin positions, but pool has liquidity - assuming 1 locked position');
-                lockedPositionCount = 1;
-            }
-        }
-
-        const positionCount = poolPositions.length + lockedPositionCount; // Include inferred locked
-        const hasLockedPositions = lockedPositionCount > 0;
-
-        // console.log(`\n=== Summary for Pool ${poolIdStr} ===`);
-        // console.log(`Total Positions: ${positionCount}`);
-        // console.log(`Locked (Burn & Earn): ${lockedPositionCount}`);
-        // console.log(`Regular Positions: ${positionCount - lockedPositionCount}`);
-
-        return { positionCount, lockedPositionCount, hasLockedPositions };
+        return { positionCount, lockedPositionCount };
     } catch (e) {
-        //console.log("Error fetching positions info:", e);
-        return { positionCount: 0, lockedPositionCount: 0, hasLockedPositions: false };
+        console.log("Error fetching positions info:", e);
+        return { positionCount: 0, lockedPositionCount: 0 };
     }
 }
 
@@ -469,12 +390,13 @@ export async function logAuctionInfo(
         let lockStatus = "";
         if (raydium && adminKp) {
             const positionInfo = await fetchPoolPositionsInfo(poolId, raydium, adminKp);
-            lockStatus = positionInfo.positionCount == 0 ? " -" : positionInfo.hasLockedPositions ? " LOCKED" : " unlocked";
+            lockStatus = `(locked: ${positionInfo.lockedPositionCount}) / (unlocked: ${positionInfo.positionCount})`;
+            //lockStatus = positionInfo.positionCount == 0 ? " -" : positionInfo.hasLockedPositions ? " LOCKED" : " unlocked";
         } else {
             console.log("Raydium instance or adminKp not provided - skipping position info");
         }
 
-        console.log(baseLine + v3Line + lockStatus);
+        console.log(baseLine + v3Line + " / " + lockStatus);
     } catch (error) {
         console.error(`Error logging auction info for index ${index}:`, error);
     }
