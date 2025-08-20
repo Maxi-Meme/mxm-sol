@@ -8,7 +8,8 @@
     "bd:local": "export ANCHOR_PROVIDER_URL=http://0.0.0.0:8899 RUSTUP_TOOLCHAIN=nightly-2024-11-19 ANCHOR_WALLET=./id.json && solana config set --url http://127.0.0.1:8899/ && anchor build -- -- -Znext-lockfile-bump  --features localnet && anchor deploy --provider.cluster localnet --provider.wallet ./id.json",
     "lv": "./mpl.sh",
     "tests:dev": "export ANCHOR_PROVIDER_URL=https://kassandra-lv8wse-fast-devnet.helius-rpc.com RUSTUP_TOOLCHAIN=nightly-2024-11-19 ANCHOR_WALLET=./id.json && solana config set --url devnet && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --reporter spec",
-    "tests:local": "export ANCHOR_PROVIDER_URL=http://0.0.0.0:8899 RUSTUP_TOOLCHAIN=nightly-2024-11-19 ANCHOR_WALLET=./id.json && solana config set --url http://127.0.0.1:8899/ && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --reporter spec"
+    "tests:local": "export ANCHOR_PROVIDER_URL=http://0.0.0.0:8899 RUSTUP_TOOLCHAIN=nightly-2024-11-19 ANCHOR_WALLET=./id.json && solana config set --url http://127.0.0.1:8899/ && npx ts-mocha -p ./tsconfig.json -t 1000000 tests/maxi-auction.ts --reporter spec",
+    "config:cli": "node scripts/auction-config-cli.js"
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.30.1",
